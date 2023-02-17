@@ -18,6 +18,7 @@ If you are new to this, please refer :ref:`getting_started`.
 #. **Install NVFLARE**
 
 Install NVFLARE
+
 .. code-block:: shell
 
   $ python3 -m pip install nvflare
