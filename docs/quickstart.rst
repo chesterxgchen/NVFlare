@@ -2,7 +2,7 @@
 Quick Start
 ############
 
-This quick start guide means to help the user get the FLARE up & running
+This quick start guide means to help the user get FLARE up & running
 quickly without introducing any advanced concepts. For more details, refer
 to :ref:`getting_started`.
 
