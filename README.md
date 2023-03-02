@@ -12,7 +12,7 @@ from research and simulation to real-world production deployment. Key components
 * Support horizontal and vertical federated learning
 * Built-in FL algorithms (e.g., FedAvg, FedProx, FedOpt, Scaffold, ditto )
 * Support multiple training workflows (e.g., scatter and gather and cyclic) and validation workflows (global model evaluation, cross-site validation)
-* Support both data analytics (federated statistics) and machine learning lifecycle
+* Support both data analytics (federated statistics) and machine learning lifecycle management
 * Privacy preservation with differential privacy, homomorphic encryption
 * Security enforcement through federated authorization and privacy policy 
 * Easily customizable and extensible
