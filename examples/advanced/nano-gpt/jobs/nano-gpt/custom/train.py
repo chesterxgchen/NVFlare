@@ -180,7 +180,7 @@ def train(conf: ConfigTree):
 
         # termination conditions
         # max_iters = conf.get_int("max_iters")
-        # if iter_num > max_iters:
+        # if step > max_iters:
         #     break
         local_max_iters = conf.get_int("local_max_iters")
         if local_iter_num > local_max_iters:
@@ -190,13 +190,13 @@ def train(conf: ConfigTree):
         destroy_process_group()
 
 
-def get_batch(split, train_data1, val_data1, conf):
+def get_batch(split, train_data, val_data, conf):
     device = conf.get_string("device")
     device_type = "cuda" if "cuda" in device else "cpu"
     batch_size = conf.get_int("batch_size")
     block_size = conf.get_int("block_size")
 
-    data = train_data1 if split == "train" else val_data1
+    data = train_data if split == "train" else val_data
     ix = torch.randint(len(data) - block_size, (batch_size,))
     x = torch.stack([torch.from_numpy((data[i:i + block_size]).astype(np.int64)) for i in ix])
     y = torch.stack([torch.from_numpy((data[i + 1:i + 1 + block_size]).astype(np.int64)) for i in ix])
@@ -265,7 +265,7 @@ def save_checkpoint(save_best_loss,
                 "model": raw_model.state_dict(),
                 "optimizer": optimizer.state_dict(),
                 "model_args": model_args,
-                "iter_num": iter_num,
+                "step": iter_num,
                 "best_val_loss": best_val_loss,
                 "config": to_dict(conf),
             }
@@ -275,11 +275,11 @@ def save_checkpoint(save_best_loss,
 
 def load_data(train_conf):
     # poor man"s data loader
-    dataset1 = train_conf.get_string("dataset")
-    data_dir = os.path.join("data", dataset1)
-    train_data1 = np.memmap(os.path.join(data_dir, "train.bin"), dtype=np.uint16, mode="r")
-    val_data1 = np.memmap(os.path.join(data_dir, "val.bin"), dtype=np.uint16, mode="r")
-    return train_data1, val_data1
+    dataset = train_conf.get_string("dataset")
+    data_dir = os.path.join("data", dataset)
+    train_data = np.memmap(os.path.join(data_dir, "train.bin"), dtype=np.uint16, mode="r")
+    val_data = np.memmap(os.path.join(data_dir, "val.bin"), dtype=np.uint16, mode="r")
+    return train_data, val_data
 
 
 def load_checkpoint(conf):
@@ -289,19 +289,20 @@ def load_checkpoint(conf):
     if start_from == "resume":
         out_dir = conf.get_string("out_dir")
         device = conf.get_string("device")
-        ckpt_path1 = os.path.join(out_dir, "ckpt.pt")
-        checkpoint = torch.load(ckpt_path1, map_location=device)
+        ckpt_path = os.path.join(out_dir, "ckpt.pt")
+        if os.path.isfile(ckpt_path):
+            checkpoint = torch.load(ckpt_path, map_location=device)
 
     return checkpoint
 
 
 def get_model_from_checkpoint(checkpoint):
-    checkpoint_model_args1 = checkpoint["model_args"]
+    checkpoint_model_args = checkpoint["model_args"]
     # force these config attributes to be equal otherwise we can"t even resume training
     # the rest of the attributes (e.g. dropout) can stay as desired from command line
     model_args = {}
     for k in ["n_layer", "n_head", "n_embd", "block_size", "bias", "vocab_size"]:
-        model_args[k] = checkpoint_model_args1[k]
+        model_args[k] = checkpoint_model_args[k]
     # create the model
     gptconf = GPTConfig(**model_args)
     model = GPT(gptconf)
@@ -402,10 +403,10 @@ def get_optimizer(checkpoint, device_type, model, conf):
 
 def tracking_init(master_process, conf):
     # wandb logging
-    wandb_log_enabled1 = "wandb_log" in conf and conf.get_bool("wandb_log")
-    if master_process and wandb_log_enabled1:
+    wandb_log_enabled = "wandb_log" in conf and conf.get_bool("wandb_log")
+    if master_process and wandb_log_enabled:
         wandb_init(conf)
-    return wandb_log_enabled1
+    return wandb_log_enabled
 
 
 def wandb_init(conf):
@@ -416,10 +417,10 @@ def wandb_init(conf):
     wandb.init(project=project, name=run_name, config=to_dict(conf))
 
 
-def wandb_log(losses, iter_num, lr, running_mfu):
+def wandb_log(losses, step, lr, running_mfu):
     import wandb
     wandb.log({
-        "iter": iter_num,
+        "iter": step,
         "train/loss": losses["train"],
         "val/loss": losses["val"],
         "lr": lr,

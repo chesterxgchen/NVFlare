@@ -11,11 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any
+import os
+import subprocess
+from typing import Any, Optional, List
 
 import torch
 
-from nvflare.apis.dxo import from_shareable, DXO
+from nvflare.apis.dxo import from_shareable, DXO, DataKind
 from nvflare.apis.executor import Executor
 from nvflare.apis.fl_constant import ReturnCode
 from nvflare.apis.fl_context import FLContext
@@ -29,10 +31,8 @@ class PTProcessExecutor(Executor):
 
     def __init__(
             self,
+            cmd: str = "python -m train.py ../config/train_shakespeare_char.conf",
             out_dir="/tmp/nvflare/gpt/global/checkpoint",
-            train_task=AppConstants.TASK_TRAIN,
-            submit_model_task=AppConstants.TASK_SUBMIT_MODEL,
-            validate_task=AppConstants.TASK_VALIDATION,
     ):
         """Key component to run learner on clients.
 
@@ -42,10 +42,8 @@ class PTProcessExecutor(Executor):
             validate_task (str, optional): task name for validation. Defaults to AppConstants.TASK_VALIDATION.
         """
         super().__init__()
-        self.train_task = train_task
-        self.submit_model_task = submit_model_task
         self.out_dir = out_dir
-        # todo make fifopipe
+        self.cmd = cmd
 
     def execute(self, task_name: str, shareable: Shareable, fl_ctx: FLContext, abort_signal: Signal) -> Shareable:
         """Typical training task pipeline
@@ -66,7 +64,7 @@ class PTProcessExecutor(Executor):
         dxo = from_shareable(shareable)
         global_weights = dxo.data
         self.save_checkpoint(self.out_dir, global_weights)
-        #     todo create a process to run train.py -f config/xyf.conf
+        self.start_local_train()
         return self.get_model_sharable(fl_ctx, abort_signal)
 
     def save_checkpoint(self, out_dir, global_weights):
@@ -74,7 +72,7 @@ class PTProcessExecutor(Executor):
             "model": global_weights["model"].state_dict(),
             "optimizer": global_weights["optimizer"].state_dict(),
             "model_args": global_weights["model_args"],
-            "iter_num": global_weights["iter_num"],
+            "step": global_weights["step"],
             "best_val_loss": global_weights["best_val_loss"],
             "config": global_weights["config"],
         }
@@ -87,7 +85,7 @@ class PTProcessExecutor(Executor):
         if abort_signal.triggered:
             return make_reply(ReturnCode.TASK_ABORTED)
 
-        np_data = self.load_checkpoint()
+        np_data = self.read_checkpoint()
         return self.covert_model_to_shareable(fl_ctx, np_data)
 
     def covert_model_to_shareable(self, fl_ctx, np_data):
@@ -102,7 +100,11 @@ class PTProcessExecutor(Executor):
             model_shareable.set_return_code(ReturnCode.EXECUTION_RESULT_ERROR)
         return model_shareable
 
+    def read_checkpoint(self):
+        ckpt_path = os.path.join(self.out_dir, "ckpt.pt")
+        with open(ckpt_path, "rb") as file:
+            return file.read()
 
-    def load_checkpoint(self):
-        checkpoint: Any = None
-        return checkpoint
+    def start_local_train(self):
+        my_env = os.environ.copy()
+        subprocess.Popen(self.cmd.split(" "), env=my_env)
