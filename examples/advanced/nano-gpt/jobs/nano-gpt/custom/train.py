@@ -179,8 +179,11 @@ def train(conf: ConfigTree):
         local_iter_num += 1
 
         # termination conditions
-        max_iters = conf.get_int("max_iters")
-        if iter_num > max_iters:
+        # max_iters = conf.get_int("max_iters")
+        # if iter_num > max_iters:
+        #     break
+        local_max_iters = conf.get_int("local_max_iters")
+        if local_iter_num > local_max_iters:
             break
 
     if ddp:
