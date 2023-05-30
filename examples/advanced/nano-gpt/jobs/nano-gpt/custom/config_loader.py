@@ -21,6 +21,8 @@ def define_parser(parser):
                         help="configuration file if presents overwrite default")
     parser.add_argument("-c", "--config", type=str, nargs="*",
                         help="individual config key=value, if presents overwrite config file values")
+    parser.add_argument("-i", "--model_filename", type=str, nargs="?",
+                        help="model_filename used sync Global model if specified")
 
 
 def parse_args():
@@ -37,6 +39,9 @@ def config_args_to_dict(args):
             kvs = item.split("=")
             assert (len(kvs) == 2)
             config_dict[kvs[0]] = kvs[1]
+    if args.model_info_file_name:
+        config_dict["model_filename"] = args.model_filename
+
     return {"config": config_dict}
 
 

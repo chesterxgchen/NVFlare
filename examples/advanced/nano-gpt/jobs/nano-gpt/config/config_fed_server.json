@@ -1,7 +1,7 @@
 {
   "format_version": 2,
   "min_clients": 2,
-  "num_rounds": 50,
+  "num_rounds": 1000,
   "task_data_filters": [],
   "task_result_filters": [],
   "components": [
@@ -10,9 +10,8 @@
       "name": "PTFileModelPersistor",
       "args": {
         "model": {
-          "path": "custom.models.nlp_models.GPTModel",
+          "path": "custom.model.GPT",
           "args": {
-            "num_labels": 3,
             "model_name": "gpt2"
           }
         }

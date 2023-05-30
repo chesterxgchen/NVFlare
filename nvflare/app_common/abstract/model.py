@@ -17,6 +17,9 @@
 This import simply lets you call the Learnable 'Model'.
 Model Learnable is a dict that contains two items: weights and meta info
 """
+from dataclasses import dataclass
+from typing import Dict
+
 from nvflare.apis.dxo import DXO, DataKind
 
 from .learnable import Learnable
@@ -25,6 +28,7 @@ from .learnable import Learnable
 class ModelLearnableKey(object):
     WEIGHTS = "weights"
     META = "meta"
+    OPTIMIZER = "optimizer"
 
 
 class ModelLearnable(Learnable):
@@ -33,6 +37,15 @@ class ModelLearnable(Learnable):
             return False
         else:
             return True
+
+
+@dataclass
+class Model:
+    model: Dict
+    optimizer: Dict
+    evaluations: Dict
+    round: int
+    configs: Dict
 
 
 def validate_model_learnable(model_learnable: ModelLearnable) -> str:

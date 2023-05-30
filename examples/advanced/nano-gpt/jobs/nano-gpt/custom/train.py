@@ -28,7 +28,7 @@ from pyhocon import ConfigTree
 from torch.distributed import init_process_group, destroy_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from config_loader import to_dict, to_json, load_config
+from config_loader import to_dict, to_json, load_config, parse_args
 from model import GPTConfig, GPT
 
 
@@ -71,12 +71,14 @@ def train(conf: ConfigTree):
     ptdtype = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}[dtype]
     ctx = nullcontext() if device_type == "cpu" else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
+    print("current_round=", conf.get_int("current_round"))
+
     # poor man"s data loader
     train_data, val_data = load_data(conf)
 
-    # model init
     checkpoint = load_checkpoint(conf)
     iter_num = 0 if checkpoint is None else checkpoint["iter_num"]
+    # model init
     best_val_loss = 1e9 if checkpoint is None else checkpoint["best_val_loss"]
     model, model_args = get_model(checkpoint, conf)
 
@@ -96,7 +98,6 @@ def train(conf: ConfigTree):
     # wrap model into DDP container
     if ddp:
         model = DDP(model, device_ids=[conf.get_int("ddp_local_rank")])
-
 
     # logging
     wandb_log_enabled = tracking_init(master_process, conf)
@@ -129,7 +130,11 @@ def train(conf: ConfigTree):
                 best_val_loss = losses["val"]
                 save_best_loss = True
 
-            save_checkpoint(save_best_loss, iter_num, optimizer, raw_model, model_args,best_val_loss, conf)
+            last_checkpoint = \
+                save_checkpoint(save_best_loss, iter_num, optimizer, raw_model, model_args, best_val_loss, conf)
+
+            # save model info for FL global model
+            save_model_info(last_checkpoint, conf)
 
         if iter_num == 0 and conf.get_bool("eval_only"):
             break
@@ -178,12 +183,9 @@ def train(conf: ConfigTree):
         iter_num += 1
         local_iter_num += 1
 
-        # termination conditions
-        # max_iters = conf.get_int("max_iters")
-        # if step > max_iters:
-        #     break
-        local_max_iters = conf.get_int("local_max_iters")
-        if local_iter_num > local_max_iters:
+        termination conditions
+        max_iters = conf.get_int("max_iters")
+        if step > max_iters:
             break
 
     if ddp:
@@ -259,9 +261,10 @@ def save_checkpoint(save_best_loss,
                     ):
     out_dir = conf.get_string("out_dir")
     always_save_checkpoint = conf.get_bool("always_save_checkpoint")
+    checkpoint = None
     if save_best_loss or always_save_checkpoint:
         if iter_num > 0:
-            checkpoint1 = {
+            checkpoint = {
                 "model": raw_model.state_dict(),
                 "optimizer": optimizer.state_dict(),
                 "model_args": model_args,
@@ -270,7 +273,9 @@ def save_checkpoint(save_best_loss,
                 "config": to_dict(conf),
             }
             print(f"saving checkpoint to {out_dir}")
-            torch.save(checkpoint1, os.path.join(out_dir, "ckpt.pt"))
+            torch.save(checkpoint, os.path.join(out_dir, "ckpt.pt"))
+
+    return checkpoint
 
 
 def load_data(train_conf):
@@ -294,6 +299,22 @@ def load_checkpoint(conf):
             checkpoint = torch.load(ckpt_path, map_location=device)
 
     return checkpoint
+
+
+def load_global_model_info(conf):
+    model_path = get_global_mode_info_path(conf)
+    device = conf.get_string("device")
+    model_info = None
+    if os.path.isfile(model_path):
+        model_info = torch.load(model_path, map_location=device)
+    return model_info
+
+
+def get_global_mode_info_path(conf):
+    out_dir = conf.get_string("out_dir")
+    model_filename = conf.get_string("model_filename")
+    model_path = os.path.join(out_dir, model_filename)
+    return model_path
 
 
 def get_model_from_checkpoint(checkpoint):
@@ -349,7 +370,7 @@ def get_model(checkpoint, conf):
     meta_vocab_size = get_vocab_size(conf)
 
     model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=block_size,
-                       bias=bias, vocab_size=None, dropout=dropout)  # start with model_args from command line
+                      bias=bias, vocab_size=None, dropout=dropout)  # start with model_args from command line
     init_from = conf.get_string("init_from")
     if init_from == "scratch":
         # init a new model from scratch
@@ -366,19 +387,15 @@ def get_model(checkpoint, conf):
     elif init_from.startswith("gpt2"):
         print(f"Initializing from OpenAI GPT-2 weights: {init_from}")
         # initialize from OpenAI GPT-2 weights
-        override_args1 = dict(dropout=dropout)
-        model = GPT.from_pretrained(init_from, override_args1)
+        override_args = dict(dropout=dropout)
+        model = GPT.from_pretrained(init_from, override_args)
         # read off the created config params, so we can store them into checkpoint correctly
         for k in ["n_layer", "n_head", "n_embd", "block_size", "bias", "vocab_size"]:
             model_args[k] = getattr(model.config, k)
-    elif init_from.startswith("global"):
-        print(f"Initializing from OpenAI GPT-2 weights: {init_from}")
-        # initialize from OpenAI GPT-2 weights
-        override_args1 = dict(dropout=dropout)
-        model = GPT.from_pretrained(init_from, override_args1)
-        # read off the created config params, so we can store them into checkpoint correctly
-        for k in ["n_layer", "n_head", "n_embd", "block_size", "bias", "vocab_size"]:
-            model_args[k] = getattr(model.config, k)
+    elif init_from == "global":
+        model = get_model_from_global(checkpoint, conf)
+    else:
+        raise NotImplementedError(f"unknown init_from = {init_from}")
 
     # crop down the model block size if desired, using model surgery
     if block_size < model.config.block_size:
@@ -389,13 +406,46 @@ def get_model(checkpoint, conf):
     return model, model_args
 
 
+def save_model_info(checkpoint, conf):
+    model_path = get_global_mode_info_path(conf)
+    model_info = {
+        "model": checkpoint["model"].state_dict(),
+        "eval_iters": checkpoint["eval_iters"],
+        "loss": checkpoint["best_val_loss"]
+    }
+    print(f"saving model_info to {model_path}")
+    torch.save(model_info, model_path)
+
+
+def get_model_from_global(checkpoint, conf):
+    model_info = load_global_model_info(conf)
+    checkpoint_model_args = checkpoint["model_args"]
+    # force these config attributes to be equal otherwise we can"t even resume training
+    # the rest of the attributes (e.g. dropout) can stay as desired from command line
+    model_args = {}
+    for k in ["n_layer", "n_head", "n_embd", "block_size", "bias", "vocab_size"]:
+        model_args[k] = checkpoint_model_args[k]
+    # create the model
+    gptconf = GPTConfig(**model_args)
+    model = GPT(gptconf)
+    state_dict = model_info["model"]
+    # fix the keys of the state dictionary :(
+    # honestly no idea how checkpoints sometimes get this prefix, have to debug more
+    unwanted_prefix = "_orig_mod."
+    for k, v in list(state_dict.items()):
+        if k.startswith(unwanted_prefix):
+            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+    model.load_state_dict(state_dict)
+    return model, model_args
+
+
 def get_optimizer(checkpoint, device_type, model, conf):
     init_from = conf.get_string("init_from")
-    weight_decay1 = conf.get_float("weight_decay")
-    learning_rate1 = conf.get_float("learning_rate")
+    weight_decay = conf.get_float("weight_decay")
+    learning_rate = conf.get_float("learning_rate")
     beta1 = conf.get_float("beta1")
     beta2 = conf.get_float("beta2")
-    optimizer = model.configure_optimizers(weight_decay1, learning_rate1, (beta1, beta2), device_type)
+    optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
     if init_from == "resume" and checkpoint:
         optimizer.load_state_dict(checkpoint["optimizer"])
     return optimizer

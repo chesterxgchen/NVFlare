@@ -23,16 +23,17 @@ from nvflare.apis.fl_constant import ReturnCode
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable, make_reply
 from nvflare.apis.signal import Signal
+from nvflare.app_common.abstract.model import ModelLearnableKey
 from nvflare.app_common.app_constant import AppConstants
-from nvflare.security.logging import secure_format_exception
 
 
 class PTProcessExecutor(Executor):
 
     def __init__(
             self,
-            cmd: str = "python -m train.py ../config/train_shakespeare_char.conf",
+            cmd: str = "python -m train.py ../config/train_shakespeare_char.conf ",
             out_dir="/tmp/nvflare/gpt/global/checkpoint",
+            model_filename="model.pt"
     ):
         """Key component to run learner on clients.
 
@@ -44,6 +45,10 @@ class PTProcessExecutor(Executor):
         super().__init__()
         self.out_dir = out_dir
         self.cmd = cmd
+        self.model_filename = model_filename
+
+    def get_command(self, current_round: int):
+        return f"{self.cmd} -i {self.model_filename} -c current_round={current_round}"
 
     def execute(self, task_name: str, shareable: Shareable, fl_ctx: FLContext, abort_signal: Signal) -> Shareable:
         """Typical training task pipeline
@@ -62,37 +67,32 @@ class PTProcessExecutor(Executor):
 
         # update local model weights with received weights
         dxo = from_shareable(shareable)
-        global_weights = dxo.data
-        self.save_checkpoint(self.out_dir, global_weights)
-        self.start_local_train()
-        return self.get_model_sharable(fl_ctx, abort_signal)
+        model_data = dxo.data
+        self.save_model(self.out_dir, model_data)
+        self.start_local_train(current_round)
+        return self.get_model(fl_ctx, abort_signal)
 
-    def save_checkpoint(self, out_dir, global_weights):
-        checkpoint = {
-            "model": global_weights["model"].state_dict(),
-            "optimizer": global_weights["optimizer"].state_dict(),
-            "model_args": global_weights["model_args"],
-            "step": global_weights["step"],
-            "best_val_loss": global_weights["best_val_loss"],
-            "config": global_weights["config"],
+    def save_model(self, out_dir, model_data):
+        model_info = {
+            "model": model_data[ModelLearnableKey.WEIGHTS].state_dict(),
+            "current_round": model_data[AppConstants.CURRENT_ROUND]
         }
-        print(f"saving checkpoint to {out_dir}")
-        torch.save(checkpoint, os.path.join(out_dir, "ckpt.pt"))
+        torch.save(model_info, os.path.join(out_dir, self.model_filename))
 
-    def get_model_sharable(self, fl_ctx: FLContext, abort_signal: Signal):
-
+    def get_model(self, fl_ctx: FLContext, abort_signal: Signal):
         # Checking abort signal
         if abort_signal.triggered:
             return make_reply(ReturnCode.TASK_ABORTED)
 
-        np_data = self.read_checkpoint()
-        return self.covert_model_to_shareable(fl_ctx, np_data)
+        model_data = self.read_model()
+        return self.covert_model_to_shareable(fl_ctx, model_data)
 
-    def covert_model_to_shareable(self, fl_ctx, np_data):
+    def covert_model_to_shareable(self, fl_ctx, model_data):
         # Create DXO and shareable from model data.
         model_shareable = Shareable()
-        if np_data:
-            outgoing_dxo = DXO(data_kind=DataKind.WEIGHTS, data=np_data)
+        if model_data:
+            outgoing_dxo = DXO(data_kind=DataKind.WEIGHTS, data=model_data["model"])
+            outgoing_dxo.set_meta_prop("loss",  model_data["loss"])
             model_shareable = outgoing_dxo.to_shareable()
         else:
             # Set return code.
@@ -100,11 +100,14 @@ class PTProcessExecutor(Executor):
             model_shareable.set_return_code(ReturnCode.EXECUTION_RESULT_ERROR)
         return model_shareable
 
-    def read_checkpoint(self):
-        ckpt_path = os.path.join(self.out_dir, "ckpt.pt")
-        with open(ckpt_path, "rb") as file:
-            return file.read()
+    def read_model(self):
+        model_path = os.path.join(self.out_dir, self.model_filename)
+        model_info = None
+        if os.path.isfile(model_path):
+            model_info = torch.load(model_path, map_location="cpu")
+        return model_info
 
-    def start_local_train(self):
+    def start_local_train(self, current_round):
         my_env = os.environ.copy()
-        subprocess.Popen(self.cmd.split(" "), env=my_env)
+        cmd = get_command(current_round)
+        subprocess.Popen(cmd.split(" "), env=my_env)
