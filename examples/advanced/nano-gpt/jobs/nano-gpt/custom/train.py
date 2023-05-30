@@ -183,7 +183,7 @@ def train(conf: ConfigTree):
         iter_num += 1
         local_iter_num += 1
 
-        termination conditions
+        # termination conditions
         max_iters = conf.get_int("max_iters")
         if step > max_iters:
             break
