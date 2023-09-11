@@ -24,6 +24,8 @@ class LogWriterName(Enum):
 
 
 class TrackConst(object):
+    PIPE_NAME_PREFIX = "metrics_pipe_"
+
     TRACKER_KEY = "tracker_key"
 
     TRACK_KEY = "track_key"

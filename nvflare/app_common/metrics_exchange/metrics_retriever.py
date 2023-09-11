@@ -11,35 +11,26 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import logging
 import time
-from queue import Queue
 from threading import Event, Thread
-from typing import Optional
 
 from nvflare.apis.event_type import EventType
 from nvflare.apis.fl_component import FLComponent
 from nvflare.apis.fl_context import FLContext
-from nvflare.app_common.metrics_exchange.metrics_exchanger import MetricData, MetricsExchanger
-from nvflare.app_common.tracking.tracker_types import LogWriterName
+from nvflare.app_common.tracking.tracker_types import LogWriterName, TrackConst
 from nvflare.app_common.widgets.streaming import ANALYTIC_EVENT_TYPE, AnalyticsSender
-from nvflare.fuel.utils.constants import Mode
-from nvflare.fuel.utils.pipe.memory_pipe import MemoryPipe
-from nvflare.fuel.utils.pipe.pipe import Message
-from nvflare.fuel.utils.pipe.pipe_handler import PipeHandler, Topic
+from nvflare.fuel.utils.class_utils import full_classname
+from nvflare.fuel.utils.pipe.shared_mem_pipe import SharedMemPipe
 
 
 class MetricsRetriever(FLComponent):
     def __init__(
-        self,
-        metrics_exchanger_id: str,
-        event_type=ANALYTIC_EVENT_TYPE,
-        writer_name=LogWriterName.TORCH_TB,
-        topic: str = "metrics",
-        get_poll_interval: float = 0.5,
-        read_interval: float = 0.1,
-        heartbeat_interval: float = 5.0,
-        heartbeat_timeout: float = 30.0,
+            self,
+            event_type=ANALYTIC_EVENT_TYPE,
+            writer_name=LogWriterName.TORCH_TB,
+            get_poll_interval: float = 0.01,
+            buffer_size=100 * 1024
     ):
         """Metrics retriever.
 
@@ -48,63 +39,92 @@ class MetricsRetriever(FLComponent):
             writer_name: the log writer for syntax information (defaults to LogWriterName.TORCH_TB)
         """
         super().__init__()
-        self.metrics_exchanger_id = metrics_exchanger_id
         self.analytic_sender = AnalyticsSender(event_type=event_type, writer_name=writer_name)
-        self.x_queue = Queue()
-        self.y_queue = Queue()
+        self.buffer_size = buffer_size
 
-        self.read_interval = read_interval
-        self.heartbeat_interval = heartbeat_interval
-        self.heartbeat_timeout = heartbeat_timeout
-        self.pipe_handler = self._create_pipe_handler(mode=Mode.PASSIVE)
-
-        self._topic = topic
         self._get_poll_interval = get_poll_interval
         self.stop = Event()
         self._receive_thread = Thread(target=self.receive_data)
         self.fl_ctx = None
+        self.pipe = None
+        self.pipe_name = None
+        self.pipe_name_prefix = TrackConst.PIPE_NAME_PREFIX
+        self.logger = logging.getLogger(full_classname(self))
+        self.metrics_count = 0
+        self.messages = []
 
-    def _create_pipe_handler(self, *, mode):
-        memory_pipe = MemoryPipe(x_queue=self.x_queue, y_queue=self.y_queue, mode=mode)
-        pipe_handler = PipeHandler(
-            memory_pipe,
-            read_interval=self.read_interval,
-            heartbeat_interval=self.heartbeat_interval,
-            heartbeat_timeout=self.heartbeat_timeout,
-        )
-        pipe_handler.start()
-        return pipe_handler
+    def get_pipe_name(self, client_name):
+        return f"{self.pipe_name_prefix}_{client_name}"
+
+    def create_pipe(self, pipe_name: str):
+        if pipe_name is None:
+            raise ValueError("pipe name is None")
+
+        self.pipe = SharedMemPipe(size=self.buffer_size)
+        self.pipe.open(pipe_name)
+        self.pipe_name = pipe_name
+
+    def close_pipe(self):
+        if self.pipe_name:
+            # clear out anything remaining
+            self._receive_metrics()
+            pipe = self.pipe
+            self.pipe = None
+            pipe.close()
+
+        self.pipe_name = None
 
     def handle_event(self, event_type: str, fl_ctx: FLContext):
         if event_type == EventType.ABOUT_TO_START_RUN:
-            engine = fl_ctx.get_engine()
+            client_name = fl_ctx.get_identity_name()
+            self.create_pipe(self.get_pipe_name(client_name))
             self.analytic_sender.handle_event(event_type, fl_ctx)
-            # inserts MetricsExchanger into engine components
-            pipe_handler = self._create_pipe_handler(mode=Mode.ACTIVE)
-            metrics_exchanger = MetricsExchanger(pipe_handler=pipe_handler)
-            all_components = engine.get_all_components()
-            all_components[self.metrics_exchanger_id] = metrics_exchanger
             self.fl_ctx = fl_ctx
             self._receive_thread.start()
         elif event_type == EventType.ABOUT_TO_END_RUN:
             self.stop.set()
             self._receive_thread.join()
+            self.close_pipe()
+
+    def stop_receive(self, close_pipe=False):
+        self.stop.set()
+        if self.pipe_name and self.pipe and close_pipe:
+            self.close_pipe()
 
     def receive_data(self):
         """Receives data and sends with AnalyticsSender."""
+        count = 0
         while True:
+            count += 1
             if self.stop.is_set():
                 break
-            msg: Optional[Message] = self.pipe_handler.get_next()
-            if msg is not None:
-                if msg.topic == [Topic.END, Topic.PEER_GONE, Topic.ABORT]:
-                    self.task_panic("abort task", self.fl_ctx)
-                elif msg.topic != self._topic:
-                    self.task_panic(f"ignored '{msg.topic}' when waiting for '{self._topic}'", self.fl_ctx)
-                else:
-                    data: MetricData = msg.data
-                    # TODO: unpack the format and pass it into "add"
-                    self.analytic_sender.add(
-                        tag=data.key, value=data.value, data_type=data.data_type, **data.additional_args
-                    )
+            self._receive_metrics()
+            print(f"sleep for {self._get_poll_interval} seconds")
             time.sleep(self._get_poll_interval)
+
+    def _receive_metrics(self):
+        pipe: SharedMemPipe = self.pipe
+        msg = {}
+        pipe.receive(msg)
+        print(f"{msg =}")
+        if msg:
+            for tms, data in msg.items():
+                self.messages.append(data)
+                key = data.pop(TrackConst.TRACK_KEY, None)
+                value = data.pop(TrackConst.TRACK_VALUE, None)
+                data_type = data.pop(TrackConst.DATA_TYPE_KEY, None)
+
+                if key is not None and value is not None and data_type is not None:
+                    self.metrics_count += 1
+                    print(f"{self.metrics_count=}")
+                    self._send_data_to_event(data, data_type, key, value)
+                else:
+                    self.logger.warning(f"{TrackConst.TRACK_KEY}, {TrackConst.TRACK_VALUE} and {TrackConst.DATA_TYPE_KEY}"
+                                        f"all should have valid values, but got the followings {key=}, {value=}, "
+                                        f"{data_type=}")
+
+    def _send_data_to_event(self, data, data_type, key, value):
+        self.analytic_sender.add(tag=key,
+                                 value=value,
+                                 data_type=data_type,
+                                 **data)
