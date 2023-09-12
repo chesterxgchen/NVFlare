@@ -21,11 +21,7 @@ from nvflare.fuel.utils.pipe.shared_mem_pipe import SharedMemPipe
 
 class MetricData:
     def __init__(self, key, value, data_type: AnalyticsDataType, extra_args=None):
-        self.data = {
-            TrackConst.TRACK_KEY: key,
-            TrackConst.TRACK_VALUE: value,
-            TrackConst.DATA_TYPE_KEY: data_type
-        }
+        self.data = {TrackConst.TRACK_KEY: key, TrackConst.TRACK_VALUE: value, TrackConst.DATA_TYPE_KEY: data_type}
         if extra_args:
             for k in extra_args:
                 self.data[k] = extra_args[k]

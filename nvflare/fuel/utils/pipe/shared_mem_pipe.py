@@ -20,7 +20,6 @@ from nvflare.fuel.utils.class_utils import full_classname
 
 
 class SharedMemPipe:
-
     def __init__(self, size=1024 * 100):
         self.shared_dict = None
         self.buffer_size = size
@@ -30,9 +29,10 @@ class SharedMemPipe:
     def open(self, name: str):
         if self.shared_dict is None:
             self.name = name
-            self.shared_dict = UltraDict(name=name,
-                                         buffer_size=self.buffer_size,
-                                         )
+            self.shared_dict = UltraDict(
+                name=name,
+                buffer_size=self.buffer_size,
+            )
 
     def clear(self):
         if self.shared_dict:

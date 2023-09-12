@@ -26,11 +26,11 @@ from nvflare.fuel.utils.pipe.shared_mem_pipe import SharedMemPipe
 
 class MetricsRetriever(FLComponent):
     def __init__(
-            self,
-            event_type=ANALYTIC_EVENT_TYPE,
-            writer_name=LogWriterName.TORCH_TB,
-            get_poll_interval: float = 0.005,
-            buffer_size=100 * 1024
+        self,
+        event_type=ANALYTIC_EVENT_TYPE,
+        writer_name=LogWriterName.TORCH_TB,
+        get_poll_interval: float = 0.005,
+        buffer_size=100 * 1024,
     ):
         """Metrics retriever.
 
@@ -124,15 +124,16 @@ class MetricsRetriever(FLComponent):
                 print(f"{self.metrics_count=}")
                 self._send_data_to_event(data, data_type, key, value)
             else:
-                print(f"{TrackConst.TRACK_KEY}, {TrackConst.TRACK_VALUE} and {TrackConst.DATA_TYPE_KEY}"
-                      f"all should have valid values, but got the followings {key=}, {value=}, "
-                      f"{data_type=}")
-                self.logger.warning(f"{TrackConst.TRACK_KEY}, {TrackConst.TRACK_VALUE} and {TrackConst.DATA_TYPE_KEY}"
-                                    f"all should have valid values, but got the followings {key=}, {value=}, "
-                                    f"{data_type=}")
+                print(
+                    f"{TrackConst.TRACK_KEY}, {TrackConst.TRACK_VALUE} and {TrackConst.DATA_TYPE_KEY}"
+                    f"all should have valid values, but got the followings {key=}, {value=}, "
+                    f"{data_type=}"
+                )
+                self.logger.warning(
+                    f"{TrackConst.TRACK_KEY}, {TrackConst.TRACK_VALUE} and {TrackConst.DATA_TYPE_KEY}"
+                    f"all should have valid values, but got the followings {key=}, {value=}, "
+                    f"{data_type=}"
+                )
 
     def _send_data_to_event(self, data, data_type, key, value):
-        self.analytic_sender.add(tag=key,
-                                 value=value,
-                                 data_type=data_type,
-                                 **data)
+        self.analytic_sender.add(tag=key, value=value, data_type=data_type, **data)

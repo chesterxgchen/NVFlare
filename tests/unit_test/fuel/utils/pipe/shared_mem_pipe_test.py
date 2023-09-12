@@ -18,7 +18,6 @@ from nvflare.fuel.utils.pipe.shared_mem_pipe import SharedMemPipe
 
 
 class TestSharedMemPipe:
-
     def test_count(self):
         name = "foo"
         left = SharedMemPipe()
@@ -38,7 +37,6 @@ class TestSharedMemPipe:
         finally:
             left.close()
             pass
-
 
     def send(self, name, count):
         right = SharedMemPipe()
@@ -71,8 +69,6 @@ class TestSharedMemPipe:
                 assert len(left.shared_dict) == 0
         finally:
             left.close()
-
-
 
     def test_inter_processes_send_receive(self):
         count = 100
@@ -112,7 +108,7 @@ class TestSharedMemPipe:
                 # send_data.update({ms: {"step": i, "value": 0.123, "key": "accuracy"}})
 
                 a = str(datetime.now())
-                send_data.update({a: {"step": i, "value": 0.123, "key": "accuracy"}} )
+                send_data.update({a: {"step": i, "value": 0.123, "key": "accuracy"}})
             right.send(send_data)
 
             assert len(left.shared_dict) == count
