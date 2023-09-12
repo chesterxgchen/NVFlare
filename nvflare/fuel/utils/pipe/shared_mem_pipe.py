@@ -46,7 +46,7 @@ class SharedMemPipe:
     def receive(self, data: Dict):
         if data is None:
             data = {}
-        print(self.shared_dict)
+        print(f"{self.shared_dict=}")
 
         for k, v in self.shared_dict.data.items():
             data[k] = v

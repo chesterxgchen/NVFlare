@@ -56,12 +56,14 @@ class MetricsRetriever(FLComponent):
     def get_pipe_name(self, client_name):
         return f"{self.pipe_name_prefix}_{client_name}"
 
-    def create_pipe(self, pipe_name: str):
+    def open_pipe(self, pipe_name: str):
         if pipe_name is None:
             raise ValueError("pipe name is None")
 
-        self.pipe = SharedMemPipe(size=self.buffer_size)
+        # self.pipe = SharedMemPipe(size=self.buffer_size)
+        self.pipe = SharedMemPipe()
         self.pipe.open(pipe_name)
+        print("receiver after open()", self.pipe.shared_dict)
         self.pipe_name = pipe_name
 
     def close_pipe(self):
@@ -77,7 +79,7 @@ class MetricsRetriever(FLComponent):
     def handle_event(self, event_type: str, fl_ctx: FLContext):
         if event_type == EventType.ABOUT_TO_START_RUN:
             client_name = fl_ctx.get_identity_name()
-            self.create_pipe(self.get_pipe_name(client_name))
+            self.open_pipe(self.get_pipe_name(client_name))
             self.analytic_sender.handle_event(event_type, fl_ctx)
             self.fl_ctx = fl_ctx
             self._receive_thread.start()
@@ -104,6 +106,9 @@ class MetricsRetriever(FLComponent):
 
     def _receive_metrics(self):
         pipe: SharedMemPipe = self.pipe
+        print(f"receiver {pipe.shared_dict=}")
+        print(f"receiver {pipe.shared_dict.name=}")
+        print(f"receiver {pipe.name=}")
         msg = {}
         pipe.receive(msg)
         print(f"{msg =}")

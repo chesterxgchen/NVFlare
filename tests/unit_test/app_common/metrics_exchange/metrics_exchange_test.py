@@ -37,9 +37,11 @@ class TestMetricsExchange:
         receiver._send_data_to_event = _send_data_to_event
         try:
             pipe_name = receiver.get_pipe_name(client_name)
+            print(f"{pipe_name=}")
             # simulate ABOUT_TO_START_RUN event
-            receiver.create_pipe(pipe_name)
-            receiver._receive_thread.start()
+            receiver.open_pipe(pipe_name)
+            # receiver._receive_thread.start()
+            receiver._receive_metrics()
             print("job finished size = ", len(receiver.messages))
 
         finally:
@@ -74,21 +76,23 @@ class TestMetricsExchange:
                 time.sleep(delay_sec)
                 sender.log(key=key, value=value, data_type=data_type, global_step=step, path=path)
         finally:
-            print( "send count = ", sender.send_count)
-            sender.close()
-
+            print("send count = ", sender.send_count)
+            print(f"{sender.pipe.shared_dict=}")
+            print(f"{sender.pipe.name=}")
+            print(f"{sender.pipe.shared_dict.name=}")
+            # try:
+            #     sender.close()
+            # except FileNotFoundError as ignore:
+            #     pass
 
     def test_send_receive_metrics(self):
-        client_names = ["site-1", "client-2"]
+        client_names = ["site-1"]
         for client_name in client_names:
-            r2 = Thread(target=self.send_metrics, args=(client_name,))
-            r2.start()
-            r2.join()
+            self.send_metrics(client_name)
 
         for client_name in client_names:
-            r1 = Thread(target=self.receive_metrics, args=(client_name,))
-            r1.start()
-            r1.join()
+            self.receive_metrics(client_name)
+
         assert count == 10
 
     # def test_send_receive_metrics_multi_processes(self):

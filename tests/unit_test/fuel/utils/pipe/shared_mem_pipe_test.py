@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import multiprocessing as mp
-import time
+from datetime import datetime
 
 from nvflare.fuel.utils.pipe.shared_mem_pipe import SharedMemPipe
 
@@ -38,6 +38,7 @@ class TestSharedMemPipe:
         finally:
             left.close()
             pass
+
 
     def send(self, name, count):
         right = SharedMemPipe()
@@ -71,6 +72,8 @@ class TestSharedMemPipe:
         finally:
             left.close()
 
+
+
     def test_inter_processes_send_receive(self):
         count = 100
         receive_proc = mp.Process(target=self.recieve, args=("foo", count))
@@ -95,7 +98,7 @@ class TestSharedMemPipe:
             send_proc.join()
 
     def test_nested_dicts(self):
-        name = "foo"
+        name = "foo2"
         left = SharedMemPipe()
         right = SharedMemPipe()
         try:
@@ -104,8 +107,12 @@ class TestSharedMemPipe:
             count = 100
             send_data = {}
             for i in range(count):
-                ms = time.time_ns()
-                send_data.update({ms: {"step": i, "value": 0.123, "key": "accuracy"}})
+                # ms = time.time_ns()
+                # this doesn't work, as we may lose keys.
+                # send_data.update({ms: {"step": i, "value": 0.123, "key": "accuracy"}})
+
+                a = str(datetime.now())
+                send_data.update({a: {"step": i, "value": 0.123, "key": "accuracy"}} )
             right.send(send_data)
 
             assert len(left.shared_dict) == count
@@ -119,8 +126,8 @@ class TestSharedMemPipe:
             # send again, but one item a time
             for k, v in send_data.items():
                 right.send({k: v})
-
             assert len(left.shared_dict) == count
+
             data = {}
             left.receive(data)
             assert len(data) == count

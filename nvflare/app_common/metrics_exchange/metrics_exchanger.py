@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+from datetime import datetime
 from typing import Any
 
 from nvflare.apis.analytix import AnalyticsDataType
@@ -44,10 +44,10 @@ class MetricsExchanger:
 
     def log(self, key: str, value: Any, data_type: AnalyticsDataType, **kwargs):
         metric = MetricData(key=key, value=value, data_type=data_type, extra_args=kwargs)
-        ms = time.time_ns()
+        dt = str(datetime.now())
         if self.pipe:
             self.send_count += 1
-            self.pipe.send({ms: metric.data})
+            self.pipe.send({dt: metric.data})
         else:
             raise RuntimeError("self.pipe is None")
 
