@@ -16,7 +16,6 @@ from typing import Any
 
 from nvflare.apis.analytix import AnalyticsDataType
 from nvflare.app_common.tracking.tracker_types import TrackConst
-import time
 from nvflare.fuel.utils.pipe.shared_mem_pipe import SharedMemPipe
 
 
@@ -38,7 +37,7 @@ class MetricsExchanger:
         self.pipe = None
         self.send_count = 0
 
-    def start(self):
+    def open_pipe(self):
         self.pipe = SharedMemPipe()
         self.pipe.open(self.pipe_name)
 
@@ -51,6 +50,6 @@ class MetricsExchanger:
         else:
             raise RuntimeError("self.pipe is None")
 
-    def close(self):
+    def close_pipe(self):
         self.pipe.clear()
         self.pipe.close()

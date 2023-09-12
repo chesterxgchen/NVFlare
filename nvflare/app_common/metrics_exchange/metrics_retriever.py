@@ -29,7 +29,7 @@ class MetricsRetriever(FLComponent):
             self,
             event_type=ANALYTIC_EVENT_TYPE,
             writer_name=LogWriterName.TORCH_TB,
-            get_poll_interval: float = 0.01,
+            get_poll_interval: float = 0.005,
             buffer_size=100 * 1024
     ):
         """Metrics retriever.
@@ -63,7 +63,6 @@ class MetricsRetriever(FLComponent):
         # self.pipe = SharedMemPipe(size=self.buffer_size)
         self.pipe = SharedMemPipe()
         self.pipe.open(pipe_name)
-        print("receiver after open()", self.pipe.shared_dict)
         self.pipe_name = pipe_name
 
     def close_pipe(self):
@@ -95,9 +94,7 @@ class MetricsRetriever(FLComponent):
 
     def receive_data(self):
         """Receives data and sends with AnalyticsSender."""
-        count = 0
         while True:
-            count += 1
             if self.stop.is_set():
                 break
             self._receive_metrics()
@@ -105,28 +102,34 @@ class MetricsRetriever(FLComponent):
             time.sleep(self._get_poll_interval)
 
     def _receive_metrics(self):
+        if self.pipe is None:
+            return
+
         pipe: SharedMemPipe = self.pipe
-        print(f"receiver {pipe.shared_dict=}")
-        print(f"receiver {pipe.shared_dict.name=}")
-        print(f"receiver {pipe.name=}")
         msg = {}
         pipe.receive(msg)
-        print(f"{msg =}")
-        if msg:
-            for tms, data in msg.items():
-                self.messages.append(data)
-                key = data.pop(TrackConst.TRACK_KEY, None)
-                value = data.pop(TrackConst.TRACK_VALUE, None)
-                data_type = data.pop(TrackConst.DATA_TYPE_KEY, None)
+        if not msg:
+            return
 
-                if key is not None and value is not None and data_type is not None:
-                    self.metrics_count += 1
-                    print(f"{self.metrics_count=}")
-                    self._send_data_to_event(data, data_type, key, value)
-                else:
-                    self.logger.warning(f"{TrackConst.TRACK_KEY}, {TrackConst.TRACK_VALUE} and {TrackConst.DATA_TYPE_KEY}"
-                                        f"all should have valid values, but got the followings {key=}, {value=}, "
-                                        f"{data_type=}")
+        print(f"{len(msg)=}")
+        self.metrics_count += len(msg)
+
+        for tms, data in msg.items():
+            self.messages.append(data)
+            key = data.pop(TrackConst.TRACK_KEY, None)
+            value = data.pop(TrackConst.TRACK_VALUE, None)
+            data_type = data.pop(TrackConst.DATA_TYPE_KEY, None)
+
+            if key is not None and value is not None and data_type is not None:
+                print(f"{self.metrics_count=}")
+                self._send_data_to_event(data, data_type, key, value)
+            else:
+                print(f"{TrackConst.TRACK_KEY}, {TrackConst.TRACK_VALUE} and {TrackConst.DATA_TYPE_KEY}"
+                      f"all should have valid values, but got the followings {key=}, {value=}, "
+                      f"{data_type=}")
+                self.logger.warning(f"{TrackConst.TRACK_KEY}, {TrackConst.TRACK_VALUE} and {TrackConst.DATA_TYPE_KEY}"
+                                    f"all should have valid values, but got the followings {key=}, {value=}, "
+                                    f"{data_type=}")
 
     def _send_data_to_event(self, data, data_type, key, value):
         self.analytic_sender.add(tag=key,
