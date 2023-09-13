@@ -23,5 +23,6 @@ from .api import params_diff as params_diff
 from .api import receive as receive
 from .api import send as send
 from .api import system_info as system_info
+from .api import log as log
 from .decorator import evaluate as evaluate
 from .decorator import train as train

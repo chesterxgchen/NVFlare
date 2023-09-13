@@ -54,7 +54,7 @@ class MetricsRetriever(FLComponent):
         self.metrics_count = 0
         self.messages = []
 
-    def get_pipe_name(self, client_name, job_id : Optional[str] = None):
+    def get_pipe_name(self, client_name, job_id: Optional[str] = None):
         name = f"{self.pipe_name_prefix}_{client_name}"
         return f"{name}_{job_id}" if job_id else name
 

@@ -15,13 +15,14 @@
 import copy
 from typing import Optional
 
-from nvflare.app_common.abstract.fl_model import FLModel, ParamsType
+from nvflare.app_common.abstract.fl_model import FLModel, MetaKey, ParamsType
 from nvflare.app_common.model_exchange.model_exchanger import ModelExchanger
 
+from ..app_common.metrics_exchange.metrics_exchanger import MetricsExchanger
+from ..app_common.tracking.tracker_types import TrackConst
 from .config import ClientConfig
 from .constants import SYS_ATTRS
 from .utils import DIFF_FUNCS, get_meta_from_fl_model
-from ..app_common.metrics_exchange.metrics_exchanger import MetricsExchanger
 
 
 class ModelRegistry:
@@ -36,17 +37,26 @@ class ModelRegistry:
 
     """
 
-    def __init__(self,
-                 model_exchanger: ModelExchanger,
-                 config: ClientConfig):
+    def __init__(self, model_exchanger: ModelExchanger, config: ClientConfig):
         self.model_exchanger = model_exchanger
         self.config = config
-
+        self.sys_info = None
         self.cached_model: Optional[FLModel] = None
         self.cache_loaded = False
         self.metrics = None
-        self.sys_info = None
+
         self.output_meta = {}
+        self.metrics_exchanger = None
+
+        self.init_metrics_exchanger()
+
+    def init_metrics_exchanger(self):
+        sys_info = self.get_sys_info()
+        site_name = sys_info.get(MetaKey.SITE_NAME, "")
+        job_id = sys_info.get(MetaKey.JOB_ID, "")
+        shared_mem_pipe_name = f"{TrackConst.PIPE_NAME_PREFIX}_{site_name}_{job_id}"
+        self.metrics_exchanger = MetricsExchanger(shared_mem_pipe_name)
+        self.metrics_exchanger.open_pipe()
 
     def receive(self):
         self.cached_model = self.model_exchanger.receive_model()

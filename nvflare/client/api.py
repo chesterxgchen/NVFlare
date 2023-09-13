@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import os
-from typing import Dict, Union
+from typing import Any, Dict, Union
 
 from nvflare.app_common.abstract.fl_model import FLModel, MetaKey
 from nvflare.app_common.model_exchange.constants import ModelExchangeFormat
@@ -21,12 +21,11 @@ from nvflare.app_common.model_exchange.file_pipe_model_exchanger import FilePipe
 from nvflare.fuel.utils import fobs
 from nvflare.fuel.utils.import_utils import optional_import
 
+from ..apis.analytix import AnalyticsDataType
 from .config import ClientConfig, from_file
 from .constants import CONFIG_EXCHANGE
 from .model_registry import ModelRegistry
 from .utils import DIFF_FUNCS
-from ..app_common.metrics_exchange.metrics_exchanger import MetricsExchanger
-from ..app_common.tracking.tracker_types import TrackConst
 
 PROCESS_MODEL_REGISTRY: Dict[int, ModelRegistry] = {}
 
@@ -57,18 +56,7 @@ def init(config: Union[str, Dict] = f"config/{CONFIG_EXCHANGE}"):
 
     # TODO: make things configurable in config_exchange
     mdx = FilePipeModelExchanger(data_exchange_path=client_config.get_exchange_path())
-    mr = ModelRegistry(mdx, client_config)
-    PROCESS_MODEL_REGISTRY[pid] = mr
-
-    sys_info = mr.get_sys_info()
-    site_name = sys_info.get(MetaKey.SITE_NAME, '')
-    job_id = sys_info.get(MetaKey.JOB_ID, '')
-    shared_mem_pipe_name = f"{TrackConst.PIPE_NAME_PREFIX}_{site_name}_{job_id}"
-    metrics_exchanger = MetricsExchanger(shared_mem_pipe_name)
-    metrics_exchanger.open_pipe()
-
-
-
+    PROCESS_MODEL_REGISTRY[pid] = ModelRegistry(mdx, client_config)
 
 
 def receive() -> FLModel:
@@ -77,11 +65,7 @@ def receive() -> FLModel:
     Returns:
         A tuple of model, metadata received.
     """
-    pid = os.getpid()
-    if pid not in PROCESS_MODEL_REGISTRY:
-        raise RuntimeError("needs to call init method first")
-
-    model_registry = PROCESS_MODEL_REGISTRY[pid]
+    model_registry = _get_model_registry()
     return model_registry.get_model()
 
 
@@ -89,13 +73,10 @@ def send(fl_model: FLModel, clear_registry: bool = True) -> None:
     """Sends the model to NVFlare side.
 
     Args:
+        fl_model:
         clear_registry (bool): To clear the registry or not.
     """
-    pid = os.getpid()
-    if pid not in PROCESS_MODEL_REGISTRY:
-        raise RuntimeError("needs to call init method first")
-
-    model_registry = PROCESS_MODEL_REGISTRY[pid]
+    model_registry = _get_model_registry()
     model_registry.send(model=fl_model)
     if clear_registry:
         clear()
@@ -103,10 +84,7 @@ def send(fl_model: FLModel, clear_registry: bool = True) -> None:
 
 def clear():
     """Clears the model registry."""
-    pid = os.getpid()
-    if pid not in PROCESS_MODEL_REGISTRY:
-        raise RuntimeError("needs to call init method first")
-    model_registry = PROCESS_MODEL_REGISTRY[pid]
+    model_registry = _get_model_registry()
     model_registry.clear()
 
 
@@ -119,18 +97,12 @@ def system_info() -> Dict:
     Returns:
        A dict of system information.
     """
-    pid = os.getpid()
-    if pid not in PROCESS_MODEL_REGISTRY:
-        raise RuntimeError("needs to call init method first")
-    model_registry = PROCESS_MODEL_REGISTRY[pid]
+    model_registry = _get_model_registry()
     return model_registry.get_sys_info()
 
 
 def params_diff(original: Dict, new: Dict) -> Dict:
-    pid = os.getpid()
-    if pid not in PROCESS_MODEL_REGISTRY:
-        raise RuntimeError("needs to call init method first")
-    model_registry = PROCESS_MODEL_REGISTRY[pid]
+    model_registry = _get_model_registry()
     diff_func = DIFF_FUNCS.get(model_registry.config.get_exchange_format(), None)
     if diff_func is None:
         raise RuntimeError("no default params diff function")
@@ -138,11 +110,14 @@ def params_diff(original: Dict, new: Dict) -> Dict:
 
 
 def get_config() -> Dict:
-    pid = os.getpid()
-    if pid not in PROCESS_MODEL_REGISTRY:
-        raise RuntimeError("needs to call init method first")
-    model_registry = PROCESS_MODEL_REGISTRY[pid]
+    model_registry = _get_model_registry()
     return model_registry.config.config
+
+
+def log(self, key: str, value: Any, data_type: AnalyticsDataType, **kwargs):
+    model_registry = _get_model_registry()
+    metrics_exchanger = model_registry.get_metrics_exchanger()
+    metrics_exchanger.log(key, value, data_type, **kwargs)
 
 
 def get_job_id() -> str:
@@ -158,3 +133,11 @@ def get_total_rounds() -> int:
 def get_site_name() -> str:
     sys_info = system_info()
     return sys_info.get(MetaKey.SITE_NAME, "")
+
+
+def _get_model_registry():
+    pid = os.getpid()
+    if pid not in PROCESS_MODEL_REGISTRY:
+        raise RuntimeError("needs to call init method first")
+    model_registry = PROCESS_MODEL_REGISTRY[pid]
+    return model_registry
