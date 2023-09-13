@@ -45,7 +45,6 @@ class TestMetricsExchange:
         receiver._send_data_to_event = _send_data_to_event
         try:
             pipe_name = receiver.get_pipe_name(client_name)
-            print(f"{pipe_name=}")
             # simulate ABOUT_TO_START_RUN event
             receiver.open_pipe(pipe_name)
             receiver._receive_thread.start()

@@ -25,6 +25,7 @@ from nvflare.apis.shareable import Shareable, make_reply
 from nvflare.apis.signal import Signal
 from nvflare.app_common.abstract.launcher import Launcher, LauncherCompleteStatus
 from nvflare.app_common.metrics_exchange.metrics_retriever import MetricsRetriever
+from nvflare.app_common.tracking.tracker_types import LogWriterName
 from nvflare.app_common.utils.fl_model_utils import FLModelUtils, ParamsConverter
 from nvflare.fuel.utils.pipe.pipe import Message, Pipe
 from nvflare.fuel.utils.pipe.pipe_handler import PipeHandler, Topic
@@ -50,6 +51,7 @@ class LauncherExecutor(Executor):
         global_evaluation: bool = True,
         from_nvflare_converter_id: Optional[str] = None,
         to_nvflare_converter_id: Optional[str] = None,
+        log_writer_name=LogWriterName.TORCH_TB.value,
     ) -> None:
         """Initializes the LauncherExecutor.
 
@@ -104,6 +106,7 @@ class LauncherExecutor(Executor):
         self._from_nvflare_converter: Optional[ParamsConverter] = None
         self._to_nvflare_converter_id = to_nvflare_converter_id
         self._to_nvflare_converter: Optional[ParamsConverter] = None
+        self._log_writer_name = log_writer_name
 
     def initialize(self, fl_ctx: FLContext) -> None:
         self._init_launcher(fl_ctx)

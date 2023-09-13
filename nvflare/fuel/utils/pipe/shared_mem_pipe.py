@@ -18,6 +18,9 @@ from UltraDict import UltraDict
 
 from nvflare.fuel.utils.class_utils import full_classname
 
+MAX_LENGTH = 25
+# note: in Mac the max length for shared memory is 31.
+
 
 class SharedMemPipe:
     def __init__(self, size=1024 * 100):
@@ -27,6 +30,8 @@ class SharedMemPipe:
         self.logger = logging.getLogger(full_classname(self))
 
     def open(self, name: str):
+        self._check_pipe_name(name)
+
         if self.shared_dict is None:
             self.name = name
             self.shared_dict = UltraDict(
@@ -61,3 +66,10 @@ class SharedMemPipe:
             self.shared_dict.close()
             self.shared_dict.unlink()
         self.name = None
+
+    def _check_pipe_name(self, name):
+        if not name:
+            raise ValueError("invalid pipe name")
+
+        if len(name) > MAX_LENGTH:
+            raise ValueError("name is too long")

@@ -12,17 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from abc import abstractmethod
+from typing import Any
 
-# https://github.com/microsoft/pylance-release/issues/856
+from nvflare.apis.analytix import AnalyticsDataType
+from nvflare.app_common.tracking.tracker_types import LogWriterName
 
-from nvflare.app_common.abstract.fl_model import FLModel as FLModel
-from nvflare.app_common.abstract.fl_model import ParamsType as ParamsType
 
-from .api import init as init
-from .api import log_writer as log_writer
-from .api import params_diff as params_diff
-from .api import receive as receive
-from .api import send as send
-from .api import system_info as system_info
-from .decorator import evaluate as evaluate
-from .decorator import train as train
+class ClientLogWriter:
+    def __init__(self, sender):
+        self.sender = sender
+
+    def log(self, key: str, value: Any, data_type: AnalyticsDataType, **kwargs):
+        self.sender.log(key=key, value=value, data_type=data_type, **kwargs)
+
+    @abstractmethod
+    def get_writer_name(self) -> LogWriterName:
+        pass

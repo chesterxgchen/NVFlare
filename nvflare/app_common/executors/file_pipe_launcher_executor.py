@@ -19,6 +19,7 @@ from nvflare.apis.fl_context import FLContext
 from nvflare.apis.utils.decomposers import flare_decomposers
 from nvflare.app_common.decomposers import common_decomposers
 from nvflare.app_common.executors.launcher_executor import LauncherExecutor
+from nvflare.app_common.tracking.tracker_types import LogWriterName
 from nvflare.fuel.utils.constants import Mode
 from nvflare.fuel.utils.pipe.file_pipe import FilePipe
 from nvflare.fuel.utils.pipe.pipe_handler import PipeHandler
@@ -44,6 +45,7 @@ class FilePipeLauncherExecutor(LauncherExecutor):
         global_evaluation: bool = True,
         from_nvflare_converter_id: Optional[str] = None,
         to_nvflare_converter_id: Optional[str] = None,
+        log_writer_name=LogWriterName.TORCH_TB.value,
     ) -> None:
         """Initializes the FilePipeLauncherExecutor.
 
@@ -84,6 +86,7 @@ class FilePipeLauncherExecutor(LauncherExecutor):
             global_evaluation=global_evaluation,
             from_nvflare_converter_id=from_nvflare_converter_id,
             to_nvflare_converter_id=to_nvflare_converter_id,
+            log_writer_name=log_writer_name,
         )
 
         self._data_exchange_path = data_exchange_path

@@ -18,6 +18,7 @@ from typing import Dict, Optional
 from nvflare.apis.fl_context import FLContext
 from nvflare.app_common.executors.file_pipe_launcher_executor import FilePipeLauncherExecutor
 from nvflare.app_common.model_exchange.constants import ModelExchangeFormat
+from nvflare.app_common.tracking.tracker_types import LogWriterName
 from nvflare.client.config import ClientConfig, ConfigKey, TransferType
 from nvflare.client.constants import CONFIG_EXCHANGE
 
@@ -43,6 +44,7 @@ class ClientAPILauncherExecutor(FilePipeLauncherExecutor):
         params_transfer_type: TransferType = TransferType.FULL,
         from_nvflare_converter_id: Optional[str] = None,
         to_nvflare_converter_id: Optional[str] = None,
+        log_writer_name=LogWriterName.TORCH_TB.value,
     ) -> None:
         """Initializes the ClientAPILauncherExecutor.
 
@@ -87,6 +89,7 @@ class ClientAPILauncherExecutor(FilePipeLauncherExecutor):
             global_evaluation=global_evaluation,
             from_nvflare_converter_id=from_nvflare_converter_id,
             to_nvflare_converter_id=to_nvflare_converter_id,
+            log_writer_name=log_writer_name,
         )
 
         self._params_exchange_format = params_exchange_format
@@ -107,3 +110,4 @@ class ClientAPILauncherExecutor(FilePipeLauncherExecutor):
         config[ConfigKey.EXCHANGE_FORMAT] = self._params_exchange_format
         config[ConfigKey.EXCHANGE_PATH] = self._data_exchange_path
         config[ConfigKey.TRANSFER_TYPE] = self._params_transfer_type
+        config[ConfigKey.LOG_WRITER_NAME] = self._log_writer_name

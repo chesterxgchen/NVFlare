@@ -13,21 +13,31 @@
 # limitations under the License.
 
 import os
-from typing import Any, Dict, Union
+from typing import Dict, Union
 
 from nvflare.app_common.abstract.fl_model import FLModel, MetaKey
 from nvflare.app_common.model_exchange.constants import ModelExchangeFormat
 from nvflare.app_common.model_exchange.file_pipe_model_exchanger import FilePipeModelExchanger
+from nvflare.app_opt.tracking.mlflow.mlflow_client_writer import MLflowWriter
+from nvflare.app_opt.tracking.tb.tb_client_writer import TBWriter
+from nvflare.app_opt.tracking.wandb.wandb_client_writer import WandBWriter
 from nvflare.fuel.utils import fobs
 from nvflare.fuel.utils.import_utils import optional_import
 
-from ..apis.analytix import AnalyticsDataType
-from .config import ClientConfig, from_file
+from ..app_common.tracking.tracker_types import LogWriterName
+from .config import ClientConfig, ConfigKey, from_file
 from .constants import CONFIG_EXCHANGE
 from .model_registry import ModelRegistry
 from .utils import DIFF_FUNCS
 
 PROCESS_MODEL_REGISTRY: Dict[int, ModelRegistry] = {}
+
+
+WRITERS = {
+    LogWriterName.TORCH_TB.value: TBWriter,
+    LogWriterName.MLFLOW.value: MLflowWriter,
+    LogWriterName.WANDB.value: WandBWriter,
+}
 
 
 def init(config: Union[str, Dict] = f"config/{CONFIG_EXCHANGE}"):
@@ -114,10 +124,19 @@ def get_config() -> Dict:
     return model_registry.config.config
 
 
-def log(self, key: str, value: Any, data_type: AnalyticsDataType, **kwargs):
+def log_writer():
     model_registry = _get_model_registry()
     metrics_exchanger = model_registry.get_metrics_exchanger()
-    metrics_exchanger.log(key, value, data_type, **kwargs)
+    config = model_registry.config.config
+    log_writer_name = config.get(ConfigKey.LOG_WRITER_NAME, None)
+    if log_writer_name is None:
+        raise RuntimeError("Log Writer name is not provided")
+
+    log_writer_fn = WRITERS.get(log_writer_name, None)
+    if log_writer_fn:
+        return log_writer_fn(metrics_exchanger)
+    else:
+        raise RuntimeError(f"Log Writer name is not supported {log_writer_name}")
 
 
 def get_job_id() -> str:

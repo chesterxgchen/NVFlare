@@ -18,10 +18,11 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
+from net import Net
 
 # (1) import nvflare client API
 import nvflare.client as flare
-from net import Net
+
 # default dataset path
 from nvflare.apis.analytix import AnalyticsDataType
 
@@ -58,6 +59,9 @@ def _main(args):
 
     # (2) initializes NVFlare client API
     flare.init()
+
+    log_writer = flare.log_writer()
+
     # (3) gets FLModel from NVFlare
     input_model = flare.receive()
     print(
@@ -94,7 +98,7 @@ def _main(args):
             optimizer.step()
 
             # print statistics
-            flare.log("loss", loss, AnalyticsDataType.METRIC, global_step=epoch + 1)
+            log_writer.log("loss", loss, AnalyticsDataType.METRIC, global_step=epoch + 1)
 
             running_loss += loss.item()
             if i % 2000 == 1999:  # print every 2000 mini-batches

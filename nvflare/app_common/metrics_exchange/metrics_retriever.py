@@ -56,7 +56,7 @@ class MetricsRetriever(FLComponent):
 
     def get_pipe_name(self, client_name, job_id: Optional[str] = None):
         name = f"{self.pipe_name_prefix}_{client_name}"
-        return f"{name}_{job_id}" if job_id else name
+        return f"{name}_{job_id[:7]}" if job_id else name
 
     def open_pipe(self, pipe_name: str):
         if pipe_name is None:

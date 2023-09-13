@@ -31,6 +31,7 @@ class ConfigKey:
     TRANSFER_TYPE = "transfer_type"
     GLOBAL_EVAL = "global_eval"
     TRAINING = "training"
+    LOG_WRITER_NAME = "log_write_name"
 
 
 class ClientConfig:

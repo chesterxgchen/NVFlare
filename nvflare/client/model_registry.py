@@ -54,7 +54,8 @@ class ModelRegistry:
         sys_info = self.get_sys_info()
         site_name = sys_info.get(MetaKey.SITE_NAME, "")
         job_id = sys_info.get(MetaKey.JOB_ID, "")
-        shared_mem_pipe_name = f"{TrackConst.PIPE_NAME_PREFIX}_{site_name}_{job_id}"
+        job_id_prefix = job_id[:7]
+        shared_mem_pipe_name = f"{TrackConst.PIPE_NAME_PREFIX}_{site_name}_{job_id_prefix}"
         self.metrics_exchanger = MetricsExchanger(shared_mem_pipe_name)
         self.metrics_exchanger.open_pipe()
 
