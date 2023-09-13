@@ -24,6 +24,7 @@ from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable, make_reply
 from nvflare.apis.signal import Signal
 from nvflare.app_common.abstract.launcher import Launcher, LauncherCompleteStatus
+from nvflare.app_common.metrics_exchange.metrics_retriever import MetricsRetriever
 from nvflare.app_common.utils.fl_model_utils import FLModelUtils, ParamsConverter
 from nvflare.fuel.utils.pipe.pipe import Message, Pipe
 from nvflare.fuel.utils.pipe.pipe_handler import PipeHandler, Topic
@@ -80,6 +81,7 @@ class LauncherExecutor(Executor):
         self._thread_pool_executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix=self.__class__.__name__)
 
         self.pipe_handler: Optional[PipeHandler] = None
+        self.metrics_receiver: Optional[MetricsRetriever] = None
         self._pipe_id = pipe_id
         self._pipe_name = pipe_name
         self._topic = "data"
@@ -108,9 +110,7 @@ class LauncherExecutor(Executor):
         self._init_converter(fl_ctx)
 
         # gets pipe
-        engine = fl_ctx.get_engine()
-        pipe: Pipe = engine.get_component(self._pipe_id)
-        check_object_type(self._pipe_id, pipe, Pipe)
+        pipe = self._get_pipe(fl_ctx)
 
         # init pipe
         pipe.open(self._pipe_name)
@@ -121,6 +121,7 @@ class LauncherExecutor(Executor):
             heartbeat_timeout=self._heartbeat_timeout,
         )
         self.pipe_handler.start()
+        self.metrics_receiver = MetricsRetriever()
 
     def handle_event(self, event_type: str, fl_ctx: FLContext) -> None:
         if event_type == EventType.START_RUN:
@@ -160,6 +161,12 @@ class LauncherExecutor(Executor):
         self._clear()
 
         return result
+
+    def _get_pipe(self, fl_ctx: FLContext):
+        engine = fl_ctx.get_engine()
+        pipe: Pipe = engine.get_component(self._pipe_id)
+        check_object_type(self._pipe_id, pipe, Pipe)
+        return pipe
 
     def _init_launcher(self, fl_ctx: FLContext):
         engine = fl_ctx.get_engine()

@@ -14,6 +14,7 @@
 import logging
 import time
 from threading import Event, Thread
+from typing import Optional
 
 from nvflare.apis.event_type import EventType
 from nvflare.apis.fl_component import FLComponent
@@ -53,17 +54,17 @@ class MetricsRetriever(FLComponent):
         self.metrics_count = 0
         self.messages = []
 
-    def get_pipe_name(self, client_name):
-        return f"{self.pipe_name_prefix}_{client_name}"
+    def get_pipe_name(self, client_name, job_id : Optional[str] = None):
+        name = f"{self.pipe_name_prefix}_{client_name}"
+        return f"{name}_{job_id}" if job_id else name
 
     def open_pipe(self, pipe_name: str):
         if pipe_name is None:
             raise ValueError("pipe name is None")
-
-        # self.pipe = SharedMemPipe(size=self.buffer_size)
-        self.pipe = SharedMemPipe()
-        self.pipe.open(pipe_name)
         self.pipe_name = pipe_name
+
+        self.pipe = SharedMemPipe(size=self.buffer_size)
+        self.pipe.open(pipe_name)
 
     def close_pipe(self):
         if self.pipe_name:
@@ -77,15 +78,16 @@ class MetricsRetriever(FLComponent):
 
     def handle_event(self, event_type: str, fl_ctx: FLContext):
         if event_type == EventType.ABOUT_TO_START_RUN:
-            client_name = fl_ctx.get_identity_name()
-            self.open_pipe(self.get_pipe_name(client_name))
-            self.analytic_sender.handle_event(event_type, fl_ctx)
             self.fl_ctx = fl_ctx
+            client_name = fl_ctx.get_identity_name()
+            job_id = fl_ctx.get_job_id()
+            self.open_pipe(self.get_pipe_name(client_name, job_id))
+            self.analytic_sender.handle_event(event_type, fl_ctx)
             self._receive_thread.start()
         elif event_type == EventType.ABOUT_TO_END_RUN:
             self.stop.set()
-            self._receive_thread.join()
             self.close_pipe()
+            self._receive_thread.join()
 
     def stop_receive(self, close_pipe=False):
         self.stop.set()

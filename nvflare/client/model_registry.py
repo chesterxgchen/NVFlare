@@ -21,6 +21,7 @@ from nvflare.app_common.model_exchange.model_exchanger import ModelExchanger
 from .config import ClientConfig
 from .constants import SYS_ATTRS
 from .utils import DIFF_FUNCS, get_meta_from_fl_model
+from ..app_common.metrics_exchange.metrics_exchanger import MetricsExchanger
 
 
 class ModelRegistry:
@@ -35,7 +36,9 @@ class ModelRegistry:
 
     """
 
-    def __init__(self, model_exchanger: ModelExchanger, config: ClientConfig):
+    def __init__(self,
+                 model_exchanger: ModelExchanger,
+                 config: ClientConfig):
         self.model_exchanger = model_exchanger
         self.config = config
 
@@ -59,6 +62,9 @@ class ModelRegistry:
         if not self.cache_loaded:
             self.receive()
         return self.sys_info
+
+    def get_metrics_exchanger(self):
+        return self.metrics_exchanger
 
     def send(self, model: FLModel) -> None:
         if self.config.get_transfer_type() == "DIFF":

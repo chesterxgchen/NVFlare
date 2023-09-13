@@ -25,6 +25,8 @@ from .config import ClientConfig, from_file
 from .constants import CONFIG_EXCHANGE
 from .model_registry import ModelRegistry
 from .utils import DIFF_FUNCS
+from ..app_common.metrics_exchange.metrics_exchanger import MetricsExchanger
+from ..app_common.tracking.tracker_types import TrackConst
 
 PROCESS_MODEL_REGISTRY: Dict[int, ModelRegistry] = {}
 
@@ -55,7 +57,18 @@ def init(config: Union[str, Dict] = f"config/{CONFIG_EXCHANGE}"):
 
     # TODO: make things configurable in config_exchange
     mdx = FilePipeModelExchanger(data_exchange_path=client_config.get_exchange_path())
-    PROCESS_MODEL_REGISTRY[pid] = ModelRegistry(mdx, client_config)
+    mr = ModelRegistry(mdx, client_config)
+    PROCESS_MODEL_REGISTRY[pid] = mr
+
+    sys_info = mr.get_sys_info()
+    site_name = sys_info.get(MetaKey.SITE_NAME, '')
+    job_id = sys_info.get(MetaKey.JOB_ID, '')
+    shared_mem_pipe_name = f"{TrackConst.PIPE_NAME_PREFIX}_{site_name}_{job_id}"
+    metrics_exchanger = MetricsExchanger(shared_mem_pipe_name)
+    metrics_exchanger.open_pipe()
+
+
+
 
 
 def receive() -> FLModel:
