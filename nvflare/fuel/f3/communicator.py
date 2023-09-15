@@ -171,7 +171,7 @@ class Communicator:
 
         if not driver_loaded:
             load_comm_drivers()
-
+        print(f"{url=}")
         driver_class = driver_mgr.find_driver_class(url)
         if not driver_class:
             raise CommError(CommError.NOT_SUPPORTED, f"No driver found for URL {url}")

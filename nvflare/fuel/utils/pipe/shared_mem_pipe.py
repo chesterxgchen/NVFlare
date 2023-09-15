@@ -18,26 +18,27 @@ from UltraDict import UltraDict
 
 from nvflare.fuel.utils.class_utils import full_classname
 
-MAX_LENGTH = 25
-# note: in Mac the max length for shared memory is 31.
-
 
 class SharedMemPipe:
-    def __init__(self, size=1024 * 100):
+    # note: in Mac the max length for shared memory is 31.
+    MAX_LENGTH = 25
+
+    def __init__(self, size=20 * 1024 * 1024):
         self.shared_dict = None
         self.buffer_size = size
         self.name = None
         self.logger = logging.getLogger(full_classname(self))
 
     def open(self, name: str):
-        self._check_pipe_name(name)
+        # self._check_pipe_name(name)
 
         if self.shared_dict is None:
             self.name = name
-            self.shared_dict = UltraDict(
-                name=name,
-                buffer_size=self.buffer_size,
-            )
+            if name:
+                self.shared_dict = UltraDict( name=name, buffer_size=self.buffer_size)
+            else:
+                self.shared_dict = UltraDict(buffer_size=self.buffer_size)
+                self.name = self.shared_dict.name
 
     def clear(self):
         if self.shared_dict:
@@ -56,20 +57,26 @@ class SharedMemPipe:
             data[k] = v
 
         for k in data:
-            del self.shared_dict[k]
+            self.shared_dict.pop(k)
+            # del self.shared_dict[k]
+
         return data
 
     def close(self):
-        if self.shared_dict:
-            if self.logger.isEnabledFor(level=logging.DEBUG):
-                self.shared_dict.print_status()
-            self.shared_dict.close()
-            self.shared_dict.unlink()
+        try:
+            if self.shared_dict:
+                if self.logger.isEnabledFor(level=logging.DEBUG):
+                    self.shared_dict.print_status()
+                self.shared_dict.close()
+                self.shared_dict.unlink()
+        except UltraDict.Exceptions.AlreadyClosed as e:
+            self.shared_dict = None
+
         self.name = None
 
     def _check_pipe_name(self, name):
         if not name:
             raise ValueError("invalid pipe name")
 
-        if len(name) > MAX_LENGTH:
+        if len(name) > SharedMemPipe.MAX_LENGTH:
             raise ValueError("name is too long")

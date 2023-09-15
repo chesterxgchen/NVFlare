@@ -124,12 +124,18 @@ class LauncherExecutor(Executor):
             heartbeat_timeout=self._heartbeat_timeout,
         )
         self.pipe_handler.start()
-        self.metrics_receiver = MetricsRetriever()
 
     def handle_event(self, event_type: str, fl_ctx: FLContext) -> None:
-        if event_type == EventType.START_RUN:
+        if event_type == EventType.ABOUT_TO_START_RUN:
+            print("\n **************** instantiate metrics receiver\n")
+            self.metrics_receiver = MetricsRetriever()
+            # since metrics_receiver is not registered with client engine.
+            # we need to manually fire the event handle
+            self.metrics_receiver.handle_event(event_type, fl_ctx)
+        elif event_type == EventType.START_RUN:
             self.initialize(fl_ctx)
             self.prepare_config_for_launch(fl_ctx)
+
         elif event_type == EventType.END_RUN:
             if self.launcher:
                 self.launcher.finalize(fl_ctx)
@@ -137,8 +143,13 @@ class LauncherExecutor(Executor):
             if self.pipe_handler is not None:
                 self.pipe_handler.notify_end("END_RUN received")
                 self.pipe_handler.stop(close_pipe=True)
+            # since metrics_receiver is not registered with client engine.
+            # we need to manually fire the event handle
+            self.metrics_receiver.handle_event(event_type, fl_ctx)
 
     def execute(self, task_name: str, shareable: Shareable, fl_ctx: FLContext, abort_signal: Signal) -> Shareable:
+        fl_ctx.set_prop("metrics_pipe_name", self.metrics_receiver.pipe_name)
+        print("\n **************** receiver pipe_name=", self.metrics_receiver.pipe_name)
         future = self._launch_in_new_thread(task_name, shareable, fl_ctx, abort_signal)
 
         try:
@@ -328,3 +339,4 @@ class LauncherExecutor(Executor):
         self._result_metrics = None
         self._launcher_finish_status = None
         self._launcher_finish.clear()
+        self.metrics_receiver.close_pipe()

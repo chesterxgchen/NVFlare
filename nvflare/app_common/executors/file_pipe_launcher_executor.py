@@ -15,6 +15,8 @@
 import os
 from typing import Optional
 
+from nvflare.app_common.metrics_exchange.metrics_retriever import MetricsRetriever
+
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.utils.decomposers import flare_decomposers
 from nvflare.app_common.decomposers import common_decomposers

@@ -18,6 +18,8 @@ import subprocess
 import sys
 from typing import Optional
 
+from nvflare.apis.dxo import MetaKey
+from nvflare.apis.fl_constant import FLMetaKey
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable
 from nvflare.apis.signal import Signal
@@ -46,6 +48,9 @@ class SubprocessLauncher(Launcher):
         if self._process is None:
             command = self._script
             env = os.environ.copy()
+            env[MetaKey.SITE_NAME] = fl_ctx.get_identity_name()
+            env[MetaKey.JOB_ID] = fl_ctx.get_job_id()
+            env[MetaKey.METRICS_PIPE_NAME] = fl_ctx.get_prop(FLMetaKey.METRICS_PIPE_NAME)
             command_seq = shlex.split(command)
             self._process = subprocess.Popen(
                 command_seq, stdout=sys.stdout, stderr=subprocess.STDOUT, cwd=self._app_dir, env=env

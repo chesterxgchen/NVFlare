@@ -27,11 +27,10 @@ from nvflare.fuel.utils.pipe.shared_mem_pipe import SharedMemPipe
 
 class MetricsRetriever(FLComponent):
     def __init__(
-        self,
-        event_type=ANALYTIC_EVENT_TYPE,
-        writer_name=LogWriterName.TORCH_TB,
-        get_poll_interval: float = 0.005,
-        buffer_size=100 * 1024,
+            self,
+            event_type=ANALYTIC_EVENT_TYPE,
+            writer_name=LogWriterName.TORCH_TB,
+            get_poll_interval: float = 0.1,
     ):
         """Metrics retriever.
 
@@ -41,7 +40,6 @@ class MetricsRetriever(FLComponent):
         """
         super().__init__()
         self.analytic_sender = AnalyticsSender(event_type=event_type, writer_name=writer_name)
-        self.buffer_size = buffer_size
 
         self._get_poll_interval = get_poll_interval
         self.stop = Event()
@@ -53,18 +51,17 @@ class MetricsRetriever(FLComponent):
         self.logger = logging.getLogger(full_classname(self))
         self.metrics_count = 0
         self.messages = []
+        self.open_pipe()
 
-    def get_pipe_name(self, client_name, job_id: Optional[str] = None):
-        name = f"{self.pipe_name_prefix}_{client_name}"
-        return f"{name}_{job_id[:7]}" if job_id else name
+    def get_pipe_name(self, site_name, job_id: Optional[str] = None):
+        name = f"{self.pipe_name_prefix}_{site_name}"
+        job_name_length = SharedMemPipe.MAX_LENGTH - len(name)
+        return f"{name}_{job_id[:job_name_length - 1]}" if job_id else name
 
-    def open_pipe(self, pipe_name: str):
-        if pipe_name is None:
-            raise ValueError("pipe name is None")
-        self.pipe_name = pipe_name
-
-        self.pipe = SharedMemPipe(size=self.buffer_size)
-        self.pipe.open(pipe_name)
+    def open_pipe(self, pipe_name: Optional[str] = None):
+        self.pipe = SharedMemPipe()
+        self.pipe.open(name=pipe_name)
+        self.pipe_name = self.pipe.name
 
     def close_pipe(self):
         if self.pipe_name:
@@ -73,7 +70,6 @@ class MetricsRetriever(FLComponent):
             pipe = self.pipe
             self.pipe = None
             pipe.close()
-
         self.pipe_name = None
 
     def handle_event(self, event_type: str, fl_ctx: FLContext):
@@ -81,10 +77,15 @@ class MetricsRetriever(FLComponent):
             self.fl_ctx = fl_ctx
             client_name = fl_ctx.get_identity_name()
             job_id = fl_ctx.get_job_id()
-            self.open_pipe(self.get_pipe_name(client_name, job_id))
             self.analytic_sender.handle_event(event_type, fl_ctx)
+            print("**************** start metrics receiver receiving thread")
             self._receive_thread.start()
-        elif event_type == EventType.ABOUT_TO_END_RUN:
+        elif event_type in [EventType.ABOUT_TO_END_RUN,
+                            event_type == EventType.ABORT_TASK or
+                            event_type == EventType.JOB_ABORTED or
+                            event_type == EventType.JOB_CANCELLED or
+                            event_type == EventType.FATAL_SYSTEM_ERROR]:
+            print("**************** STOP metrics receiver receiving thread")
             self.stop.set()
             self.close_pipe()
             self._receive_thread.join()
@@ -100,20 +101,18 @@ class MetricsRetriever(FLComponent):
             if self.stop.is_set():
                 break
             self._receive_metrics()
-            print(f"sleep for {self._get_poll_interval} seconds")
             time.sleep(self._get_poll_interval)
 
     def _receive_metrics(self):
         if self.pipe is None:
             return
 
-        pipe: SharedMemPipe = self.pipe
         msg = {}
-        pipe.receive(msg)
+        self.pipe.receive(msg)
         if not msg:
+            print(f"receiver {self.pipe.name} buffer {self.pipe.shared_dict=}")
             return
 
-        print(f"{len(msg)=}")
         self.metrics_count += len(msg)
 
         for tms, data in msg.items():
@@ -123,19 +122,19 @@ class MetricsRetriever(FLComponent):
             data_type = data.pop(TrackConst.DATA_TYPE_KEY, None)
 
             if key is not None and value is not None and data_type is not None:
-                print(f"{self.metrics_count=}")
+                if self.metrics_count % 100 == 0:
+                    print(f"\n****** adding {key=}, received metrics_count = ", self.metrics_count)
                 self._send_data_to_event(data, data_type, key, value)
             else:
-                print(
-                    f"{TrackConst.TRACK_KEY}, {TrackConst.TRACK_VALUE} and {TrackConst.DATA_TYPE_KEY}"
-                    f"all should have valid values, but got the followings {key=}, {value=}, "
-                    f"{data_type=}"
-                )
-                self.logger.warning(
-                    f"{TrackConst.TRACK_KEY}, {TrackConst.TRACK_VALUE} and {TrackConst.DATA_TYPE_KEY}"
-                    f"all should have valid values, but got the followings {key=}, {value=}, "
-                    f"{data_type=}"
-                )
+                # self.logger.warning(
+                #     f"{TrackConst.TRACK_KEY}, {TrackConst.TRACK_VALUE} and {TrackConst.DATA_TYPE_KEY}"
+                #     f"all should have valid values, but got the followings {key=}, {value=}, "
+                #     f"{data_type=}"
+                # )
+                pass
+
+        if self.metrics_count % 1000 == 0:
+            print("\n******************* received message count = ", self.metrics_count)
 
     def _send_data_to_event(self, data, data_type, key, value):
         self.analytic_sender.add(tag=key, value=value, data_type=data_type, **data)

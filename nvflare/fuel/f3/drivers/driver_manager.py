@@ -101,6 +101,7 @@ class DriverManager:
         Returns:
             The driver instance or None if not found
         """
+        print(f"{scheme_or_url=}")
         index = scheme_or_url.find(":")
         if index > 0:
             scheme = scheme_or_url[0:index]

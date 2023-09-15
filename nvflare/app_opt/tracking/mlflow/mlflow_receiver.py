@@ -102,7 +102,7 @@ class MLflowReceiver(AnalyticsReceiver):
         """
         self.fl_ctx = fl_ctx
         self.time_start = 0
-
+        print(f"{self.artifact_location=}")
         art_full_path = self.get_artifact_location(self.artifact_location)
         experiment_name = self.kwargs.get(TrackConst.EXPERIMENT_NAME, "FLARE FL Experiment")
         experiment_tags = self._get_tags(TrackConst.EXPERIMENT_TAGS, kwargs=self.kwargs)
