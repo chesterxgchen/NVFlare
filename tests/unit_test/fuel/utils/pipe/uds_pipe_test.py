@@ -55,9 +55,6 @@ class TestUDS:
         finally:
             client.close()
             server.close()
-            if True:
-                assert 1 == 0
-
             if client_thread:
                 client_thread.join()
             if server_thread:
