@@ -28,12 +28,12 @@ class UDSServer(MessageReceiver):
 
     def __init__(self,
                  app_id: int,
-                 server_end_point: Endpoint,
+                 server_end_point: str,
                  socket_path: str,
                  socket_prefix: str = "/tmp/nvflare",
                  ):
         self.app_id = app_id
-        self.server_end_point = server_end_point
+        self.server_end_point = Endpoint(name=server_end_point)
         self.connection = None
         self.socket_path = socket_path
         self.conn_scheme = "uds"
@@ -55,8 +55,8 @@ class UDSServer(MessageReceiver):
         self.comm = comm
         comm.start()
 
-    def send(self, end_point: Endpoint, msg: Any, timeout=None):
-        self.comm.send(end_point, self.app_id, Message({}, msg.encode("utf-8")))
+    def send(self, end_point: str, msg: Any, timeout=None):
+        self.comm.send(Endpoint(end_point), self.app_id, Message({}, msg.encode("utf-8")))
 
     def close(self):
         if self.comm:
@@ -72,4 +72,24 @@ class UDSServer(MessageReceiver):
         # if endpoint.name == "client":
         text = message.payload.decode("utf-8")
         print(text)
+
+
 #       todo buffer message
+
+
+def main():
+    socket_path = "/tmp/nvflare/socket/mp_site-1_simulate_job"
+    app_id = 123
+    server_end_pt = Endpoint(name="server")
+    server = UDSServer(app_id, server_end_pt, socket_path)
+    print("trying to open connection for server")
+    try:
+        server.open()
+    except KeyboardInterrupt as e:
+        server.close()
+    finally:
+        server.close()
+
+
+if __name__ == "__main__":
+    main()

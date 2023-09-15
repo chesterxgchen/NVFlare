@@ -14,12 +14,12 @@
 import logging
 from typing import Any
 
-from nvflare.fuel.utils.constants import Mode
-
 from nvflare.fuel.f3.communicator import Communicator
 from nvflare.fuel.f3.connection import Connection
+from nvflare.fuel.f3.drivers.uds_driver import UdsDriver
 from nvflare.fuel.f3.endpoint import Endpoint
 from nvflare.fuel.f3.message import Message, MessageReceiver
+from nvflare.fuel.utils.constants import Mode
 
 log = logging.getLogger(__name__)
 
@@ -28,11 +28,11 @@ class UDSClient(MessageReceiver):
 
     def __init__(self,
                  app_id: int,
-                 client_end_point: Endpoint,
+                 client_end_point: str,
                  conn_url: str
                  ):
         self.app_id = app_id
-        self.client_end_point = client_end_point
+        self.client_end_point = Endpoint(name =client_end_point)
         self.connection = None
         self.conn_url = conn_url
         self.comm = None
@@ -44,11 +44,12 @@ class UDSClient(MessageReceiver):
         self.comm = comm
         comm.start()
 
-    def send(self, end_point: Endpoint, msg: Any, timeout=None):
-        self.comm.send(end_point, self.app_id, Message({}, msg.encode("utf-8")))
+    def send(self, end_point: str, msg: Any, timeout=None):
+        self.comm.send(Endpoint(end_point), self.app_id, Message({}, msg.encode("utf-8")))
 
     def close(self):
-        pass
+        if self.comm:
+            self.comm.stop()
 
     def create_client(self):
         local_endpoint = self.client_end_point
@@ -60,4 +61,27 @@ class UDSClient(MessageReceiver):
         if endpoint.name == "site-1":
             text = message.payload.decode("utf-8")
             print(text)
+
+
 #             todo buffer message
+
+
+def main():
+    socket_path = "/tmp/nvflare/socket/mp_site-1_simulate_job"
+    app_id = 123
+    _, url = UdsDriver.get_urls("uds", dict(socket=socket_path))
+    client = UDSClient(app_id, "client", conn_url=url)
+    print("trying to open connection for client")
+    client.open()
+    try:
+        count = 5
+        for i in range(count):
+            # right.send(Metrics(key="foo", value=0.1, data_type=AnalyticsDataType.SCALAR, ))
+            client.send("server", "hello from Chester\n")
+            # print("receive data from client")
+    finally:
+        client.close()
+
+
+if __name__ == "__main__":
+    main()
