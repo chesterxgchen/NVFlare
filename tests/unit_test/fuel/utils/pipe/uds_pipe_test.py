@@ -25,13 +25,12 @@ class TestUDS:
     def test_count(self):
         socket_path = "/tmp/nvflare/socket/mp_site-1_simulate_job"
         app_id = 123
-        server_end_pt = Endpoint(name="server")
-        server = UDSServer(app_id, server_end_pt, socket_path)
+
+        server = UDSServer(app_id, "server", socket_path)
 
         resources = dict(socket=socket_path)
         _, url = UdsDriver.get_urls("uds", resources)
-        client_end_pt = Endpoint(name="client")
-        client = UDSClient(app_id, client_end_pt, conn_url=url)
+        client = UDSClient(app_id, "client", conn_url=url)
         server_thread = None
         client_thread = None
         try:
@@ -49,7 +48,7 @@ class TestUDS:
             count = 5
             for i in range(count):
                 # right.send(Metrics(key="foo", value=0.1, data_type=AnalyticsDataType.SCALAR, ))
-                client.send(server_end_pt, "hello from Chester\n")
+                client.send("server", "hello from Chester\n")
             # print("receive data from client")
 
         finally:
