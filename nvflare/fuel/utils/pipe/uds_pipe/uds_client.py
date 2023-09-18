@@ -67,7 +67,7 @@ class UDSClient(MessageReceiver):
 
 
 def main():
-    socket_path = "/tmp/nvflare/socket/mp_site-1_simulate_job"
+    socket_path = "/tmp/nvflare/socket/mp_site-1"
     app_id = 123
     _, url = UdsDriver.get_urls("uds", dict(socket=socket_path))
     client = UDSClient(app_id, "client", conn_url=url)

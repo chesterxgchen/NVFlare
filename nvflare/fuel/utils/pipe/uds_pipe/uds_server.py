@@ -78,10 +78,9 @@ class UDSServer(MessageReceiver):
 
 
 def main():
-    socket_path = "/tmp/nvflare/socket/mp_site-1_simulate_job"
+    socket_path = "/tmp/nvflare/socket/mp_site-1"
     app_id = 123
-    server_end_pt = Endpoint(name="server")
-    server = UDSServer(app_id, server_end_pt, socket_path)
+    server = UDSServer(app_id, "server", socket_path)
     print("trying to open connection for server")
     try:
         server.open()
