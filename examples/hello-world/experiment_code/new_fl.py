@@ -1,9 +1,8 @@
 # fed_avg
 from abc import ABC
-from typing import List, Optional
+from typing import List, Optional, Dict, Union
 
-import nvflare.server as flare_ctrl
-
+import nvflare.ctrl.api as flare_ctrl
 from nvflare.app_common import abstract
 from nvflare.app_common.abstract.fl_model import FLModel
 from .train import train
@@ -24,6 +23,10 @@ class FLApp(ABC):
     def set_site_name(self, site_name: str):
         pass
 
+    @abstract
+    def set_config(self, config: dict):
+        pass
+
 
 def stop_condition(current_round,
                    total_rounds,
@@ -42,7 +45,7 @@ def stop_condition(current_round,
 
 class FedAvg(FLApp):
     def __init__(self,
-                 total_rounds: int,
+                 num_rounds: int,
                  stop_accuracy,
                  min_sites: int,
                  sites: List[str],
@@ -52,7 +55,7 @@ class FedAvg(FLApp):
                  model_select_fn,
                  persist_fn,
                  ):
-        self.total_rounds = total_rounds
+        self.num_rounds = num_rounds
         self.stop_accuracy = stop_accuracy
         self.min_sites = min_sites
         self.sites = sites
@@ -74,15 +77,12 @@ class FedAvg(FLApp):
     def _run(self):
         accuracy = 0
         curr_round = 0
-        total_rounds = self.total_rounds
+        total_rounds = self.num_rounds
         model = self.model_init_fn()
         best_model = model
         other_sites = [client for client in self.sites if client != self.get_site_name()]
         while not stop_condition(curr_round, total_rounds, accuracy, max_metric=self.stop_accuracy):
-            flare_ctrl.broadcast(model, other_sites)
-
-            # blocking call, wait for min sites. not consider streaming version at the moment
-            results: List[FLModel] = flare_ctrl.receive_model(self.min_sites)
+            results: List[FLModel] = flare_ctrl.broadcast(model, other_sites, self.min_sites)
             model = self.model_aggr_fn(results)
             best_model = self.model_select_fn(model, best_model)
 
@@ -205,8 +205,11 @@ class Job:
     def __init__(self, name):
         self.name = name
 
-    def to(self, app: FLApp, site: str):
-        wf.set_site_name(site)
+    def to(self, app_or_wf: Union[FLApp, List[FLApp]], site: str, config: Dict):
+        apps = app_or_wf if isinstance(app_or_wf, list) else [app_or_wf]
+        for a in apps:
+            a.set_site_name(site)
+            a.set_config(config)
         pass
 
     def simulate(self, threads: int):
@@ -217,11 +220,29 @@ class Job:
 
 
 job = Job(name="cifar10_fedavg_pt")
-wf = FedAvg(min_sites=2, total_rounds=10, sites=["s1", "s2"])
-job.to(wf, "server")
+train_wf = FedAvg(min_sites=2, num_rounds=10, sites=["s1", "s2"])
+cse_wf = CSE(min_sites=2, num_rounds=10, sites=["s1", "s2"])
+wfs = [train_wf, cse]
+server_config = {}
+job.to(wfs, "server", server_config)
 
-job.add_output_filter(filter, "site-1", filter_type="result_filter")
-job.add_output_filter(filter, "site-2", filter_type="result_filter")
+
+#
+# # 1st workflow"
+# id = "fed_avg"
+# path = "nvflare.app_common.workflows.scatter_and_gather.ScatterAndGather"
+# args {
+#     min_clients = 2
+#     num_rounds = 2
+#     # start_round = 0
+#     aggregator_id = "model_aggr_fn"
+#     persistor_id = "persistor_fn"
+#     shareable_generator_id =  "shareable_generator"
+#     train_task_name =  "train"
+
+#
+# job.add_output_filter(filter, "site-1", filter_type="result_filter")
+# job.add_output_filter(filter, "site-2", filter_type="result_filter")
 
 
 def get_data_path(site_name: str):
@@ -235,7 +256,8 @@ app = App(dataset_path_fn=get_data_path,
           model_path="/tmp/model/check_pt",
           num_workers=1)
 
-job.to(app, "site-1")
-job.to(app, "site-2")
+client_config = {}
+job.to(app, "site-1", client_config)
+job.to(app, "site-2", client_config)
 
 job.submit()
