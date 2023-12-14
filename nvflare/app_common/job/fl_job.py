@@ -1,7 +1,7 @@
 import inspect
 import os
 import shutil
-from typing import Union, List
+from typing import Union, List, Dict
 
 from pyhocon import ConfigFactory, ConfigTree, HOCONConverter
 
@@ -61,7 +61,11 @@ class FLJob:
     def to(self,
            deploy_obj: Union[FedWF, FedApp, List[FedWF], List[FedApp]],
            site_name: str,
-           site_type=None):
+           site_type=None,
+           site_config: Dict = None):
+
+        # site_config can be used to adjust site-specific configurations
+        # not used for now
 
         deploy_objs = deploy_obj if isinstance(deploy_obj, List) else [deploy_obj]
         for obj in deploy_objs:
