@@ -18,12 +18,15 @@ from nvflare.utils.cli_utils import save_config
 def get_class_path_and_name(clazz_obj):
     algo_fqcn = class_utils.get_fqcn(clazz_obj)
     last_dot_index = algo_fqcn.rindex(".")
-    class_path = algo_fqcn[:last_dot_index]
+    module_path = algo_fqcn[:last_dot_index]
     class_name = algo_fqcn[last_dot_index + 1:]
+    if "." in module_path:
+        last_dot_index = module_path.rindex(".")
+        simple_class_path_wo_name = module_path[last_dot_index + 1:]
+    else:
+        simple_class_path_wo_name = module_path
 
-    last_dot_index = class_path.rindex(".")
-    class_file_name = class_path[last_dot_index + 1:]
-    return algo_fqcn, class_file_name, class_name, class_path
+    return algo_fqcn, simple_class_path_wo_name, class_name, module_path
 
 
 def remove_pycache_files(target_dir):
@@ -88,6 +91,8 @@ class FLJob:
                  max_clients: int = 100):
 
         self.export_config(job_dir)
+        if workspace is None:
+            workspace = os.path.join(job_dir, "simulator_workspace")
 
         simulator = SimulatorRunner(
             job_folder=job_dir,
@@ -135,17 +140,18 @@ class FLJob:
     def _gen_server_workflow_config(self, config: ConfigTree, job_dir: str, wf: FedWF):
         wf_config: ConfigTree = ConfigFactory.parse_string("{}")
         wf_config.put("id", wf.id)
-        algo_fqcn, class_file_name, class_name, class_path = get_class_path_and_name(wf.get_algo)
+        algo_fqcn, simple_class_path_wo_name, class_name, module_path = get_class_path_and_name(wf.get_algo)
+        class_file_name = f"{simple_class_path_wo_name}.py"
 
         app_dir = os.path.join(os.path.abspath(os.path.join(job_dir)), wf.app_name)
-        custom_algo_file_path = os.path.join(app_dir, "custom", f"{class_file_name}.py")
+        custom_algo_file_path = os.path.join(app_dir, "custom", class_file_name)
 
         if wf.custom_dir and os.path.isfile(custom_algo_file_path):
-            wf_config.put("path", f"{class_file_name}.{class_name}")
+            wf_config.put("path", f"{simple_class_path_wo_name}.{class_name}")
         else:
             wf_config.put("path", algo_fqcn)
 
-        args_config = self._get_wf_args_config(class_path, class_name, wf)
+        args_config = self._get_wf_args_config(module_path, class_name, wf)
         wf_config.put("args", args_config)
 
         workflows_config = config.get("workflows", [])
@@ -204,7 +210,8 @@ class FLJob:
         pass
 
     def _gen_client_exec_config(self, config: ConfigTree, job_dir: str, app: FedApp, require_custom_dir: bool):
-        if app.app_name == "app":
+
+        if require_custom_dir and app.app_name == "app":
             app.app_name = f"{app.site_name}_{app.app_name}"
 
         if app.ml_framework == MLFramework.PYTORCH:

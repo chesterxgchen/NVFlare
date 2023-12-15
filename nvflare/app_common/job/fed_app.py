@@ -11,7 +11,7 @@ class FedApp:
                  train_config: dict,
                  custom_dir: str = None,
                  app_name="app",
-                 gpu_ids : List[int] = None,
+                 gpu_ids: List[int] = None,
                  ml_framework: MLFramework = MLFramework.PYTORCH):
         self.site_type = None
         self.site_name = None
@@ -25,4 +25,4 @@ class FedApp:
     def set_site_name(self, site_name: str, site_type: SiteType = SiteType.CLIENT):
         self.site_name = site_name
         self.site_type = site_type if site_type else SiteType.CLIENT
-        self.app_name= f"{self.site_name}-{self.app_name}" if self.app_name == "app" else self.app_name
+        self.app_name = f"{self.site_name}-{self.app_name}" if self.custom_dir and self.app_name == "app" else self.app_name
