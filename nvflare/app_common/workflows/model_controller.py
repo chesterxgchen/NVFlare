@@ -39,13 +39,13 @@ from nvflare.widgets.info_collector import GroupInfoCollector, InfoCollector
 class ModelController(Controller, FLComponentWrapper):
     def __init__(
         self,
-        min_clients: int = 1000,
-        num_rounds: int = 5,
-        persistor_id="",
-        ignore_result_error: bool = False,
-        allow_empty_global_weights: bool = False,
-        task_check_period: float = 0.5,
-        persist_every_n_rounds: int = 1,
+            min_clients: int = 1000,
+            num_rounds: int = 5,
+            persistor_id="",
+            ignore_result_error: bool = False,
+            allow_empty_global_weights: bool = False,
+            task_check_period: float = 0.5,
+            persist_every_n_rounds: int = 1,
     ):
         """FLModel based controller.
 

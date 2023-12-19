@@ -21,8 +21,8 @@ from nvflare.apis.impl.controller import Controller
 
 
 class ErrorHandlingController(Controller, ABC):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, task_check_period=0.2):
+        super().__init__(task_check_period=task_check_period)
         self.abort_job_in_error = {
             ReturnCode.EXECUTION_EXCEPTION: True,
             ReturnCode.TASK_UNKNOWN: True,
