@@ -938,6 +938,8 @@ class Controller(Responder, ControllerSpec, ABC):
     def _process_finished_task(task, func):
         def wrap(*args, **kwargs):
             if func:
+                print("args = ", args)
+                print("kwargs = ", kwargs)
                 func(*args, **kwargs)
             task.props[_TASK_KEY_DONE] = True
 
