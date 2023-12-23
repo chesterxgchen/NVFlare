@@ -13,7 +13,7 @@ class FedAvg(WF):
                  min_clients: int,
                  output_path: str,
                  num_rounds: int,
-                 metrics_keys: List[str] = None
+                 stop_metrics: dict = None
                  ):
         super(FedAvg, self).__init__()
 
@@ -24,17 +24,17 @@ class FedAvg(WF):
         # (1) init flare_comm
         self.flare_comm.init(self)
         self.best_model = None
-        self.metrics_keys = metrics_keys if metrics_keys else ["accuracy", "auc",  "loss", "running_loss"]
+
+        # early stop metrics values: accuracy, auc, loss, running_loss
+        self.stop_metrics = stop_metrics
 
     def run(self):
         net = Net()
         model = FLModel(params=net.state_dict(), params_type=ParamsType.FULL)
-        target_metrics = {}
 
-        # todo: add earlier stopping rules
         for current_round in range(0, self.num_rounds):
 
-            if self.stop_cond(model.metrics, target_metrics):
+            if self.stop_cond(model.metrics, self.stop_metrics):
                 return
 
             print(f"Round {current_round}/{self.num_rounds} started.")
@@ -75,34 +75,34 @@ class FedAvg(WF):
     def best_model_fn(self, model) -> FLModel:
         pass
 
-    def stop_cond(self, metrics: dict, target_metrics: dict):
-        if target_metrics is None:
+    def stop_cond(self, metrics: dict, stop_metrics: dict):
+        if stop_metrics is None:
             return False
 
         key = "accuracy"
-        if key in target_metrics:
+        if key in stop_metrics:
             value = metrics.get(key, -100)
-            target_value = target_metrics.get(key, -1)
+            target_value = stop_metrics.get(key, -1)
             if value >= target_value:
                 return True
 
         key = "auc"
-        if key in target_metrics:
+        if key in stop_metrics:
             value = metrics.get(key, -100)
-            target_value = target_metrics.get(key, -1)
+            target_value = stop_metrics.get(key, -1)
             if value >= target_value:
                 return True
 
         key = "loss"
-        if key in target_metrics:
+        if key in stop_metrics:
             value = metrics.get(key, 1e+10)
-            target_value = target_metrics.get(key, -1)
+            target_value = stop_metrics.get(key, -1)
             if value <= target_value:
                 return True
 
         key = "running_loss"
-        if key in target_metrics:
+        if key in stop_metrics:
             value = metrics.get(key, 1e+10)
-            target_value = target_metrics.get(key, -1)
+            target_value = stop_metrics.get(key, -1)
             if value <= target_value:
                 return True
