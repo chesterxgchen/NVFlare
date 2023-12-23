@@ -18,8 +18,6 @@ class KM(WF):
         self.num_rounds = 1
         self.flare_comm = Communicator()
         self.flare_comm.init(self)
-        print("sleep for 2 send to let pipe setup")
-        time.sleep(2)
 
     def run(self):
         results = self.start_km_analysis()
