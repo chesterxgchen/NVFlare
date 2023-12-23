@@ -1,10 +1,12 @@
 import pandas as pd
 
-import nvflare.client as flare
-from km_analysis import kaplan_meier_analysis
 # (1) import nvflare client API
+import nvflare.client as flare
+
+from km_analysis import kaplan_meier_analysis
 from nvflare.app_common.abstract.fl_model import FLModel, ParamsType
 
+# Client training code
 
 def load_data():
     data = {

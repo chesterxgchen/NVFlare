@@ -7,8 +7,7 @@ from nvflare.app_common.workflows.flare_ctrl.communicator import Communicator
 from nvflare.app_common.workflows.flare_ctrl.wf_spec import WF
 
 
-# Server controller
-
+# Server Workflow
 
 class KM(WF):
     def __init__(self,
@@ -62,9 +61,6 @@ class KM(WF):
 
     def save(self, result: dict, file_path: str):
         print(f"save the {result} to {file_path}")
-
-
-
         dir_name = os.path.dirname(file_path)
         os.makedirs(dir_name, exist_ok=True)
         with open(file_path, 'w') as json_file:
