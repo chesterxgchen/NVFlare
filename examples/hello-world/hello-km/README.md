@@ -72,5 +72,68 @@ Let's define the start_km_analysis()
         return results
 ```
 
-looks like to simply call send broadcast command, then just get the results.  
-**self.flare_comm.broadcast(msg_payload)**
+looks like to simply call send broadcast command, then just get the results.
+
+## Configurations
+
+### client-side configuration
+
+This is the same as FLARE Client API configuration
+
+### server-side configuration
+
+  Server side controller is really simple, all we need is to user TaskController with newly defined workflow class
+```KM```
+
+```
+{
+  format_version = 2
+  task_data_filters =[]
+  task_result_filters = []
+
+  workflows = [
+      {
+        id = "km"
+        
+        # Task Controller
+        path = "nvflare.app_common.workflows.task_controller.TaskController"
+        args {
+            task_name = "train"
+           
+            # User-defined workflow KM 
+            wf_class_path = "km_wf.KM",
+            wf_args {
+                min_clients = 2
+                output_path = "/tmp/nvflare/km/km.json"
+            }
+        }
+      }
+  ]
+
+  components = []
+
+}
+```
+
+
+## Run the job
+
+assume current working directory is at ```hello-km``` directory 
+
+```
+nvflare simulator job -w /tmp/nvflare/km/job -n 2 -t 2
+```
+
+
+## Display Result
+
+Once finished the results will be written to the output_path defined about. 
+We can copy the result to the demo directory and start notebook
+
+```
+cp /tmp/nvflare/km/km.json demo/.
+
+jupyter lab demo/km.ipynb 
+
+```
+![KM survival curl](km_survival_curve.png)
