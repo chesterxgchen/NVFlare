@@ -1,7 +1,6 @@
-from nvflare.app_common.utils.fl_model_utils import FLModelUtils
-
 from net import Net
 from nvflare.app_common.abstract.fl_model import FLModel, ParamsType
+from nvflare.app_common.utils.fl_model_utils import FLModelUtils
 from nvflare.app_common.workflows.flare_ctrl.wf_spec import WF
 
 
@@ -10,12 +9,16 @@ from nvflare.app_common.workflows.flare_ctrl.wf_spec import WF
 class FedAvg(WF):
     def __init__(self,
                  min_clients: int,
-                 output_path: str):
+                 output_path: str,
+                 num_rounds: int
+                 ):
         super(FedAvg, self).__init__()
 
         self.output_path = output_path
         self.min_clients = min_clients
-        self.num_rounds = 10
+        self.num_rounds = num_rounds
+
+        # (1) init flare_comm
         self.flare_comm.init(self)
         self.best_model = None
 
@@ -45,6 +48,8 @@ class FedAvg(WF):
     def scatter_and_gather(self, model: FLModel):
         msg_payload = {"min_responses": self.min_clients,
                        "data": model}
+
+        # (2) broadcast and wait
         results = self.flare_comm.broadcast(msg_payload)
         return results
 
