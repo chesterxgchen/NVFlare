@@ -1,16 +1,19 @@
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Union, Dict, Tuple, List
+from typing import Dict, Tuple
 
 from nvflare.apis.client import Client
-from nvflare.apis.controller_spec import SendOrder, Task, ClientTask
+from nvflare.apis.controller_spec import SendOrder, Task, ClientTask, TaskOperatorKey, OperatorMethod
 from nvflare.apis.dxo import from_shareable
 from nvflare.apis.event_type import EventType
 from nvflare.apis.fl_constant import ReturnCode
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable
 from nvflare.apis.signal import Signal
+from nvflare.app_common.app_constant import AppConstants
+from nvflare.app_common.app_event_type import AppEventType
 from nvflare.app_common.workflows.error_handling_controller import ErrorHandlingController
 from nvflare.app_common.workflows.flare_ctrl.wf_spec import WF
 from nvflare.fuel.utils import class_utils
@@ -22,15 +25,26 @@ class TaskController(ErrorHandlingController):
                  task_name: str,
                  wf_class_path: str,
                  wf_args: Dict,
+                 start_round: int = 1,
+                 num_rounds: int = 1,
+                 task_timeout: int = 0,
                  task_check_period: float = 0.2):
         super().__init__(task_check_period)
+        self.clients = None
+        self._task_timeout = task_timeout
+        self._start_round = start_round
+        self._current_round = None
+        self._num_rounds = num_rounds
         self.task_name = task_name
         self.ctrl_msg_check_interval = 0.5
-        self._thread_pool_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=self.__class__.__name__)
         self.wf_class_path = wf_class_path
         self.wf_args = wf_args
         self.ctrl_msg_queue = Queue()
         self.result_queue = Queue()
+
+        self._result_queue_lock = threading.Lock()
+        self._thread_pool_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=self.__class__.__name__)
+        self._ctrl_msg_loop_future = None
 
         self.wf: WF = class_utils.instantiate_class(self.wf_class_path, self.wf_args)
 
@@ -44,33 +58,31 @@ class TaskController(ErrorHandlingController):
         self.fl_ctx = fl_ctx
         self.log_info(fl_ctx, "Initializing controller workflow.")
         self.engine = self.fl_ctx.get_engine()
+        self.clients = self._engine.get_clients()
+
+        if self._current_round is None:
+            self._current_round = self._start_round
 
         # dynamic add queues to the flare_ctrl object instance
         self.wf.flare_comm.set_queues(task_queue=self.ctrl_msg_queue, result_queue=self.result_queue)
 
     def control_flow(self, abort_signal: Signal, fl_ctx: FLContext):
+        fl_ctx.set_prop(AppConstants.CURRENT_ROUND, self._current_round, private=True, sticky=True)
+        self.fire_event(AppEventType.ROUND_STARTED, fl_ctx)
+
         try:
-            future1 = self._thread_pool_executor.submit(self.ctrl_msg_loop, fl_ctx=fl_ctx, abort_signal=abort_signal)
-            self.wait_for_wf_result(abort_signal, fl_ctx)
-            future1.result()
+            future = self._thread_pool_executor.submit(self.ctrl_msg_loop, fl_ctx=fl_ctx, abort_signal=abort_signal)
+            self._ctrl_msg_loop_future = future
+
+            self.wf.run()
         except Exception as e:
             self.log_error(fl_ctx, f"{e}")
             self.system_panic(f"{e}", fl_ctx=fl_ctx)
 
-    def wait_for_wf_result(self, abort_signal, fl_ctx):
-        try:
-            self.log_info(fl_ctx, "wait_for_wf_result")
-            future2 = self._thread_pool_executor.submit(self.wf.run())
-            future2.result()
-        except Exception as wf_e:
-            self.stop_msg_queue(f"failed due to {wf_e}", abort_signal, fl_ctx)
-            self.log_error(fl_ctx, f"{wf_e}")
-            self.system_panic(f"{wf_e}", fl_ctx=fl_ctx)
-
     def stop_msg_queue(self, stop_message, abort_signal, fl_ctx):
         self.ctrl_msg_queue.put({"command": "STOP", "payload": {}})
         abort_signal.trigger(f"{stop_message}")
-        # wait for the the message loop to stop
+        # wait for the message loop to stop
         time.sleep(self.ctrl_msg_check_interval + 0.1)
 
     def stop_controller(self, fl_ctx: FLContext):
@@ -102,33 +114,75 @@ class TaskController(ErrorHandlingController):
                     self.log_info(fl_ctx, "receive STOP command")
                     break
                 elif cmd == "BROADCAST":
-                    print("------------------ item = ", item)
                     pay_load = item.get("payload")
                     print("\n ********************pay_load=", pay_load)
-                    task, targets, min_responses = self.get_payload_task(pay_load)
-                    self.broadcast_and_wait(task, fl_ctx, targets, min_responses, 0, abort_signal)
+                    task, min_responses = self.get_payload_task(pay_load)
+
+                    self.broadcast_and_wait(
+                        task=task,
+                        min_responses=min_responses,
+                        wait_time_after_min_received=0,
+                        fl_ctx=fl_ctx,
+                        abort_signal=abort_signal,
+                    )
+
+                    if abort_signal.triggered:
+                        self.log_debug(self.fl_ctx, f"task {self.task_name} aborted")
+                        return
+
+                    self.fire_event(AppEventType.ROUND_DONE, fl_ctx)
+                    self.log_info(fl_ctx, f"Round {self._current_round} finished.")
+                    if self._current_round == self._num_rounds:
+                        self.log_info(fl_ctx, f"Finished task '{self.task_name}'.")
+                        self.ctrl_msg_queue.put({"command": "STOP", "payload": {}})
+                    else:
+                        self._current_round += 1
                 elif cmd == "SEND":
                     pay_load = item.get("payload")
-                    task, targets, _ = self.get_payload_task(pay_load)
-                    self.send_and_wait(task, fl_ctx, targets, SendOrder.SEQUENTIAL, 0, abort_signal)
+                    task, min_responses = self.get_payload_task(pay_load)
+                    # self.send_and_wait(task, fl_ctx, abort_signal)
                 else:
                     abort_signal.trigger(f"Unknown command '{cmd}'")
                     raise ValueError(f"Unknown command '{cmd}'")
             else:
                 time.sleep(self.ctrl_msg_check_interval)
 
-    def get_payload_task(self, pay_load) -> Tuple[Task, Union[List[str], None], int]:
-        data = Shareable()
+    def get_payload_task(self, pay_load) -> Tuple[Task, int]:
         print("=================== payload =", pay_load)
-        task = Task(name=self.task_name, data=data,result_received_cb= self.result_received_cb)
-        return task, ["site-1", "site-2"], 0
+        min_responses = pay_load.get("min_responses")
 
-    def result_received_cb(self, client_task: ClientTask, fl_ctx: FLContext):
+        # Create train_task
+        data_shareable: Shareable = Shareable()
+        data_shareable.set_header(AppConstants.CURRENT_ROUND, self._current_round)
+        data_shareable.set_header(AppConstants.NUM_ROUNDS, self._num_rounds)
+        data_shareable.add_cookie(AppConstants.CONTRIBUTION_ROUND, self._current_round)
+
+        operator = {
+            TaskOperatorKey.OP_ID: self.task_name,
+            TaskOperatorKey.METHOD: OperatorMethod.BROADCAST,
+            TaskOperatorKey.TIMEOUT: self._task_timeout,
+        }
+
+        task = Task(
+            name=self.task_name,
+            data=data_shareable,
+            operator=operator,
+            props={},
+            timeout=self._task_timeout,
+            before_task_sent_cb=None,
+            result_received_cb=self._result_received_cb)
+
+        return task, min_responses
+
+    def _result_received_cb(self, client_task: ClientTask, fl_ctx: FLContext):
+        print("\n=================== print_result received =====\n")
+
         client_name = client_task.client.name
         task_name = client_task.task.name
         result = client_task.result
         rc = result.get_return_code()
         results = {"status": rc}
+        print(f"========{client_name=}========{task_name=} ===={result=} \n")
         if rc == ReturnCode.OK:
             self.log_info(fl_ctx, f"Received result entries from client:{client_name}, " f"for task {task_name}")
             dxo = from_shareable(result)
@@ -137,8 +191,8 @@ class TaskController(ErrorHandlingController):
         elif rc in self.abort_job_in_error.keys():
             self.handle_client_errors(rc, client_task, fl_ctx)
             results["result"] = {client_name: {}}
+        self.write_to_result_queue({task_name: results})
 
-        self.result_queue.put({task_name: results})
         # Cleanup task result
         client_task.result = None
 
@@ -148,4 +202,13 @@ class TaskController(ErrorHandlingController):
             self.ctrl_msg_queue.put({"command": "STOP", "payload": {}})
             results = {"status": ReturnCode.TASK_ABORTED, "result": {}}
             self.result_queue.put(results)
+            self.write_to_result_queue(results)
 
+    def write_to_result_queue(self, results):
+        try:
+            self._result_queue_lock.acquire()
+            self.log_debug(self.fl_ctx, "acquired a _result_queue_lock")
+            self.result_queue.put(results)
+        finally:
+            self.log_debug(self.fl_ctx, "released a _result_queue_lock")
+            self._result_queue_lock.release()

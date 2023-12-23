@@ -1,6 +1,8 @@
+import time
 from queue import Queue
 from typing import Dict, Optional
 
+from nvflare.apis.fl_constant import ReturnCode
 from nvflare.app_common.workflows.flare_ctrl.wf_spec import WF
 
 
@@ -28,17 +30,39 @@ class Communicator:
 
         if self.task_queue is None:
             raise RuntimeError("missing message queue")
-
+        min_responses = msg_payload.get("min_responses", 0)
         message = {
             "command": "BROADCAST",
             "payload": msg_payload,
         }
         self.task_queue.put(message)
 
-        # wait for result
-        print("================waiting for result")
-        # return self.result_queue.get()
-        return {}
+        all_results = None
+        while True:
+            if not self.result_queue.empty():
+                item_size = self.result_queue.qsize()
+                print(f"{item_size=}")
+                for i in range(item_size):
+                    task_result = self.result_queue.get()
+                    result = None
+                    for task, result_env in task_result.items():
+                        rc = result_env.get("status")
+                        if rc == ReturnCode.OK:
+                            result = result_env.get("result", {})
+                            if all_results:
+                                all_results.update(result)
+                            else:
+                                all_results = result
+                        else:
+                            raise RuntimeError(f"task {task} failed with '{rc}' status")
+                print(f"{min_responses=}")
+                print(f"{len(all_results)=}")
+                print(f"{all_results=}")
+                if all_results and len(all_results) >= min_responses:
+                    return all_results
+            else:
+                print("result queue is empty, sleep 2 sec")
+                time.sleep(2)
 
     def send(self, msg_payload: Dict):
         if self.task_queue is None:
