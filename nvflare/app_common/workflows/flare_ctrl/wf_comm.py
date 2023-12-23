@@ -6,7 +6,7 @@ from nvflare.apis.fl_constant import ReturnCode
 from nvflare.app_common.workflows.flare_ctrl.wf_spec import WF
 
 
-class Communicator:
+class WFComm:
     def __init__(self, result_check_interval: int = 2):
         self.result_check_interval = result_check_interval
         self.task_queue = None

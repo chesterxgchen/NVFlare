@@ -4,9 +4,13 @@ from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from typing import Dict, Tuple
 
+from nvflare.app_common.abstract.fl_model import FLModel
+
+from nvflare.app_common.utils.fl_model_utils import FLModelUtils
+
 from nvflare.apis.client import Client
 from nvflare.apis.controller_spec import SendOrder, Task, ClientTask, TaskOperatorKey, OperatorMethod
-from nvflare.apis.dxo import from_shareable
+from nvflare.apis.dxo import from_shareable, DXO, DataKind
 from nvflare.apis.event_type import EventType
 from nvflare.apis.fl_constant import ReturnCode
 from nvflare.apis.fl_context import FLContext
@@ -19,7 +23,7 @@ from nvflare.app_common.workflows.flare_ctrl.wf_spec import WF
 from nvflare.fuel.utils import class_utils
 
 
-class TaskController(ErrorHandlingController):
+class WFController(ErrorHandlingController):
 
     def __init__(self,
                  task_name: str,
@@ -58,7 +62,7 @@ class TaskController(ErrorHandlingController):
         self.fl_ctx = fl_ctx
         self.log_info(fl_ctx, "Initializing controller workflow.")
         self.engine = self.fl_ctx.get_engine()
-        self.clients = self._engine.get_clients()
+        self.clients = self.engine.get_clients()
 
         if self._current_round is None:
             self._current_round = self._start_round
@@ -150,9 +154,9 @@ class TaskController(ErrorHandlingController):
     def get_payload_task(self, pay_load) -> Tuple[Task, int]:
         print("=================== payload =", pay_load)
         min_responses = pay_load.get("min_responses")
+        data = pay_load.get("data", None)
 
-        # Create train_task
-        data_shareable: Shareable = Shareable()
+        data_shareable = self.get_shareable(data)
         data_shareable.set_header(AppConstants.CURRENT_ROUND, self._current_round)
         data_shareable.set_header(AppConstants.NUM_ROUNDS, self._num_rounds)
         data_shareable.add_cookie(AppConstants.CONTRIBUTION_ROUND, self._current_round)
@@ -173,6 +177,16 @@ class TaskController(ErrorHandlingController):
             result_received_cb=self._result_received_cb)
 
         return task, min_responses
+
+    def get_shareable(self, data):
+        if isinstance(data, FLModel):
+            data_shareable: Shareable = FLModelUtils.to_shareable(data)
+        elif data is None:
+            data_shareable = Shareable()
+        else:
+            dxo = DXO(DataKind.RAW, data=data, meta={})
+            data_shareable = dxo.to_shareable()
+        return data_shareable
 
     def _result_received_cb(self, client_task: ClientTask, fl_ctx: FLContext):
         print("\n=================== print_result received =====\n")

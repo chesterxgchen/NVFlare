@@ -1,9 +1,7 @@
 import json
 import os.path
-import time
 
 from km_analysis import kaplan_meier_analysis
-from nvflare.app_common.workflows.flare_ctrl.communicator import Communicator
 from nvflare.app_common.workflows.flare_ctrl.wf_spec import WF
 
 
@@ -13,10 +11,10 @@ class KM(WF):
     def __init__(self,
                  min_clients: int,
                  output_path: str):
+        super(KM, self).__init__()
         self.output_path = output_path
         self.min_clients = min_clients
         self.num_rounds = 1
-        self.flare_comm = Communicator()
         self.flare_comm.init(self)
 
     def run(self):
