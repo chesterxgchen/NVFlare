@@ -35,6 +35,7 @@ class WFController(ErrorHandlingController):
                  task_check_period: float = 0.2):
         super().__init__(task_check_period)
         self.clients = None
+        self._current_round = None
         self._task_timeout = task_timeout
         self._start_round = start_round
         self._current_round = None
@@ -154,7 +155,10 @@ class WFController(ErrorHandlingController):
     def get_payload_task(self, pay_load) -> Tuple[Task, int]:
         print("=================== payload =", pay_load)
         min_responses = pay_load.get("min_responses")
+        current_round = pay_load.get("current_round", None)
         data = pay_load.get("data", None)
+        if current_round:
+            self._current_round = current_round
 
         data_shareable = self.get_shareable(data)
         data_shareable.set_header(AppConstants.CURRENT_ROUND, self._current_round)

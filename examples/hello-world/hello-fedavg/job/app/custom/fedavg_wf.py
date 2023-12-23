@@ -40,7 +40,7 @@ class FedAvg(WF):
             print(f"Round {current_round}/{self.num_rounds} started.")
 
             print(f"Scatter and Gather")
-            results = self.scatter_and_gather(model)
+            results = self.scatter_and_gather(model, current_round)
 
             print(f"Aggregate.")
             aggr_results = self.aggr_fn(results)
@@ -55,8 +55,9 @@ class FedAvg(WF):
             print(f"save_model")
             self.save(best_model, "/tmp/nvflare/fed_avg/model/")
 
-    def scatter_and_gather(self, model: FLModel):
+    def scatter_and_gather(self, model: FLModel, current_round):
         msg_payload = {"min_responses": self.min_clients,
+                       "current_round": current_round,
                        "data": model}
 
         # (2) broadcast and wait
