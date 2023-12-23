@@ -7,7 +7,8 @@ from nvflare.app_common.workflows.flare_ctrl.wf_spec import WF
 
 
 class Communicator:
-    def __init__(self):
+    def __init__(self, result_check_interval: int = 2):
+        self.result_check_interval = result_check_interval
         self.task_queue = None
         self.result_queue = None
         self.ctrl_config = None
@@ -41,10 +42,8 @@ class Communicator:
         while True:
             if not self.result_queue.empty():
                 item_size = self.result_queue.qsize()
-                print(f"{item_size=}")
                 for i in range(item_size):
                     task_result = self.result_queue.get()
-                    result = None
                     for task, result_env in task_result.items():
                         rc = result_env.get("status")
                         if rc == ReturnCode.OK:
@@ -61,10 +60,13 @@ class Communicator:
                 if all_results and len(all_results) >= min_responses:
                     return all_results
             else:
-                print("result queue is empty, sleep 2 sec")
-                time.sleep(2)
+                print(f"result queue is empty, sleep {self.result_check_interval} sec")
+                time.sleep(self.result_check_interval)
 
     def send(self, msg_payload: Dict):
+        """
+            NOTE COMPLETE YET.
+        """
         if self.task_queue is None:
             raise RuntimeError("missing task_queue")
 
