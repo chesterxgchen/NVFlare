@@ -43,7 +43,7 @@ class FedAvg(WF):
                  num_rounds: int,
                  output_path: str,
                  start_round: int = 1,
-                 stop_metrics: dict = None,
+                 early_stop_metrics: dict = None,
                  model_format: str = None
                  ):
         super(FedAvg, self).__init__()
@@ -58,7 +58,10 @@ class FedAvg(WF):
         self.best_model: Optional[FLModel] = None
 
         # early stop metrics values: accuracy, auc, loss, running_loss
-        self.stop_metrics = stop_metrics
+        self.early_stop_metrics = early_stop_metrics
+
+        if early_stop_metrics:
+            self.logger.info(f"{early_stop_metrics=}")
 
         # (1) init flare_comm
         self.flare_comm = WFComm(result_check_interval=10)
@@ -73,12 +76,15 @@ class FedAvg(WF):
         net = Net()
         model = FLModel(params=net.state_dict(), params_type=ParamsType.FULL)
         for current_round in range(self.start_round, self.start_round + self.num_rounds):
-            if self.stop_cond(model.metrics, self.stop_metrics):
-                return
+            if self.early_stop_cond(model.metrics, self.early_stop_metrics):
+                self.logger.info("early stop condition satisfied, stopping")
+                break
+            else:
+                self.logger.info("early stop condition NOT satisfied, continue")
+
             self.current_round = current_round
 
             self.logger.info(f"Round {current_round}/{self.num_rounds} started.")
-            print(f"Round {current_round}/{self.num_rounds} started.")
 
             self.logger.info("Scatter and Gather")
             sag_results = self.scatter_and_gather(model, current_round)
@@ -86,7 +92,10 @@ class FedAvg(WF):
             self.logger.info("fed avg aggregate")
             aggr_result = self.aggr_fn(sag_results)
 
+            self.logger.info(f"aggregate metrics = {aggr_result.metrics}")
+
             self.logger.info("update model")
+
             model = FLModelUtils.update_model(model, aggr_result)
 
             self.logger.info(f"best model selection")
@@ -133,6 +142,7 @@ class FedAvg(WF):
                     contribution_round=self.current_round,
                 )
 
+                self.logger.info(f"site={site}  {fl_model.metrics=}")
                 aggr_metrics_helper.add(
                     data=fl_model.metrics,
                     weight=self.current_round,
@@ -141,7 +151,9 @@ class FedAvg(WF):
                 )
 
             aggr_params = aggr_params_helper.get_result()
-            aggr_metrics = aggr_params_helper.get_result()
+            aggr_metrics = aggr_metrics_helper.get_result()
+
+            self.logger.info(f"{aggr_metrics=}")
 
             aggr_result = FLModel(
                 params=aggr_params,
@@ -172,27 +184,37 @@ class FedAvg(WF):
         else:
             raise RuntimeError(f"model format '{self.mode_format}' writer function is not available")
 
-    def stop_cond(self, metrics: dict, stop_metrics: dict):
-        if stop_metrics is None:
+    def early_stop_cond(self, metrics: dict, early_stop_metrics: dict):
+        self.logger.info(f"early_stop_cond, early_stop_metrics = {early_stop_metrics}, {metrics=}")
+        if early_stop_metrics is None or metrics is None:
             return False
+
         keys = [Metric.ACCURACY, Metric.AUC, Metric.LOSS, Metric.RUNNING_LOSS]
         for key in keys:
-            if key in stop_metrics:
+            metric_name = key.value
+            self.logger.info(f"{key=}, {metric_name=}")
+            if metric_name in early_stop_metrics:
                 rule = One_Metric_Rule.get(key)
+                self.logger.info(f"{metric_name=}, {rule=}")
+
                 if rule == Comparison.LARGER:
                     # larger is better
-                    value = metrics.get(key, -1e+10)
-                    target_value = stop_metrics.get(key, -1e+10)
+                    value = metrics.get(metric_name, -1e+10)
+                    target_value = early_stop_metrics.get(metric_name, -1e+10)
+                    self.logger.info(f"{key=}, {value=}, {target_value=}, is value bigger={(value >= target_value)}")
                     if value >= target_value:
                         return True
                 elif rule == Comparison.SMALLER:
                     # smaller is better
-                    value = metrics.get(key, 1e+10)
-                    target_value = stop_metrics.get(key, 1e+10)
+                    value = metrics.get(metric_name, 1e+10)
+                    target_value = early_stop_metrics.get(metric_name, 1e+10)
+                    self.logger.info(f"{key=}, {value=}, {target_value=}, is value smaller={(value <= target_value)}")
                     if value <= target_value:
                         return True
                 else:
                     raise ValueError(f"Unknown rule {rule}")
+
+        self.logger.info("early_stop_cond: return false due to default ")
 
         return False
 

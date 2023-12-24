@@ -113,7 +113,9 @@ class WFController(ErrorHandlingController):
             if abort_signal.triggered:
                 break
             item = self.ctrl_msg_queue.get()
-            print("*********** item = ", item)
+            print("\n ============= item = ", item)
+            print("\n ============= items size= ", self.ctrl_msg_queue.qsize())
+            print("\n ============= abort_signal.triggered = ", abort_signal.triggered)
             if item:
                 cmd = item.get("command", None)
                 if cmd is None:
@@ -126,9 +128,13 @@ class WFController(ErrorHandlingController):
                     break
                 elif cmd == "BROADCAST":
                     pay_load = item.get("payload")
-                    print("\n ********************pay_load=", pay_load)
+                    current_round = pay_load.get("current_round", 1)
+                    start_round = pay_load.get("start_round", 1)
+                    num_rounds = pay_load.get("num_rounds", 1)
+                    fl_ctx.set_prop(AppConstants.CURRENT_ROUND, current_round, private=True, sticky=True)
+                    if current_round == start_round:
+                        self.fire_event(AppEventType.ROUND_STARTED, fl_ctx)
 
-                    self.prepare_round_info(fl_ctx, pay_load)
                     task, min_responses = self.get_payload_task(pay_load)
                     self.broadcast_and_wait(
                         task=task,
@@ -137,6 +143,12 @@ class WFController(ErrorHandlingController):
                         fl_ctx=fl_ctx,
                         abort_signal=abort_signal,
                     )
+                    self.fire_event(AppEventType.ROUND_DONE, fl_ctx)
+                    self.log_info(fl_ctx, f"Round {current_round} finished.")
+
+                    if current_round == num_rounds + start_round:
+                        self.stop_msg_queue(f"Finished task '{self.task_name}'.")
+
                 elif cmd == "SEND":
                     pay_load = item.get("payload")
                     task, min_responses = self.get_payload_task(pay_load)
@@ -149,11 +161,6 @@ class WFController(ErrorHandlingController):
                     self.log_debug(self.fl_ctx, f"task {self.task_name} aborted")
                     break
 
-                self.fire_event(AppEventType.ROUND_DONE, fl_ctx)
-                self.log_info(fl_ctx, f"Round {self._current_round} finished.")
-
-                if self._current_round == self._num_rounds + self._start_round:
-                    self.stop_msg_queue(f"Finished task '{self.task_name}'.")
             else:
                 self.log_info(f"sleep for {self.ctrl_msg_check_interval} sec and wait for ctrl message request")
                 time.sleep(self.ctrl_msg_check_interval)
@@ -161,20 +168,27 @@ class WFController(ErrorHandlingController):
     def prepare_round_info(self, fl_ctx, pay_load):
         current_round = pay_load.get("current_round", 1)
         start_round = pay_load.get("start_round", 1)
+        num_rounds = pay_load.get("num_rounds", 1)
+
         self._current_round = current_round
         self._start_round = start_round
-        fl_ctx.set_prop(AppConstants.CURRENT_ROUND, self._current_round, private=True, sticky=True)
-        if self._current_round == start_round:
+        self._num_rounds = num_rounds
+
+        fl_ctx.set_prop(AppConstants.CURRENT_ROUND, current_round, private=True, sticky=True)
+        if current_round == start_round:
             self.fire_event(AppEventType.ROUND_STARTED, fl_ctx)
 
     def get_payload_task(self, pay_load) -> Tuple[Task, int]:
-        print("=================== payload =", pay_load)
         min_responses = pay_load.get("min_responses")
+        current_round = pay_load.get("current_round", 1)
+        start_round = pay_load.get("start_round", 1)
+        num_rounds = pay_load.get("num_rounds", 1)
         data = pay_load.get("data", None)
         data_shareable = self.get_shareable(data)
-        data_shareable.set_header(AppConstants.CURRENT_ROUND, self._current_round)
-        data_shareable.set_header(AppConstants.NUM_ROUNDS, self._num_rounds)
-        data_shareable.add_cookie(AppConstants.CONTRIBUTION_ROUND, self._current_round)
+        data_shareable.set_header(AppConstants.START_ROUND, start_round)
+        data_shareable.set_header(AppConstants.CURRENT_ROUND, current_round)
+        data_shareable.set_header(AppConstants.NUM_ROUNDS, num_rounds)
+        data_shareable.add_cookie(AppConstants.CONTRIBUTION_ROUND, current_round)
 
         operator = {
             TaskOperatorKey.OP_ID: self.task_name,
