@@ -27,11 +27,14 @@ For example for Kaplan-Meier Analysis, we could write a new workflow like this:
 class KM(WF):
     def __init__(self,
                  min_clients: int,
-                 output_path: str):
+                 output_path: str
+                 ):
+        super(KM, self).__init__()
+        self.logger = logging.getLogger(self.__class__.__name__)
         self.output_path = output_path
         self.min_clients = min_clients
         self.num_rounds = 1
-        self.flare_comm = Communicator()
+        self.flare_comm = WFComm()
         self.flare_comm.init(self)
 
     def run(self):
@@ -58,23 +61,18 @@ for kM analysis, it literal involves
 * then aggregate the result to obtain gloabl results
 * save the result
 
-We only need to one_round trip from server --> client, client --> server  
-
-```
-    def run(self):
-        results = self.start_km_analysis()
-        global_res = self.aggr_km_result(results)
-        self.save(global_res, self.output_path)
-
-```
+We only need to one_round trip from server --> client, client --> server
 
 Let's define the start_km_analysis()
 
 ```
     def start_km_analysis(self):
+        self.logger.info("send kaplan-meier analysis command to all sites \n")
+
         msg_payload = {"min_responses": self.min_clients}
-        results = self.flare_comm.broadcast(msg_payload)
+        results = self.flare_comm.broadcast_and_wait(msg_payload)
         return results
+
 ```
 
 looks like to simply call send broadcast command, then just get the results.
