@@ -1,7 +1,6 @@
 # FedAvg: simplified
 
 This example illustrates two features:
-* How to perform Kaplan-Meirer Survival Analysis in federated setting
 * How to use the new Flare Communicator API to contract a workflow: no need to write a controller.  
 
 ## FLARE Controller Communicator API
