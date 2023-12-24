@@ -73,6 +73,7 @@ class FedAvg(WF):
         }
 
     def run(self):
+        self.logger.info("============ start Fed Avg Workflow\n \n")
         net = Net()
         model = FLModel(params=net.state_dict(), params_type=ParamsType.FULL)
         for current_round in range(self.start_round, self.start_round + self.num_rounds):

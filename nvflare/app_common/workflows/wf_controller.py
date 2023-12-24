@@ -1,4 +1,3 @@
-import logging
 import threading
 import time
 import traceback
@@ -38,9 +37,6 @@ class WFController(ErrorHandlingController):
 
         self.clients = None
         self._task_timeout = task_timeout
-        self._current_round = 1
-        self._start_round = 1
-        self._num_rounds = 1
         self.task_name = task_name
         self.ctrl_msg_check_interval = 0.5
         self.wf_class_path = wf_class_path
@@ -50,7 +46,6 @@ class WFController(ErrorHandlingController):
 
         self._result_queue_lock = threading.Lock()
         self._thread_pool_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=self.__class__.__name__)
-        self._ctrl_msg_loop_future = None
 
         self.wf: WF = class_utils.instantiate_class(self.wf_class_path, self.wf_args)
 
@@ -77,9 +72,10 @@ class WFController(ErrorHandlingController):
     def control_flow(self, abort_signal: Signal, fl_ctx: FLContext):
         try:
             future = self._thread_pool_executor.submit(self.ctrl_msg_loop, fl_ctx=fl_ctx, abort_signal=abort_signal)
-            self._ctrl_msg_loop_future = future
-
             self.wf.run()
+            self.stop_msg_queue("job completed", fl_ctx)
+
+            future.result()
         except Exception as e:
             traceback_str = traceback.format_exc()
             error_msg = secure_format_exception(e, traceback_str)
@@ -107,16 +103,18 @@ class WFController(ErrorHandlingController):
     def ctrl_msg_loop(self, fl_ctx: FLContext, abort_signal: Signal):
 
         if self.ctrl_msg_queue is None:
+            self.log_info(fl_ctx, "msg queue is None")
             return
-
         while True:
             if abort_signal.triggered:
                 break
-            item = self.ctrl_msg_queue.get()
-            print("\n ============= item = ", item)
-            print("\n ============= items size= ", self.ctrl_msg_queue.qsize())
-            print("\n ============= abort_signal.triggered = ", abort_signal.triggered)
-            if item:
+            if self.ctrl_msg_queue.empty():
+                self.log_info(fl_ctx, "empty queue(), sleep 0.5 sec \n\n\n")
+                time.sleep(self.ctrl_msg_check_interval)
+            else:
+                self.log_info(fl_ctx, "get queue item  ================================\n\n")
+                item = self.ctrl_msg_queue.get()
+
                 cmd = item.get("command", None)
                 if cmd is None:
                     msg = "Invalid message format, expecting 'command'"
@@ -128,12 +126,8 @@ class WFController(ErrorHandlingController):
                     break
                 elif cmd == "BROADCAST":
                     pay_load = item.get("payload")
-                    current_round = pay_load.get("current_round", 1)
-                    start_round = pay_load.get("start_round", 1)
-                    num_rounds = pay_load.get("num_rounds", 1)
-                    fl_ctx.set_prop(AppConstants.CURRENT_ROUND, current_round, private=True, sticky=True)
-                    if current_round == start_round:
-                        self.fire_event(AppEventType.ROUND_STARTED, fl_ctx)
+
+                    current_round = self.prepare_round_info(fl_ctx, pay_load)
 
                     task, min_responses = self.get_payload_task(pay_load)
                     self.broadcast_and_wait(
@@ -146,13 +140,8 @@ class WFController(ErrorHandlingController):
                     self.fire_event(AppEventType.ROUND_DONE, fl_ctx)
                     self.log_info(fl_ctx, f"Round {current_round} finished.")
 
-                    if current_round == num_rounds + start_round:
-                        self.stop_msg_queue(f"Finished task '{self.task_name}'.")
-
                 elif cmd == "SEND":
-                    pay_load = item.get("payload")
-                    task, min_responses = self.get_payload_task(pay_load)
-                    # self.send_and_wait(task, fl_ctx, abort_signal)
+                    raise NotImplementedError
                 else:
                     abort_signal.trigger(f"Unknown command '{cmd}'")
                     raise ValueError(f"Unknown command '{cmd}'")
@@ -161,22 +150,16 @@ class WFController(ErrorHandlingController):
                     self.log_debug(self.fl_ctx, f"task {self.task_name} aborted")
                     break
 
-            else:
-                self.log_info(f"sleep for {self.ctrl_msg_check_interval} sec and wait for ctrl message request")
-                time.sleep(self.ctrl_msg_check_interval)
-
     def prepare_round_info(self, fl_ctx, pay_load):
         current_round = pay_load.get("current_round", 1)
         start_round = pay_load.get("start_round", 1)
         num_rounds = pay_load.get("num_rounds", 1)
-
-        self._current_round = current_round
-        self._start_round = start_round
-        self._num_rounds = num_rounds
-
         fl_ctx.set_prop(AppConstants.CURRENT_ROUND, current_round, private=True, sticky=True)
+        fl_ctx.set_prop(AppConstants.NUM_ROUNDS, num_rounds, private=True, sticky=True)
+        fl_ctx.set_prop(AppConstants.START_ROUND, start_round, private=True, sticky=True)
         if current_round == start_round:
             self.fire_event(AppEventType.ROUND_STARTED, fl_ctx)
+        return current_round
 
     def get_payload_task(self, pay_load) -> Tuple[Task, int]:
         min_responses = pay_load.get("min_responses")
