@@ -92,6 +92,7 @@ This is the same as FLARE Client API configuration
 
 ```
 {
+  # version of the configuration
   format_version = 2
   task_data_filters =[]
   task_result_filters = []
@@ -99,13 +100,9 @@ This is the same as FLARE Client API configuration
   workflows = [
       {
         id = "km"
-        
-        # Task Controller
-        path = "nvflare.app_common.workflows.task_controller.TaskController"
+        path = "nvflare.app_common.workflows.wf_controller.WFController"
         args {
             task_name = "train"
-           
-            # User-defined workflow KM 
             wf_class_path = "km_wf.KM",
             wf_args {
                 min_clients = 2
@@ -118,6 +115,7 @@ This is the same as FLARE Client API configuration
   components = []
 
 }
+
 ```
 
 
