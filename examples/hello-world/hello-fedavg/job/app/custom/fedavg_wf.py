@@ -234,7 +234,7 @@ class FedAvg(WF):
             dir_name = os.path.dirname(file_path)
             os.makedirs(dir_name, exist_ok=True)
 
-            self.logger.info(f"save best model to {file_path}")
+            self.logger.info(f"save best model to {file_path} \n")
             m = model.params
             torch.save(m, file_path)
 
