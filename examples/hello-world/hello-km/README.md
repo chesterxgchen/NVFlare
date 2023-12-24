@@ -7,11 +7,11 @@ This example illustrates two features:
 ## FLARE Controller Communicator API
 
 The Flare controller Communicator API only has small set APIs
-* flare_comm = Communicator()
+* flare_comm = WFComm()
 * flare_comm.init()
 * flare_comm.broadcast_and_wait():
 * flare_comm.broadcast():
-* flare.wait()
+* flare_comm.wait()
 * flare.get_site_names()
 *
 * flare_comm.send()     (todo)
