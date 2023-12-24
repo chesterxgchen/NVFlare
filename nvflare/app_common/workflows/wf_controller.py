@@ -18,6 +18,7 @@ from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
 from nvflare.app_common.utils.fl_model_utils import FLModelUtils
 from nvflare.app_common.workflows.error_handling_controller import ErrorHandlingController
+from nvflare.app_common.workflows.flare_ctrl.wf_queue import WFQueue
 from nvflare.app_common.workflows.flare_ctrl.wf_spec import WF
 from nvflare.app_opt.pt.decomposers import TensorDecomposer
 from nvflare.fuel.utils import class_utils
@@ -41,8 +42,7 @@ class WFController(ErrorHandlingController):
         self.ctrl_msg_check_interval = 0.5
         self.wf_class_path = wf_class_path
         self.wf_args = wf_args
-        self.ctrl_msg_queue = Queue()
-        self.result_queue = Queue()
+        self.wf_queue = WFQueue(ctrl_queue=Queue(), result_queue=Queue())
 
         self._result_queue_lock = threading.Lock()
         self._thread_pool_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=self.__class__.__name__)
@@ -64,7 +64,7 @@ class WFController(ErrorHandlingController):
         self.engine = self.fl_ctx.get_engine()
         self.clients = self.engine.get_clients()
         # dynamic add queues to the flare_ctrl object instance
-        self.wf.flare_comm.set_queues(task_queue=self.ctrl_msg_queue, result_queue=self.result_queue)
+        self.wf.flare_comm.set_queue(self.wf_queue)
         self.wf.flare_comm.meta.update({"site_names": self.get_site_names()})
 
         self.log_info(fl_ctx, "workflow controller started")
@@ -86,10 +86,12 @@ class WFController(ErrorHandlingController):
             self.stop_msg_queue("job completed", fl_ctx, wait_time)
 
     def stop_msg_queue(self, stop_message, fl_ctx, wait_time: float = 0):
-        self.ctrl_msg_queue.put({"command": "STOP", "payload": {}})
+        self.wf_queue.put_stop_ctr_msg()
         self.log_info(fl_ctx, stop_message)
-        self.log_info(fl_ctx, f"wait for {wait_time} sec")
-        time.sleep(wait_time)
+
+        if wait_time > 0:
+            self.log_info(fl_ctx, f"wait for {wait_time} sec")
+            time.sleep(wait_time)
 
     def stop_controller(self, fl_ctx: FLContext):
 
@@ -102,18 +104,19 @@ class WFController(ErrorHandlingController):
 
     def ctrl_msg_loop(self, fl_ctx: FLContext, abort_signal: Signal):
 
-        if self.ctrl_msg_queue is None:
-            self.log_info(fl_ctx, "msg queue is None")
-            return
+        if self.wf_queue is None:
+            raise ValueError("WFQueue must provided")
+
         while True:
             if abort_signal.triggered:
                 break
-            if self.ctrl_msg_queue.empty():
-                self.log_info(fl_ctx, "empty queue(), sleep 0.5 sec \n\n\n")
+            if not self.wf_queue.has_ctrl_msg():
                 time.sleep(self.ctrl_msg_check_interval)
             else:
                 self.log_info(fl_ctx, "get queue item  ================================\n\n")
-                item = self.ctrl_msg_queue.get()
+                item = self.wf_queue.get_ctrl_msg()
+                if item is None:
+                    continue
 
                 cmd = item.get("command", None)
                 if cmd is None:
@@ -217,7 +220,8 @@ class WFController(ErrorHandlingController):
             self.stop_msg_queue(f"error code {rc} occurred", fl_ctx)
             self.handle_client_errors(rc, client_task, fl_ctx)
             results["result"] = {client_name: {}}
-        self.write_to_result_queue({task_name: results})
+
+        self.wf_queue.put_result({task_name: results})
 
         # Cleanup task result
         client_task.result = None
@@ -226,18 +230,6 @@ class WFController(ErrorHandlingController):
         super().handle_event(event_type, fl_ctx)
         if event_type == EventType.END_RUN:
             self.stop_msg_queue("job end", fl_ctx)
-            # results = {"status": ReturnCode.OK, "result": {}}
-            # self.result_queue.put(results)
-            # self.write_to_result_queue(results)
-
-    def write_to_result_queue(self, results):
-        try:
-            self._result_queue_lock.acquire()
-            self.log_debug(self.fl_ctx, "acquired a _result_queue_lock")
-            self.result_queue.put(results)
-        finally:
-            self.log_debug(self.fl_ctx, "released a _result_queue_lock")
-            self._result_queue_lock.release()
 
     def get_site_names(self):
         return [client.name for client in self.clients]
