@@ -14,8 +14,6 @@ The Flare controller Communicator API only has small set APIs
 
 With this new API writing the new workflow is really simple: 
 
-For example for Kaplan-Meier Analysis, we could write a new workflow like this: 
-
 * Controller Workflow (Server)
 
 ```
