@@ -74,7 +74,7 @@ def _format_exc_securely() -> str:
     for f in frames:
         result.append(f.line_text)
         if f.count > 1:
-            result.append(f"[Previous line repeated {f.count-1} more times]")
+            result.append(f"[Previous line repeated {f.count - 1} more times]")
 
     text = "\r\n  ".join(result)
     return "{}\r\n{}".format(text, f"Exception Type: {exc_type}")
@@ -115,13 +115,14 @@ def secure_log_traceback(logger: logging.Logger = None):
     logger.error(exc_detail)
 
 
-def secure_format_exception(e: Exception) -> str:
+def secure_format_exception(e: Exception, msg: str = None) -> str:
     """Formats the specified exception and return a string without sensitive info.
 
     If secure mode is set, only return the type of the exception;
     If secure mode is not set, return the result of str(e).
 
     Args:
+       msg: alternative message
        e: the exception to be formatted
 
     Returns:
@@ -130,4 +131,5 @@ def secure_format_exception(e: Exception) -> str:
     if is_secure():
         return str(type(e))
     else:
-        return f"{type(e).__name__}: {str(e)}"
+        msg = msg if msg else str(e)
+        return f"{type(e).__name__}: {msg}"

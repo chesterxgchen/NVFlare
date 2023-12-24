@@ -1,20 +1,27 @@
 import json
+import logging
 import os.path
+from typing import Dict
 
 from km_analysis import kaplan_meier_analysis
+from nvflare.app_common.abstract.fl_model import FLModel
+from nvflare.app_common.workflows.flare_ctrl.wf_comm import WFComm
 from nvflare.app_common.workflows.flare_ctrl.wf_spec import WF
 
 
-# Server Workflow
+# Controller Workflow
 
 class KM(WF):
     def __init__(self,
                  min_clients: int,
-                 output_path: str):
+                 output_path: str
+                 ):
         super(KM, self).__init__()
+        self.logger = logging.getLogger(self.__class__.__name__)
         self.output_path = output_path
         self.min_clients = min_clients
         self.num_rounds = 1
+        self.flare_comm = WFComm()
         self.flare_comm.init(self)
 
     def run(self):
@@ -23,14 +30,29 @@ class KM(WF):
         self.save(global_res, self.output_path)
 
     def start_km_analysis(self):
+        self.logger.info("send kaplan-meier analysis command to all sites \n")
+
         msg_payload = {"min_responses": self.min_clients}
-        results = self.flare_comm.broadcast(msg_payload)
+        results = self.flare_comm.broadcast_and_wait(msg_payload)
         return results
 
-    def aggr_km_result(self, task_result: dict):
-        print("\n ======= enter aggregate_fn========= \n")
-        global_result = {}
-        for site, result in task_result.items():
+    def aggr_km_result(self, sag_result: Dict[str, Dict[str, FLModel]]):
+
+        self.logger.info("aggregate kaplan-meier analysis results \n")
+
+        if not sag_result:
+            raise RuntimeError("input is None or empty")
+
+        task_name, task_result = next(iter(sag_result.items()))
+
+        if not task_result:
+            raise RuntimeError("task_result None or empty ")
+
+        global_result: dict = {}
+        all_result = {}
+        for site, fl_model in task_result.items():
+            result = fl_model.params
+            all_result[site] = result
             timelines = result.get("timeline")
             event_counts = result.get("event_count")
             combined_arrays = list(zip(timelines, event_counts))
@@ -51,12 +73,12 @@ class KM(WF):
 
         g_km_result = kaplan_meier_analysis(g_duration, g_event_counts)
 
-        all_result = task_result.copy()
         all_result["global"] = g_km_result
         return all_result
 
     def save(self, result: dict, file_path: str):
-        print(f"save the {result} to {file_path}")
+        self.logger.info(f"save the result to {file_path} \n")
+
         dir_name = os.path.dirname(file_path)
         os.makedirs(dir_name, exist_ok=True)
         with open(file_path, 'w') as json_file:
