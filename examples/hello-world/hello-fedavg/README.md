@@ -43,37 +43,32 @@ class FedAvg(WF):
         self.flare_comm.init(self)
         
     def run(self):
+        # init model
         net = Net()
         model = FLModel(params=net.state_dict(), params_type=ParamsType.FULL)
+        
         for current_round in range(self.start_round, self.start_round + self.num_rounds):
         
             if self.early_stop_cond(model.metrics, self.early_stop_metrics):
-                self.logger.info("early stop condition satisfied, stopping")
                 break
-            else:
-                self.logger.info("early stop condition NOT satisfied, continue")
 
             self.current_round = current_round
             self.logger.info(f"Round {current_round}/{self.num_rounds} started.")
 
-            self.logger.info("Scatter and Gather")
             sag_results = self.scatter_and_gather(model, current_round)
 
-            self.logger.info("fed avg aggregate")
             aggr_result = self.aggr_fn(sag_results)
-
-            self.logger.info(f"aggregate metrics = {aggr_result.metrics}")
-
-            self.logger.info("update model")
-
             model = FLModelUtils.update_model(model, aggr_result)
-
-            self.logger.info(f"best model selection")
+            
             self.select_best_model(model)
 
-        self.logger.info(f"save_model")
         self.save_model(self.best_model, self.output_path)
+```
+Scatter and Gather (SAG): 
 
+SAG is simply ask WFController to broadcast the model to all clients
+
+```
     def scatter_and_gather(self, model: FLModel, current_round):
         msg_payload = {"min_responses": self.min_clients,
                        "current_round": current_round,
@@ -84,7 +79,6 @@ class FedAvg(WF):
         # (2) broadcast and wait
         results = self.flare_comm.broadcast_and_wait(msg_payload)
         return results
-
 ```
 
 The base class ```WF``` is define as
