@@ -4,6 +4,8 @@ import traceback
 from enum import Enum
 from typing import Dict, Optional
 
+import torch
+
 from net import Net
 from nvflare.app_common.abstract.fl_model import FLModel, ParamsType
 from nvflare.app_common.aggregators.weighted_aggregation_helper import WeightedAggregationHelper
@@ -11,6 +13,8 @@ from nvflare.app_common.utils.fl_model_utils import FLModelUtils
 from nvflare.app_common.workflows.flare_ctrl.wf_comm import WFComm
 from nvflare.app_common.workflows.flare_ctrl.wf_spec import WF
 from nvflare.security.logging import secure_format_exception
+
+update_model = FLModelUtils.update_model
 
 
 # FedAvg Controller Workflow
@@ -70,30 +74,28 @@ class FedAvg(WF):
 
         net = Net()
         model = FLModel(params=net.state_dict(), params_type=ParamsType.FULL)
-        for current_round in range(self.start_round, self.start_round + self.num_rounds):
-            if self.early_stop_cond(model.metrics, self.early_stop_metrics):
+
+        start = self.start_round
+        end = self.start_round + self.num_rounds
+
+        for current_round in range(start, end):
+            if self.should_early_stop(model.metrics, self.early_stop_metrics):
                 break
 
             self.current_round = current_round
 
             self.logger.info(f"Round {current_round}/{self.num_rounds} started.")
 
-            self.logger.info("Scatter and Gather")
             sag_results = self.scatter_and_gather(model, current_round)
 
-            self.logger.info("fed avg aggregate")
             aggr_result = self.aggr_fn(sag_results)
 
             self.logger.info(f"aggregate metrics = {aggr_result.metrics}")
 
-            self.logger.info("update model")
+            model = update_model(model, aggr_result)
 
-            model = FLModelUtils.update_model(model, aggr_result)
-
-            self.logger.info(f"best model selection")
             self.select_best_model(model)
 
-        self.logger.info(f"save_model")
         self.save_model(self.best_model, self.output_path)
 
     def scatter_and_gather(self, model: FLModel, current_round):
@@ -108,6 +110,7 @@ class FedAvg(WF):
         return results
 
     def aggr_fn(self, sag_result: Dict[str, Dict[str, FLModel]]) -> FLModel:
+
         self.logger.info("fed avg aggregate \n")
 
         if not sag_result:
@@ -116,9 +119,10 @@ class FedAvg(WF):
         task_name, task_result = next(iter(sag_result.items()))
 
         if not task_result:
-            raise RuntimeError("task_result None or empty ")
+            raise RuntimeError("task_result is None or empty ")
 
         self.logger.info(f"aggregating {len(task_result)} update(s) at round {self.current_round}")
+
         try:
             aggr_params_helper = WeightedAggregationHelper()
             aggr_metrics_helper = WeightedAggregationHelper()
@@ -135,6 +139,7 @@ class FedAvg(WF):
                 )
 
                 self.logger.info(f"site={site}  {fl_model.metrics=}")
+
                 aggr_metrics_helper.add(
                     data=fl_model.metrics,
                     weight=self.current_round,
@@ -176,13 +181,10 @@ class FedAvg(WF):
         dir_name = os.path.dirname(file_path)
         os.makedirs(dir_name, exist_ok=True)
 
-        # todo, make this more plugable
-        if self.mode_format == "torch":
-            self.pt_save_mode(model, file_path)
-        else:
-            raise RuntimeError(f"model format '{self.mode_format}' writer function is not implemented")
+        self.logger.info(f"save best model to {file_path} \n")
+        torch.save(model.params, file_path)
 
-    def early_stop_cond(self, metrics: dict, early_stop_metrics: dict):
+    def should_early_stop(self, metrics: dict, early_stop_metrics: dict):
         self.logger.info(f"early_stop_cond, early_stop_metrics = {early_stop_metrics}, {metrics=}")
         if early_stop_metrics is None or metrics is None:
             return False
@@ -247,7 +249,3 @@ class FedAvg(WF):
                         return False
 
             return True
-
-    def pt_save_mode(self, model: FLModel, file_path: str):
-       self.logger.info(f"save best model to {file_path} \n")
-       torch.save(model.params, file_path)
