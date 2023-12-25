@@ -100,7 +100,7 @@ This is the same as FLARE Client API configuration
 
 ### server-side configuration
 
-  Server side controller is really simple, all we need is to user TaskController with newly defined workflow class
+  Server side controller is really simple, all we need is to user WFController with newly defined workflow class
 ```KM```
 
 ```
