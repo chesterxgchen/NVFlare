@@ -42,24 +42,33 @@ class FedAvg(WF):
         self.flare_comm = WFComm(result_check_interval=10)
         self.flare_comm.init(self)
         
+  
     def run(self):
-        # init model
+
+        self.logger.info("start Fed Avg Workflow\n \n")
+
         net = Net()
         model = FLModel(params=net.state_dict(), params_type=ParamsType.FULL)
-        
-        for current_round in range(self.start_round, self.start_round + self.num_rounds):
-        
-            if self.early_stop_cond(model.metrics, self.early_stop_metrics):
+
+        start = self.start_round
+        end = self.start_round + self.num_rounds
+
+        for current_round in range(start, end):
+            if self.should_early_stop(model.metrics, self.early_stop_metrics):
                 break
 
             self.current_round = current_round
+
             self.logger.info(f"Round {current_round}/{self.num_rounds} started.")
 
             sag_results = self.scatter_and_gather(model, current_round)
 
             aggr_result = self.aggr_fn(sag_results)
-            model = FLModelUtils.update_model(model, aggr_result)
-            
+
+            self.logger.info(f"aggregate metrics = {aggr_result.metrics}")
+
+            model = update_model(model, aggr_result)
+
             self.select_best_model(model)
 
         self.save_model(self.best_model, self.output_path)
