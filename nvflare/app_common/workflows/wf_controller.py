@@ -64,7 +64,6 @@ class WFController(ErrorHandlingController):
         self.log_info(fl_ctx, "Initializing controller workflow.")
         self.engine = self.fl_ctx.get_engine()
         self.clients = self.engine.get_clients()
-        # dynamic add queues to the flare_ctrl object instance
 
         self.setup_wf_queue()
 
@@ -74,8 +73,6 @@ class WFController(ErrorHandlingController):
         flare_comm = self.find_comm_in_wf()
         flare_comm.set_queue(self.wf_queue)
         flare_comm.meta.update({"site_names": self.get_site_names()})
-        # self.wf.flare_comm.set_queue(self.wf_queue)
-        # self.wf.flare_comm.meta.update({"site_names": self.get_site_names()})
 
     def find_comm_in_wf(self):
         attr_objs = [getattr(self.wf, attr_name, None) for attr_name in dir(self.wf)]
