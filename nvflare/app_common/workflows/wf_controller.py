@@ -18,6 +18,7 @@ from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
 from nvflare.app_common.utils.fl_model_utils import FLModelUtils
 from nvflare.app_common.workflows.error_handling_controller import ErrorHandlingController
+from nvflare.app_common.workflows.flare_ctrl.wf_comm import WFComm
 from nvflare.app_common.workflows.flare_ctrl.wf_queue import WFQueue
 from nvflare.app_common.workflows.flare_ctrl.wf_spec import WF
 from nvflare.app_opt.pt.decomposers import TensorDecomposer
@@ -64,10 +65,25 @@ class WFController(ErrorHandlingController):
         self.engine = self.fl_ctx.get_engine()
         self.clients = self.engine.get_clients()
         # dynamic add queues to the flare_ctrl object instance
-        self.wf.flare_comm.set_queue(self.wf_queue)
-        self.wf.flare_comm.meta.update({"site_names": self.get_site_names()})
+
+        self.setup_wf_queue()
 
         self.log_info(fl_ctx, "workflow controller started")
+
+    def setup_wf_queue(self):
+        flare_comm = self.find_comm_in_wf()
+        flare_comm.set_queue(self.wf_queue)
+        flare_comm.meta.update({"site_names": self.get_site_names()})
+        # self.wf.flare_comm.set_queue(self.wf_queue)
+        # self.wf.flare_comm.meta.update({"site_names": self.get_site_names()})
+
+    def find_comm_in_wf(self):
+        attr_objs = [getattr(self.wf, attr_name, None) for attr_name in dir(self.wf)]
+        wf_comm_attrs = [attr for attr in attr_objs if isinstance(attr, WFComm)]
+        if wf_comm_attrs:
+            return wf_comm_attrs[0]
+        else:
+            raise RuntimeError(f"missing required attribute with type of 'WFComm' in {self.wf.__class__.__name__}")
 
     def control_flow(self, abort_signal: Signal, fl_ctx: FLContext):
         try:
@@ -113,7 +129,6 @@ class WFController(ErrorHandlingController):
             if not self.wf_queue.has_ctrl_msg():
                 time.sleep(self.ctrl_msg_check_interval)
             else:
-                self.log_info(fl_ctx, "get queue item  ================================\n\n")
                 item = self.wf_queue.get_ctrl_msg()
                 if item is None:
                     continue

@@ -67,21 +67,15 @@ class FedAvg(WF):
         self.flare_comm = WFComm(result_check_interval=10)
         self.flare_comm.init(self)
 
-        self.model_writer_fns = {
-            "torch": self.pt_save_mode,
-            "tensorflow": self.tf_save_mode
-        }
-
     def run(self):
-        self.logger.info("============ start Fed Avg Workflow\n \n")
+
+        self.logger.info("start Fed Avg Workflow\n \n")
+
         net = Net()
         model = FLModel(params=net.state_dict(), params_type=ParamsType.FULL)
         for current_round in range(self.start_round, self.start_round + self.num_rounds):
             if self.early_stop_cond(model.metrics, self.early_stop_metrics):
-                self.logger.info("early stop condition satisfied, stopping")
                 break
-            else:
-                self.logger.info("early stop condition NOT satisfied, continue")
 
             self.current_round = current_round
 
@@ -179,11 +173,17 @@ class FedAvg(WF):
             self.best_model = curr_model
 
     def save_model(self, model: FLModel, file_path: str):
-        writer_fn = self.model_writer_fns.get(self.mode_format, None)
-        if writer_fn:
-            writer_fn(model, file_path)
+        if not file_path:
+            raise ValueError("invalid file path")
+
+        dir_name = os.path.dirname(file_path)
+        os.makedirs(dir_name, exist_ok=True)
+
+        # todo, make this more plugable
+        if self.mode_format == "torch":
+            self.pt_save_mode(model, file_path)
         else:
-            raise RuntimeError(f"model format '{self.mode_format}' writer function is not available")
+            raise RuntimeError(f"model format '{self.mode_format}' writer function is not implemented")
 
     def early_stop_cond(self, metrics: dict, early_stop_metrics: dict):
         self.logger.info(f"early_stop_cond, early_stop_metrics = {early_stop_metrics}, {metrics=}")
@@ -254,9 +254,6 @@ class FedAvg(WF):
     def pt_save_mode(self, model: FLModel, file_path: str):
         torch, import_flag = optional_import("torch")
         if import_flag:
-            dir_name = os.path.dirname(file_path)
-            os.makedirs(dir_name, exist_ok=True)
-
             self.logger.info(f"save best model to {file_path} \n")
             m = model.params
             torch.save(m, file_path)
