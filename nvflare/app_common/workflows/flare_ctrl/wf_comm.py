@@ -16,7 +16,7 @@ CMD_BROADCAST = "BROADCAST"
 class WFComm:
     def __init__(self, result_check_interval: int = 2):
         self.result_check_interval = result_check_interval
-        self.wf_queue: WFQueue = None
+        self.wf_queue: Optional[WFQueue] = None
         self.meta = {SITE_NAMES: []}
         self.logger = logging.getLogger(self.__class__.__name__)
 
