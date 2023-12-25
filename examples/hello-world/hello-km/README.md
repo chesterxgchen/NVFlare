@@ -12,10 +12,10 @@ The Flare controller Communicator API only has small set APIs
 * flare_comm.broadcast_and_wait():
 * flare_comm.broadcast():
 * flare_comm.wait()
-* flare.get_site_names()
+* flare_comm.get_site_names()
 *
 * flare_comm.send()     (todo)
-* flare.send_and_wait() (todo)
+* flare_comm.send_and_wait() (todo)
 
 ## Writing a new Workflow
 
