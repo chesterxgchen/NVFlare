@@ -10,7 +10,6 @@ from nvflare.app_common.aggregators.weighted_aggregation_helper import WeightedA
 from nvflare.app_common.utils.fl_model_utils import FLModelUtils
 from nvflare.app_common.workflows.flare_ctrl.wf_comm import WFComm
 from nvflare.app_common.workflows.flare_ctrl.wf_spec import WF
-from nvflare.fuel.utils.import_utils import optional_import
 from nvflare.security.logging import secure_format_exception
 
 
@@ -43,8 +42,7 @@ class FedAvg(WF):
                  num_rounds: int,
                  output_path: str,
                  start_round: int = 1,
-                 early_stop_metrics: dict = None,
-                 model_format: str = None
+                 early_stop_metrics: dict = None
                  ):
         super(FedAvg, self).__init__()
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -54,7 +52,6 @@ class FedAvg(WF):
         self.num_rounds = num_rounds
         self.start_round = start_round
         self.current_round = start_round
-        self.mode_format = model_format
         self.best_model: Optional[FLModel] = None
 
         # early stop metrics values: accuracy, auc, loss, running_loss
@@ -252,11 +249,5 @@ class FedAvg(WF):
             return True
 
     def pt_save_mode(self, model: FLModel, file_path: str):
-        torch, import_flag = optional_import("torch")
-        if import_flag:
-            self.logger.info(f"save best model to {file_path} \n")
-            m = model.params
-            torch.save(m, file_path)
-
-    def tf_save_mode(self):
-        raise NotImplemented
+       self.logger.info(f"save best model to {file_path} \n")
+       torch.save(model.params, file_path)
