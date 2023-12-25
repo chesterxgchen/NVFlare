@@ -72,12 +72,10 @@ class FedAvg(WF):
 
         self.logger.info("start Fed Avg Workflow\n \n")
 
-        net = Net()
-        model = FLModel(params=net.state_dict(), params_type=ParamsType.FULL)
-
         start = self.start_round
         end = self.start_round + self.num_rounds
 
+        model = self.init_model()
         for current_round in range(start, end):
             if self.should_early_stop(model.metrics, self.early_stop_metrics):
                 break
@@ -97,6 +95,11 @@ class FedAvg(WF):
             self.select_best_model(model)
 
         self.save_model(self.best_model, self.output_path)
+
+    def init_model(self):
+        net = Net()
+        model = FLModel(params=net.state_dict(), params_type=ParamsType.FULL)
+        return model
 
     def scatter_and_gather(self, model: FLModel, current_round):
         msg_payload = {"min_responses": self.min_clients,
