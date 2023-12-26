@@ -66,7 +66,6 @@ class FedAvg(WF):
 
         # (1) init flare_comm
         self.flare_comm = WFComm(result_check_interval=10)
-        self.flare_comm.init(self)
 
     def run(self):
 

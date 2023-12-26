@@ -22,7 +22,6 @@ class KM(WF):
         self.min_clients = min_clients
         self.num_rounds = 1
         self.flare_comm = WFComm()
-        self.flare_comm.init(self)
 
     def run(self):
         results = self.start_km_analysis()

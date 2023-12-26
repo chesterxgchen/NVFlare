@@ -56,9 +56,6 @@ class WFController(ErrorHandlingController):
         self.engine = None
         self.fl_ctx = None
 
-        if not hasattr(self.wf, "flare_comm"):
-            raise ValueError(f"required attribute 'flare_ctrl' is not set on class {self.wf_class_path}")
-
     def start_controller(self, fl_ctx: FLContext):
         self.fl_ctx = fl_ctx
         self.log_info(fl_ctx, "Initializing controller workflow.")

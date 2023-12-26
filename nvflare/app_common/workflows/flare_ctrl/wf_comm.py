@@ -20,10 +20,6 @@ class WFComm:
         self.meta = {SITE_NAMES: []}
         self.logger = logging.getLogger(self.__class__.__name__)
 
-    def init(self, wf: WF):
-        if wf:
-            wf.flare_comm = self
-
     def set_queue(self, wf_queue: WFQueue):
         self.wf_queue = wf_queue
 
