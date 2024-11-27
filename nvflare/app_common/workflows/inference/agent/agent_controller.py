@@ -14,15 +14,28 @@
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.impl.controller import Controller
 from nvflare.apis.signal import Signal
+from nvflare.app_common.agent.agent import Agent
 
 
-class AgentCoordinator(Controller):
+class AgentController(Controller):
+
+    def __init__(self, agent_name: str, task_check_period=0.01):
+        super().__init__(task_check_period)
+        self.agent = None
+        self.fl_ctx = None
+        self.agent_name = agent_name
 
     def start_controller(self, fl_ctx: FLContext):
-        pass
+        self.fl_ctx = fl_ctx
+        self.agent = self.fl_ctx.get_engine().get_component(self.agent_name)
 
     def control_flow(self, abort_signal: Signal, fl_ctx: FLContext):
-        pass
+        self.agent.start()
+        #
+        # get new query from where ? fire event ?
+        # where
+
+
 
     def stop_controller(self, fl_ctx: FLContext):
-        pass
+        self.agent.stop()

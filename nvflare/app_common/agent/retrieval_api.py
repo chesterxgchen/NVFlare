@@ -22,7 +22,7 @@ from nvflare.app_common.workflows.inference.fed_agent.document import Document
 class RetrievalAPI(ABC):
 
     @abstractmethod
-    def retrieval_documents(self, query: str, top_k: int) -> List[Document]:
+    def retrieve_documents(self, query: str, top_k: int) -> List[Document]:
         pass
 
     @abstractmethod
