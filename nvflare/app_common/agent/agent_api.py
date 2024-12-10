@@ -11,21 +11,35 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 from abc import ABC, abstractmethod
+from typing import Dict
+
+from nvflare.apis.fl_context import FLContext
+from nvflare.apis.shareable import Shareable
 
 
-class MonitoringAPI(ABC):
+class AgentAPI(ABC):
+
     @abstractmethod
-    def log_query(self, query: str, response: str, feedback: dict = None) -> bool:
-        """Logs a query and its response for monitoring."""
+    def process_and_generate(self, query:str, meta: Dict) -> Dict:
+        """
+            process input query and based on the metadata direction
+            the agent will either direct process the query or route/broadcast to other agents to handle the query
+        Args:
+            query:
+            meta:
+        Returns:
+        """
         pass
 
     @abstractmethod
-    def collect_feedback(self, query: str, feedback: dict) -> bool:
-        """Collects user feedback on the response."""
-        pass
-
-    @abstractmethod
-    def monitor_performance(self) -> dict:
-        """Monitors performance metrics like response time, accuracy, etc."""
+    def receive_query(self, topic: str, query_data: Dict, fl_ctx: FLContext) -> Dict:
+        """
+        Args:
+            topic:
+            query_data:
+            fl_ctx:
+        Returns:
+        """
         pass

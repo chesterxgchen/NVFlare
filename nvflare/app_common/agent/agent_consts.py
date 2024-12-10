@@ -11,21 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from abc import ABC, abstractmethod
 
+AGENT_STOP = "STOP"
+AGENT_QUERY = "QUERY"
 
-class MonitoringAPI(ABC):
-    @abstractmethod
-    def log_query(self, query: str, response: str, feedback: dict = None) -> bool:
-        """Logs a query and its response for monitoring."""
-        pass
-
-    @abstractmethod
-    def collect_feedback(self, query: str, feedback: dict) -> bool:
-        """Collects user feedback on the response."""
-        pass
-
-    @abstractmethod
-    def monitor_performance(self) -> dict:
-        """Monitors performance metrics like response time, accuracy, etc."""
-        pass
+# KEYS
+AGENT_QUERY_METADATA = "QUERY_METADATA"
+AGENT_CTRL_DATA = "CTRL_DATA"
+AGENT_SESSION_TOPIC_CHANNEL = "SESSION_TOPIC"
+AGENT_GENERAL_TOPIC_CHANNEL = "GENERAL_TOPIC"

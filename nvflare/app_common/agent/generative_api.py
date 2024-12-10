@@ -20,7 +20,7 @@ from nvflare.app_common.workflows.inference.fed_agent.document import Document
 class GenerativeAPI(ABC):
 
     @abstractmethod
-    def generate_response(self, query:str, context: List[str]) -> str:
+    def generate_response(self, query: str, context: List[str]) -> str:
         pass
 
     @abstractmethod

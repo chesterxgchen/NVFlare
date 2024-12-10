@@ -11,17 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from nvflare.apis.fl_context import FLContext
-from nvflare.apis.impl.controller import Controller
-from nvflare.apis.signal import Signal
-from nvflare.app_common.agent.agent import Agent
+from abc import ABC, abstractmethod
+from typing import List, Any
 
 
-class AgentCoordinator:
+class AgentPipeline(ABC):
 
-    def __init__(self):
+    @abstractmethod
+    def execute(self, query: str, **kwargs):
         pass
 
-    def route_query(self, query: input):
+    @abstractmethod
+    def add_component(self, component: Any, name: str):
         pass
-

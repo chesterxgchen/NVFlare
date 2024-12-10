@@ -706,7 +706,7 @@ class WFCommServer(FLComponent, WFCommSpec):
                 t.completion_status = completion_status
 
     def finalize_run(self, fl_ctx: FLContext):
-        """Do cleanup of the coordinator implementation.
+        """Do cleanup of the orchestrator implementation.
 
         .. attention::
 

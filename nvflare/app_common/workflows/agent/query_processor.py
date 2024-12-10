@@ -11,21 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from abc import ABC, abstractmethod
+
+from nvflare.app_common.agent.input_preprocess_api import InputPreprocessorAPI
 
 
-class MonitoringAPI(ABC):
-    @abstractmethod
-    def log_query(self, query: str, response: str, feedback: dict = None) -> bool:
-        """Logs a query and its response for monitoring."""
+class QueryInputProcessor(InputPreprocessorAPI):
+
+    def preprocessing_input(self, input: str) -> str:
         pass
 
-    @abstractmethod
-    def collect_feedback(self, query: str, feedback: dict) -> bool:
-        """Collects user feedback on the response."""
-        pass
-
-    @abstractmethod
-    def monitor_performance(self) -> dict:
-        """Monitors performance metrics like response time, accuracy, etc."""
+    def parse_query(self, query: str) -> dict:
         pass

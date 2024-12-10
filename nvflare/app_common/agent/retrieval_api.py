@@ -31,7 +31,9 @@ class RetrievalAPI(ABC):
         pass
 
     @abstractmethod
-    def search_database(self, query: str, top_k: int = 5, search_type: str = "hybrid", filters: dict = None) -> List[Document]:
+    def search_database(
+        self, query: str, top_k: int = 5, search_type: str = "hybrid", filters: dict = None
+    ) -> List[Document]:
         pass
 
     @abstractmethod

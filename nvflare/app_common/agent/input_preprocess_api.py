@@ -40,5 +40,3 @@ class InputPreprocessorAPI(ABC):
         Returns:
         """
         pass
-
-
