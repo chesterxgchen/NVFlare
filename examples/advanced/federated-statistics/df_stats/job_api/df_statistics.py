@@ -20,7 +20,7 @@ from nvflare.app_opt.statistics.df.df_core_statistics import DFStatisticsCore
 
 class DFStatistics(DFStatisticsCore):
 
-    def __init__(self, data_root_dir: str, filename: str):
+    def __init__(self, data_root_dir: str, filename:str):
         super().__init__()
         self.data_root_dir = data_root_dir
         self.filename = filename
@@ -59,8 +59,7 @@ class DFStatistics(DFStatisticsCore):
         try:
             # example of load data from CSV
             df: pd.DataFrame = pd.read_csv(
-                data_path, names=self.data_features, sep=r"\s*,\s*", skiprows=self.skip_rows[self.site_name],
-                engine="python", na_values="?"
+                data_path, names=self.data_features, sep=r"\s*,\s*", skiprows=self.skip_rows, engine="python", na_values="?"
             )
             train = df.sample(frac=0.8, random_state=200)  # random state is a seed value
             test = df.drop(train.index).sample(frac=1.0)

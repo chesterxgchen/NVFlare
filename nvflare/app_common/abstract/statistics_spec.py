@@ -15,9 +15,6 @@ from abc import ABC, abstractmethod
 from enum import IntEnum
 from typing import Dict, List, NamedTuple, Optional
 
-from nvflare.apis.fl_context import FLContext
-from nvflare.app_common.abstract.init_final_component import InitFinalComponent
-
 """
     Statistics defines methods that user need to implement in order to calculate the local statistics
     Only the metrics required by data privacy (such as count) or individual metrics of interested need to implement
@@ -85,24 +82,44 @@ class StatisticConfig(NamedTuple):
     config: dict
 
 
-class Statistics(InitFinalComponent, ABC):
-    def initialize(self, fl_ctx: FLContext):
-        """
-        This is called when client is start Run. At this point
-        the server hasn't communicated to the Statistics calculator yet.
+class Statistics(ABC):
+    def __init__(self):
+        self.site_name = None
 
-        Args:
-            fl_ctx: fl_ctx: FLContext of the running environment
-
-        """
-
+    def initialize(self):
         pass
 
+    def set_site_name(self, site_name:str):
+        self.site_name = site_name
+
+    def get_site_name(self):
+        return self.site_name
+
+    @abstractmethod
+    def load_data(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    def features(self) -> Dict[str, List[Feature]]:
+        """Return Features for each dataset.
+
+        For example, if we have training and test datasets,
+        the method will return
+        { "train": features1, "test": features2}
+        where features1,2 are the list of Features which contains feature name and DataType
+
+        Returns: Dict[<dataset_name>, List[Feature]]
+
+        Raises:
+            NotImplementedError
+        """
+        raise NotImplementedError
+
     def pre_run(
-        self,
-        statistics: List[str],
-        num_of_bins: Optional[Dict[str, Optional[int]]],
-        bin_ranges: Optional[Dict[str, Optional[List[float]]]],
+            self,
+            statistics: List[str],
+            num_of_bins: Optional[Dict[str, Optional[int]]],
+            bin_ranges: Optional[Dict[str, Optional[List[float]]]],
     ):
         """This method is the initial hand-shake, where controller pass all the requested statistics configuration to client.
 
@@ -123,22 +140,6 @@ class Statistics(InitFinalComponent, ABC):
 
         """
         return {}
-
-    @abstractmethod
-    def features(self) -> Dict[str, List[Feature]]:
-        """Return Features for each dataset.
-
-        For example, if we have training and test datasets,
-        the method will return
-        { "train": features1, "test": features2}
-        where features1,2 are the list of Features which contains feature name and DataType
-
-        Returns: Dict[<dataset_name>, List[Feature]]
-
-        Raises:
-            NotImplementedError
-        """
-        raise NotImplementedError
 
     @abstractmethod
     def count(self, dataset_name: str, feature_name: str) -> int:
@@ -206,11 +207,11 @@ class Statistics(InitFinalComponent, ABC):
         raise NotImplementedError
 
     def variance_with_mean(
-        self,
-        dataset_name: str,
-        feature_name: str,
-        global_mean: float,
-        global_count: float,
+            self,
+            dataset_name: str,
+            feature_name: str,
+            global_mean: float,
+            global_count: float,
     ) -> float:
         """Calculate the variance with the given mean and count values.
 
@@ -240,7 +241,8 @@ class Statistics(InitFinalComponent, ABC):
         raise NotImplementedError
 
     def histogram(
-        self, dataset_name: str, feature_name: str, num_of_bins: int, global_min_value: float, global_max_value: float
+            self, dataset_name: str, feature_name: str, num_of_bins: int, global_min_value: float,
+            global_max_value: float
     ) -> Histogram:
         """
         Args:
@@ -317,11 +319,3 @@ class Statistics(InitFinalComponent, ABC):
         Returns: number of failure records, default to 0
         """
         return 0
-
-    def finalize(self, fl_ctx: FLContext):
-        """Called to finalize the Statistic calculator (close/release resources gracefully).
-
-        After this call, the Learner will be destroyed.
-
-        """
-        pass

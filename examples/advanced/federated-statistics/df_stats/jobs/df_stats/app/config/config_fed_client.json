@@ -37,7 +37,9 @@
       "id": "df_stats_generator",
       "path": "df_statistics.DFStatistics",
       "args": {
-        "data_path": "data.csv"
+        "data_root_dir": "/tmp/nvflare/df_stats/data",
+        "filename":  "data.csv",
+        "skip_rows": []
       }
     },
     {

@@ -29,7 +29,7 @@ class TaskHandler(InitFinalComponent, ABC):
         super().__init__()
         self.fl_ctx = None
         self.local_comp_id = local_comp_id
-        self.local_comp: Optional[InitFinalComponent] = None
+        self.local_comp = None
         self.target_local_comp_type: type = local_comp_type
 
     def initialize(self, fl_ctx: FLContext):
@@ -44,9 +44,10 @@ class TaskHandler(InitFinalComponent, ABC):
 
     def load_and_init_local_comp(self, fl_ctx):
         engine = fl_ctx.get_engine()
-        local_comp: InitFinalComponent = engine.get_component(self.local_comp_id)
+        local_comp = engine.get_component(self.local_comp_id)
         check_component_type(local_comp, self.target_local_comp_type)
-        local_comp.initialize(fl_ctx)
+        if isinstance(local_comp, InitFinalComponent):
+            local_comp.initialize(fl_ctx)
         self.local_comp = local_comp
 
     @abstractmethod
@@ -66,5 +67,7 @@ class TaskHandler(InitFinalComponent, ABC):
 
     def finalize(self, fl_ctx: FLContext):
         if self.local_comp:
-            self.local_comp.finalize(fl_ctx)
+            if isinstance(self.local_comp, InitFinalComponent):
+                self.local_comp.finalize(fl_ctx)
+
         self.local_comp = None

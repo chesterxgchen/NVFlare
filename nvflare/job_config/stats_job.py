@@ -14,6 +14,7 @@
 from typing import List
 
 from nvflare import FedJob, FilterType
+from nvflare.apis.job_def import SERVER_SITE_NAME
 from nvflare.app_common.abstract.statistics_spec import Statistics
 from nvflare.app_common.executors.statistics.statistics_executor import StatisticsExecutor
 from nvflare.app_common.filters.statistics_privacy_filter import StatisticsPrivacyFilter
@@ -35,6 +36,7 @@ class StatsJob(FedJob):
         min_noise_level=0.1,
         max_noise_level=0.3,
         max_bins_percent=10,
+        enable_pre_run_task: bool = False
     ):
         super().__init__()
         self.writer_id = "stats_writer"
@@ -50,15 +52,15 @@ class StatsJob(FedJob):
 
         self.setup_server()
 
-    def setup_server(self):
+    def setup_server(self, server_name: str = SERVER_SITE_NAME):
         # define stats controller
         ctr = self.get_stats_controller()
-        self.to(ctr, "server")
+        self.to(ctr, server_name)
         # define stat writer to output Json file
         stats_writer = self.get_stats_output_writer()
-        self.to(stats_writer, "server", id=self.writer_id)
+        self.to(stats_writer, server_name, id=self.writer_id)
 
-    def setup_client(self, sites: List[str]):
+    def setup_clients(self, sites: List[str]):
         # Client side job config
         # Add client site
         for site_id in sites:

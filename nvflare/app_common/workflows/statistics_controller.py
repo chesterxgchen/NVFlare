@@ -165,6 +165,8 @@ class StatisticsController(Controller):
         clients = fl_ctx.get_engine().get_clients()
         if not self.min_clients:
             self.min_clients = len(clients)
+        if self.writer_id is None:
+            raise ValueError("statistics writer component Id must be provided")
 
     def control_flow(self, abort_signal: Signal, fl_ctx: FLContext):
 
@@ -180,7 +182,7 @@ class StatisticsController(Controller):
         self.statistics_task_flow(abort_signal, fl_ctx, StC.STATS_2nd_STATISTICS)
 
         if not StatisticsController._wait_for_all_results(
-            self.logger, self.result_wait_timeout, self.min_clients, self.client_statistics, 1.0, abort_signal
+                self.logger, self.result_wait_timeout, self.min_clients, self.client_statistics, 1.0, abort_signal
         ):
             self.log_info(fl_ctx, f"task {self.task_name} timeout on wait for all results.")
             return False
@@ -194,7 +196,7 @@ class StatisticsController(Controller):
         pass
 
     def process_result_of_unknown_task(
-        self, client: Client, task_name: str, client_task_id: str, result: Shareable, fl_ctx: FLContext
+            self, client: Client, task_name: str, client_task_id: str, result: Shareable, fl_ctx: FLContext
     ):
         pass
 
@@ -496,12 +498,12 @@ class StatisticsController(Controller):
 
     @staticmethod
     def _wait_for_all_results(
-        logger,
-        result_wait_timeout: float,
-        requested_client_size: int,
-        client_statistics: dict,
-        sleep_time: float = 1,
-        abort_signal=None,
+            logger,
+            result_wait_timeout: float,
+            requested_client_size: int,
+            client_statistics: dict,
+            sleep_time: float = 1,
+            abort_signal=None,
     ) -> bool:
         """Waits for all results.
 
