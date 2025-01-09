@@ -8,14 +8,13 @@ At each client site, we could have one or more datasets (such as "train" and "te
 features. For each feature in the dataset, we will calculate the statistics and then combine them to produce 
 global statistics for all the numeric features. The output would be complete statistics for all datasets in clients and global.    
 
-The statistics here are commonly used statistics: count, sum, mean, std_dev and histogram for the numerical features.
-The max, min are not included as it might violate the client's data privacy. Median is not included due to the complexity 
-of the algorithms. If the statistics sum and count are selected, the mean will be calculated with count and sum. 
+The statistics here are commonly used statistics: count, sum, mean, std_dev, percentile and histogram for the numerical features.
+The max, min are not included as it might violate the client's data privacy. Median can be calculated from percentile: 50% or p50. If the statistics sum and count are selected, the mean will be calculated with count and sum. 
 
-A client will only need to implement the selected methods of "Statistics" class from statistics_spec.
+A client will only need to implement the selected methods of "Statistics" class from statistics_spec. For tabular data with DataFrame implementation, user only needs to provide the features (column names), and data loader to load data, the FLARE will do the rest. For imaging data, since there are many different way to load the data, user needs to implement statistics_spec, which is also pretty easy to do.
 
 The result will be statistics for all features of all datasets at all sites as well as global aggregates. 
-The result should be visualized via the visualization utility in the notebook. 
+The result should be visualized via the visualization utility in the notebook or other visualization tools. 
 
 ## Assumptions
  
