@@ -1216,7 +1216,7 @@ Notes:
 - Risk Level: Critical > High > Medium > Low
 - TEE Coverage: ✓ Full = Native TEE Protection, Partial = Some TEE Support, × None = No TEE Protection
 - All protections undergo continuous validation
-```
+
 
 ### Tmpfs in TEE Memory
 
