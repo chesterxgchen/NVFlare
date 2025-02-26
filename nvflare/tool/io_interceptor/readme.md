@@ -148,11 +148,11 @@ A system-level IO protection mechanism designed to complement VM-based Trusted E
 | Cross-VM | Cross-VM memory attacks | HIGH | IOMMU<br>- Memory isolation<br>- VM pinning |
 | Speculative | Speculative execution attacks | HIGH | CPU mitigations |
 | **I/O Operations** |
-| Application | - Code execution<br>- Memory corruption<br>- System compromise | CRITICAL | Input validation |
+| Application | - Higher level app vulnerabilities<br>- Framework-specific issues | MEDIUM | Requires application-level fixes |
 | Data Format | - Buffer overflows<br>- Data corruption<br>- System crashes | HIGH | Format verification |
 | Exfiltration | Covert channel data leaks | HIGH | I/O monitoring |
 | **Network Protocol** |
-| Attestation | - False attestation<br>- TEE compromise<br>- Security bypass | CRITICAL | Message validation |
+| Attestation | - Protocol-level vulnerabilities | MEDIUM | Requires TEE vendor fixes |
 | Protocol | - Session hijacking<br>- Data manipulation<br>- Service disruption | HIGH | Nonce + timestamps |
 | ML Protocol | Custom ML protocol vulnerabilities | HIGH | Protocol hardening |
 | **Build Process** |
@@ -650,46 +650,29 @@ sudo ./setup_network_rules.sh
 
 ## 7. Risk Areas Not Covered
 
-### Memory & TEE Risks
-- Microarchitectural side-channels
-- Cross-VM memory attacks
-- Speculative execution attacks
+### Scope of Current Implementation
+Our implementation provides:
+- System call interception for I/O operations
+- Path-based access control
+- Encryption for non-whitelisted paths
+- Basic pattern hiding
 
-### I/O Related Risks
-- Application-level parsing vulnerabilities
-- Malicious input data format attacks
-- Data exfiltration through covert channels
-
-### Network Protocol Risks
-- Malformed attestation messages
-- Protocol-level replay attacks
-- Custom ML protocol vulnerabilities
-
-### Build-time Risks
-- Image tampering before TEE measurement
-- Configuration injection during build
-- Supply chain attacks
-
+### Residual Risks (Outside Current Scope)
 | Risk Category | Risk | Impact | Risk Level | Mitigation Strategy |
 |--------------|------|---------------|-------------------|-------------------|
 | **Memory & TEE** |
-| Cache Side-channel | - Model architecture leakage<br>- Training pattern exposure<br>- Potential key extraction | CRITICAL | - Cache partitioning<br>- Cache line padding<br>- Constant-time operations |
-| Memory Bus | - Data size leakage<br>- Workload pattern exposure<br>- Memory access timing | HIGH | - Memory access randomization<br>- Dummy accesses<br>- Access batching |
-| Execution Timing | - Algorithm behavior leakage<br>- Control flow exposure<br>- Operation complexity | HIGH | - Operation batching<br>- Random delays<br>- Constant-time algorithms |
-| Cross-VM | Cross-VM memory attacks | HIGH | IOMMU<br>- Memory isolation<br>- VM pinning |
-| Speculative | Speculative execution attacks | HIGH | CPU mitigations |
+| Cache Side-channel | - Model architecture leakage<br>- Training pattern exposure<br>- Potential key extraction | CRITICAL | Requires CPU/hardware support |
+| Memory Bus | - Data size leakage<br>- Workload pattern exposure<br>- Memory access timing | HIGH | Requires hardware support |
 | **I/O Operations** |
-| Application | - Code execution<br>- Memory corruption<br>- System compromise | CRITICAL | Input validation |
-| Data Format | - Buffer overflows<br>- Data corruption<br>- System crashes | HIGH | Format verification |
-| Exfiltration | Covert channel data leaks | HIGH | I/O monitoring |
+| Application | - Higher level app vulnerabilities<br>- Framework-specific issues | MEDIUM | Requires application-level fixes |
 | **Network Protocol** |
-| Attestation | - False attestation<br>- TEE compromise<br>- Security bypass | CRITICAL | Message validation |
-| Protocol | - Session hijacking<br>- Data manipulation<br>- Service disruption | HIGH | Nonce + timestamps |
-| ML Protocol | Custom ML protocol vulnerabilities | HIGH | Protocol hardening |
-| **Build Process** |
-| Image | - Malicious code injection<br>- Backdoor insertion<br>- Security bypass | CRITICAL | Secure boot chain |
-| Configuration | - Security misconfiguration<br>- Policy bypass<br>- Access control failure | HIGH | Config encryption |
-| Supply Chain | Supply chain attacks | HIGH | Build verification |
+| Attestation | - Protocol-level vulnerabilities | MEDIUM | Requires TEE vendor fixes |
+
+Note: These risks are outside the scope of the I/O interceptor and require:
+- Hardware vendor support
+- Application-level security
+- TEE vendor implementation
+- Framework-specific fixes
 
 Risk Level Legend:
 - CRITICAL: Immediate business impact, requires urgent mitigation
