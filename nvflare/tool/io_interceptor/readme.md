@@ -92,10 +92,59 @@ A system-level IO protection mechanism designed to complement VM-based Trusted E
 - Timing differences can leak information
 - Power consumption can be monitored
 
+#### Side-Channel Attack Details
+
+1. **Cache Side-Channel Attack**
+   - **How it works**:
+     - Attacker and victim share CPU cache lines
+     - Attacker measures memory access times
+     - Fast access = cache hit (victim accessed data)
+     - Slow access = cache miss (victim didn't access)
+   - **What can be leaked**:
+     - Memory access patterns
+     - Cryptographic keys
+     - Model architecture details
+   - **Example**: Attacker can determine which model layers are active by monitoring cache access patterns
+
+2. **Memory Bus Attack**
+   - **How it works**:
+     - Attacker monitors memory bus activity
+     - Measures timing and frequency of memory accesses
+     - Observes data transfer patterns
+   - **What can be leaked**:
+     - Data transfer sizes
+     - Memory access frequency
+     - Workload characteristics
+   - **Example**: Attacker can infer batch size and model structure from memory transfer patterns
+
+3. **Execution Timing Attack**
+   - **How it works**:
+     - Attacker measures operation completion time
+     - Different data causes different execution paths
+     - Timing variations leak information
+   - **What can be leaked**:
+     - Control flow paths
+     - Data-dependent operations
+     - Algorithm behavior
+   - **Example**: Attacker can infer model complexity from operation timing
+
+#### Mitigation Effectiveness
+
+| Attack Type | Mitigation | Effectiveness | Trade-off |
+|-------------|------------|---------------|-----------|
+| Cache | Cache partitioning | High | Performance impact |
+| Cache | Constant-time ops | High | Code complexity |
+| Memory Bus | Access batching | Medium | Latency increase |
+| Memory Bus | Dummy accesses | Medium | Bandwidth waste |
+| Timing | Random delays | Medium | Performance impact |
+| Timing | Operation batching | High | Response latency |
+
 | Category | Risk | Level | Mitigation |
 |----------|------|-------|------------|
 | **Memory & TEE** |
-| Side-channel | Resource contention patterns | MEDIUM | - Resource isolation<br>- Workload scheduling<br>- Load balancing |
+| Cache Side-channel | Attacker monitors cache hit/miss patterns | HIGH | - Cache partitioning<br>- Cache line padding<br>- Constant-time operations |
+| Memory Bus | Attacker observes memory bus traffic patterns | HIGH | - Memory access randomization<br>- Dummy accesses<br>- Access batching |
+| Execution Timing | Attacker measures operation timing differences | MEDIUM | - Operation batching<br>- Random delays<br>- Constant-time algorithms |
 | Cross-VM | Cross-VM memory attacks | HIGH | IOMMU<br>- Memory isolation<br>- VM pinning |
 | Speculative | Speculative execution attacks | HIGH | CPU mitigations |
 | **I/O Operations** |
@@ -621,24 +670,26 @@ sudo ./setup_network_rules.sh
 - Configuration injection during build
 - Supply chain attacks
 
-| Risk Category | Risk | Potential Tools/Strategies | Status |
-|--------------|------|---------------------------|---------|
+| Risk Category | Risk | Attack Vector | Mitigation Strategy |
+|--------------|------|---------------|-------------------|
 | **Memory & TEE** |
-| Side-channel | Resource contention patterns | MEDIUM | - Resource isolation<br>- Workload scheduling<br>- Load balancing |
+| Cache Side-channel | Attacker monitors cache hit/miss patterns | HIGH | - Cache partitioning<br>- Cache line padding<br>- Constant-time operations |
+| Memory Bus | Attacker observes memory bus traffic patterns | HIGH | - Memory access randomization<br>- Dummy accesses<br>- Access batching |
+| Execution Timing | Attacker measures operation timing differences | MEDIUM | - Operation batching<br>- Random delays<br>- Constant-time algorithms |
 | Cross-VM | Cross-VM memory attacks | HIGH | IOMMU<br>- Memory isolation<br>- VM pinning |
-| Speculative | Speculative execution attacks | HIGH | Microcode updates<br>- Kernel patches<br>- Hardware fixes |
+| Speculative | Speculative execution attacks | HIGH | CPU mitigations |
 | **I/O Operations** |
-| Application | Parsing vulnerabilities | - Fuzzing tools<br>- Static analysis<br>- Input sanitization | Planned |
-| Data Format | Malicious input attacks | - Schema validation<br>- Format checkers<br>- Safe parsers | Planned |
-| Exfiltration | Covert channel data leaks | - DLP tools<br>- Traffic analysis<br>- Behavioral monitoring | Planned |
+| Application | Parsing vulnerabilities | MEDIUM | Input validation |
+| Data Format | Malicious input attacks | MEDIUM | Format verification |
+| Exfiltration | Covert channel data leaks | HIGH | I/O monitoring |
 | **Network Protocol** |
-| Attestation | Malformed messages | - Protocol fuzzing<br>- Message validation<br>- Rate limiting | Future |
-| Protocol | Replay attacks | - Timestamps<br>- Nonce tracking<br>- Session management | Future |
-| ML Protocol | Custom protocol vulnerabilities | - Protocol hardening<br>- Secure design review<br>- Penetration testing | Future |
+| Attestation | Malformed attestation messages | HIGH | Message validation |
+| Protocol | Replay attacks | HIGH | Nonce + timestamps |
+| ML Protocol | Custom ML protocol vulnerabilities | HIGH | Protocol hardening |
 | **Build Process** |
-| Image | Image tampering | - Secure boot<br>- TPM measurement<br>- Chain of trust | Planned |
-| Configuration | Configuration injection | - Config signing<br>- Validation checks<br>- Access controls | Planned |
-| Supply Chain | Supply chain attacks | - SBOM<br>- Dependency scanning<br>- Build reproducibility | Planned |
+| Image | Image tampering before measurement | HIGH | Secure boot chain |
+| Configuration | Configuration injection | MEDIUM | Config encryption |
+| Supply Chain | Supply chain attacks | HIGH | Build verification |
 
 Status Legend:
 - Future: Not currently covered, future roadmap item
