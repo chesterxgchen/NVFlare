@@ -559,7 +559,97 @@ The IO interceptor is implemented in C using LD_PRELOAD to intercept all I/O ope
 
 ## 6. Usage Guide
 
-### Usage Examples
+### I/O Interceptor Usage
+
+#### 1. Basic Setup
+```python
+# Example PyTorch training script
+import torch
+from io_interceptor import IOInterceptor, ProtectionMode
+
+# Initialize secure I/O with configuration
+io_interceptor = IOInterceptor(
+    whitelist_paths=[
+        "/workspace/checkpoints",
+        "/workspace/models"
+    ],
+    protection_mode=ProtectionMode.ENCRYPT,
+    random_padding=True
+)
+
+model = MyModel()
+
+# Use context manager for specific protection settings
+with io_interceptor.protect():
+    # Case 1: Save to whitelisted path - ALLOWED & ENCRYPTED
+    torch.save(model.state_dict(), '/workspace/checkpoints/model.pt')
+
+# Different protection mode for different operations
+with io_interceptor.protect(mode=ProtectionMode.IGNORE):
+    # Case 2: Save to non-whitelisted path - IGNORED with WARNING
+    torch.save(model.state_dict(), '/tmp/model.pt')
+
+# System files not affected
+with open('/etc/hosts', 'r') as f:
+    content = f.read()
+```
+
+#### 2. Protection Modes
+```python
+from io_interceptor import IOInterceptor, ProtectionMode
+
+# Configure different protection modes
+io_interceptor = IOInterceptor(
+    whitelist_paths=["/workspace/checkpoints"],
+    protection_mode=ProtectionMode.ENCRYPT  # Default mode
+)
+
+# Use ENCRYPT mode
+with io_interceptor.protect():
+    torch.save(model, "model.pt")  # Encrypted with checkpoint key
+
+# Use IGNORE mode
+with io_interceptor.protect(mode=ProtectionMode.IGNORE):
+    torch.save(model, "temp.pt")  # Write ignored, warning logged
+```
+
+#### 3. Path Configuration
+```bash
+# Single path
+export IO_WHITELIST_PATH=/workspace/checkpoints
+
+# Multiple paths
+export IO_WHITELIST_PATH=/workspace/checkpoints:/workspace/models
+
+# Pattern matching
+export IO_WHITELIST_PATH=/workspace/checkpoints/*.pt:/workspace/models/*
+```
+
+#### 4. Validation
+```bash
+# Test whitelist paths
+./test_io.sh --test-whitelist
+
+# Verify encryption
+./test_io.sh --verify-encryption
+
+# Check protection mode
+./test_io.sh --check-mode
+```
+
+#### 5. Troubleshooting
+```bash
+# Check interceptor logs
+tail -f /var/log/io_interceptor.log
+
+# Verify interceptor loading
+ldd /path/to/application | grep interceptor
+
+# Temporarily disable for testing
+unset LD_PRELOAD
+```
+
+### Network Lockdown Setup
 
 #### 1. Setting Up Network Lockdown
 ```bash
