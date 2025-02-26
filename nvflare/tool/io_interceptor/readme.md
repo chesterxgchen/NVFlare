@@ -220,25 +220,25 @@ typedef struct {
 #### Security Recommendations for OEM Partition
 
 1. **Build Time**:
-```
+
 - Sign all binaries
 - Encrypt sensitive configurations
 - Include measurement in attestation
-```
+
 
 2. **Launch Time**:
-```
+
 - Verify partition measurement
 - Load into protected memory
 - Clear sensitive data after launch
-```
+
 
 3. **Runtime**:
-```
+
 - No writes to OEM partition
 - Access only during launch
 - Monitor for tampering attempts
-```
+
 
 ### Detailed Attack Vectors Analysis
 
@@ -461,33 +461,33 @@ System        | Call patterns
 
 #### 1. OS-Level I/O Risks
 
-```
+
 Operation Type | Risk Description | Mitigation Strategy
 ---------------|------------------|-------------------
 Page Files | Memory pages written to untrusted storage | - Encrypt page content<br>- Secure page cleanup<br>- Minimize swapping
 VMEXIT Events | Host can observe timing and frequency of exits | - Batch operations<br>- Add random delays<br>- Noise injection
 tmp-fs Access | Temporary data exposed through filesystem | - Memory-only tmp-fs<br>- Encrypted if needed<br>- Secure wipe
-```
+
 
 #### 2. Model Theft Prevention
 
-```
+
 Risk Scenario | Attack Method | Protection Measure
 ---------------|---------------|-------------------
 Direct Save | Save to unprotected directory | - Whitelist paths<br>- Encrypt all saves<br>- Path validation
 Checkpointing | Capture intermediate model states | - Secure checkpoints<br>- Encrypted storage<br>- Clean old states
 Gradient Capture | Collect training progress data | - Encrypt gradients<br>- Secure aggregation<br>- Memory-only ops
-```
+
 
 #### 3. I/O Pattern Monitoring
 
-```
+
 Pattern Type | Information Leaked | Countermeasure
 --------------|-------------------|----------------
 Size Patterns | - Model architecture<br>- Layer dimensions<br>- Batch sizes | - Fixed size padding<br>- Random padding<br>- Size obfuscation
 Timing Patterns | - Training progress<br>- Iteration count<br>- Layer complexity | - Random delays<br>- Operation batching<br>- Noise injection
 Access Patterns | - Training phase<br>- Model structure<br>- Data organization | - Pattern hiding<br>- Random access<br>- Access batching
-```
+
 
 #### Implementation Strategy
 
@@ -533,23 +533,23 @@ typedef struct {
 
 #### Risk Assessment for Self-Built Image
 
-```
+
 Phase          | Traditional Risk | In Self-Built Image
 ---------------|-----------------|-------------------
 Build Time     | HIGH            | LOW (Controlled)
 Distribution   | HIGH            | LOW (Signed)
 Runtime        | MEDIUM          | LOW (TEE Protected)
-```
+
 
 #### Remaining Considerations
 
-```
+
 Component     | Risk Factor        | Still Needed?
 --------------|-------------------|-------------
 Measurement   | Supply Chain      | YES (Attestation)
 Encryption    | Config Protection | NO (Built-in)
 Monitoring    | Runtime Tampering | YES (Integrity)
-```
+
 
 #### Modified Security Requirements
 
@@ -570,25 +570,25 @@ typedef struct {
 #### Revised Security Recommendations
 
 1. **Build Process Security**:
-```
+
 - Reproducible builds
 - Build environment attestation
 - Source code verification
-```
+
 
 2. **Image Security**:
-```
+
 - Image signing
 - Version control
 - Build artifact tracking
-```
+
 
 3. **Runtime Verification**:
-```
+
 - Integrity monitoring
 - Attestation inclusion
 - Version verification
-```
+
 
 ### Storage Protection Analysis: IO Interceptor vs dm-verity
 
@@ -611,7 +611,7 @@ typedef struct {
 
 #### Performance & Protection Analysis
 
-```
+
 Aspect         | dm-verity | IO Interceptor | TEE Native
 ---------------|-----------|----------------|------------
 Read Overhead  | 40%       | 5-10%          | ~0%
@@ -619,11 +619,11 @@ Write Support  | No        | Yes            | Yes
 Granularity    | Block     | File/Path      | Page
 Runtime Cost   | High      | Medium         | Low
 Memory Usage   | High      | Selective      | Optimized
-```
+
 
 #### Protection Coverage
 
-```
+
 Location          | Protection Method    | Overhead | Risk Level
 ------------------|---------------------|----------|------------
 root-fs          | TEE Measurement     | ~0%      | Low
@@ -631,7 +631,7 @@ OEM Partition    | Build Signature     | ~0%      | Low
 tmp-fs           | IO Interception     | 5-10%    | Medium
 Model Storage    | Selective Encrypt   | 5-10%    | High
 Swap Space       | Page Encryption     | 5-10%    | High
-```
+
 
 #### Optimized Hybrid Approach
 
@@ -651,35 +651,35 @@ Swap Space       | Page Encryption     | 5-10%    | High
 #### Implementation Recommendations
 
 1. **Static Content (root-fs, OEM)**:
-```
+
 - Use TEE measurement
 - Build-time signing
 - No runtime overhead
-```
+
 
 2. **Dynamic Content (tmp-fs, models)**:
-```
+
 - Selective interception
 - Path-based protection
 - Minimal performance impact
-```
+
 
 3. **Memory Management**:
-```
+
 - Use TEE memory encryption
 - Selective page protection
 - Optimized swap handling
-```
+
 
 #### Security vs Performance Trade-offs
 
-```
+
 Protection Method | Security Level | Performance Impact | Use Case
 -----------------|----------------|-------------------|----------
 TEE Native       | High           | Minimal           | Static
 IO Intercept     | High           | Low-Medium        | Dynamic
 dm-verity        | High           | High              | Not Needed
-```
+
 
 ### Performance Analysis & Benchmarks
 
@@ -698,44 +698,44 @@ dm-verity        | High           | High              | Not Needed
 
 #### Overhead Breakdown by Operation
 
-```
+
 Operation      | dm-verity | IO Interceptor | Notes
 ---------------|-----------|----------------|------------------------
 Sequential Read| 40%       | 5%             | Batch processing helps
 Random Read    | 45%       | 8%             | Page cache friendly
 Write          | N/A       | 10%            | Selective encryption
 Metadata Ops   | 35%       | 2%             | Minimal interception
-```
+
 
 #### Performance Optimization Techniques
 
-```
+
 Technique           | Benefit           | Implementation
 --------------------|------------------|------------------
 Selective Protection| 30% improvement  | Path-based rules
 Batch Processing    | 20% improvement  | Operation queuing
 Cache Optimization  | 15% improvement  | TEE-aware caching
-```
+
 
 #### Real-world Impact Analysis
 
-```
+
 Workload Type    | dm-verity      | IO Interceptor | Performance Gain
 -----------------|----------------|----------------|----------------
 ML Training      | 40% slowdown   | 8% slowdown    | 32% faster
 Model Inference  | 35% slowdown   | 5% slowdown    | 30% faster
 Data Loading     | 42% slowdown   | 7% slowdown    | 35% faster
-```
+
 
 #### Memory Usage Comparison
 
-```
+
 Component        | dm-verity    | IO Interceptor
 -----------------|--------------|---------------
 Runtime Memory   | 256MB+       | 50MB baseline
 Page Cache       | Required     | Optional
 Hash Storage     | Full disk    | Selected paths
-```
+
 
 ### Storage Protection Analysis: IO Interceptor vs dm-verity
 
@@ -757,30 +757,30 @@ Hash Storage     | Full disk    | Selected paths
 ```
 
 #### Key Differences
-```
+
 Feature          | dm-verity         | IO Interceptor
 -----------------|------------------|----------------
 Protection Level | Block-level hash | File-level crypto
 Write Support    | Read-only        | Read-write
 Memory Usage     | High (hash tree) | Low (selective)
 Runtime Changes  | Not allowed      | Supported
-```
+
 
 #### Workload Impact
-```
+
 ML Operation     | dm-verity Impact | IO Interceptor
 -----------------|-----------------|----------------
 Model Loading    | 40% slower      | 5% slower
 Checkpointing    | Not supported   | 10% overhead
 Training I/O     | 40% slower      | 8% slower
-```
+
 
 #### Recommendation
 For ML workloads in TEE:
 - Use IO Interceptor for better performance
 - Maintain equivalent security through TEE integration
 - Enable dynamic operations (checkpointing, saves)
-```
+
 
 ### Network Traffic Shaping Analysis
 
@@ -802,13 +802,13 @@ For ML workloads in TEE:
 
 #### Traffic Pattern Obfuscation
 
-```
+
 Pattern Type    | Risk                  | Shaping Technique
 ----------------|----------------------|------------------
 Size Pattern    | Model structure leak | Fixed-size packets
 Timing Pattern  | Operation inference  | Random delays
 Burst Pattern   | Batch size leak      | Traffic spreading
-```
+
 
 #### Implementation Methods
 
@@ -837,35 +837,35 @@ typedef struct {
 #### Shaping Techniques
 
 1. **Size Normalization**:
-```
+
 - Pad all packets to fixed size
 - Add random padding
 - Split large transfers
-```
+
 
 2. **Timing Randomization**:
-```
+
 - Add random delays
 - Vary transmission rates
 - Break predictable patterns
-```
+
 
 3. **Burst Control**:
-```
+
 - Buffer and spread traffic
 - Rate limiting
 - Randomize batch sizes
-```
+
 
 #### Security vs Performance Trade-offs
 
-```
+
 Shaping Level | Security Gain | Performance Impact
 --------------|--------------|-------------------
 Minimal      | Low          | 5% overhead
 Standard     | Medium       | 10-15% overhead
 Aggressive   | High         | 20-25% overhead
-```
+
 
 ### Core Dump Security Analysis
 
@@ -886,14 +886,14 @@ Aggressive   | High         | 20-25% overhead
 
 #### Core Dump Security Risks
 
-```
+
 Component     | Risk Description        | Impact Level
 --------------|------------------------|-------------
 Model State   | Full memory exposure   | Critical
 Crypto Keys   | Key material leaked    | Critical
 Runtime Data  | Training data exposed  | High
 TEE Memory    | Protected data leaked  | Critical
-```
+
 
 #### Comprehensive Core Dump Prevention
 
@@ -1009,17 +1009,17 @@ void secure_crash_handler(int signal) {
 ```
 
 Attack Mapping:
-```
+
 | Attack Vector | Protection Domain |
 |---------------|-------------------|
 | Disk Mod | I/O Protection |
 | Network Int | Network Security |  
 | Resource Mod | Memory & TEE |
-```
+
 
 #### Coverage Analysis
 
-```
+
 Attack Vector        | Protection Domain   | Implementation Status
 --------------------|--------------------|-----------------
 Disk Modification   | I/O Protection     | ✓ Implemented
@@ -1028,7 +1028,7 @@ Resource Control    | Memory & TEE       | ✓ Implemented
 Attestation Attack  | Network Security   | ✓ Implemented
 Input Validation    | I/O Protection     | ✓ Implemented
 Privacy Control     | I/O Protection     | ✓ Implemented
-```
+
 
 ### Build Image Security Analysis
 
@@ -1049,25 +1049,25 @@ Privacy Control     | I/O Protection     | ✓ Implemented
 
 #### Build Time Security Controls
 
-```
+
 Component         | Risk                | Protection Measure
 ------------------|--------------------|-----------------
 Base Image        | Supply chain       | Signed base image
 Dependencies      | Malicious packages | Verified sources
 Build Environment | Tampering          | Secure pipeline
 Build Scripts     | Injection attacks  | Code review + sign
-```
+
 
 #### Image Hardening Requirements
 
-```
+
 Layer              | Hardening Measure          | Verification
 -------------------|---------------------------|-------------
 OS Layer           | Minimal base image        | Size check
 System Utils       | Remove unnecessary tools  | Tool audit
 Security Config    | Strict default settings  | Config scan
 Application Layer  | Read-only filesystem     | Mount check
-```
+
 
 #### Runtime Verification
 
@@ -1089,40 +1089,40 @@ typedef struct {
 
 #### Build Pipeline Security
 
-```
+
 Stage          | Security Measure        | Validation
 ---------------|------------------------|------------
 Source         | Signed commits         | Git verify
 Dependencies   | Lock files + checksums | Hash verify
 Build Env      | Isolated + attested   | TEE verify
 Output         | Signed + measured     | PCR check
-```
+
 
 #### Security Best Practices
 
 1. **Source Control**:
-```
+ 
 - Use signed commits
 - Protected branches
 - Code review enforcement
 - Automated security scans
-```
+ 
 
 2. **Build Process**:
-```
+ 
 - Reproducible builds
 - Minimal base image
 - Package verification
 - Layer optimization
-```
+ 
 
 3. **Runtime Protection**:
-```
+ 
 - Read-only filesystem
 - Measured launch
 - Runtime attestation
 - Integrity monitoring
-```
+ 
 
 ### Resource Control Protection Details
 
@@ -1141,25 +1141,26 @@ Output         | Signed + measured     | PCR check
 
 #### Resource Control Mechanisms
 
-```
+ 
+
 Resource Type | Static Limit        | Runtime Protection
 --------------|--------------------|-----------------
 Memory        | Max 80% of TEE mem | Monitor page faults
 CPU           | Max 90% usage      | Track CPU spikes
 Storage       | Fixed quota        | Watch I/O patterns
 Network       | Bandwidth cap      | Monitor throughput
-```
+ 
 
 #### Protection Against Resource-Based Attacks
 
-```
+ 
 Attack Vector     | Risk              | Mitigation
 ------------------|------------------|------------------
 Memory Exhaustion | OOM condition    | Hard memory limits
 CPU Starvation   | DoS attempt      | CPU quota enforce
 Disk Flooding    | Storage overflow | Strict quotas
 Network Flood    | Bandwidth abuse  | Rate limiting
-```
+ 
 
 #### Implementation
 
@@ -1236,13 +1237,13 @@ Notes:
 
 #### Memory Mapping Considerations
 
-```
+ 
 Location      | Protection Status | Risk Factor
 --------------|------------------|-------------
 RAM tmpfs     | TEE Protected    | Safe while in memory
 Swap Space    | Exposed          | Risk during swap-out
 Disk Fallback | Exposed          | Risk if memory full
-```
+ 
 
 #### Implementation Requirements
 
@@ -1275,24 +1276,24 @@ vm.swappiness=0              # Minimize swapping
 
 #### Configuration Types & Protection
 
-```
+ 
 Config Type     | Location     | Protection Needed
 ----------------|-------------|------------------
 OS Config       | Outside TEE | Encrypt + Integrity
 Network Config  | Outside TEE | Encrypt + Integrity
 System Services | Outside TEE | Encrypt + Integrity
 App Runtime     | Inside TEE  | Native Protection
-```
+ 
 
 #### Protection Requirements
 
-```
+ 
 Operation       | Risk            | Mitigation
 ----------------|----------------|-------------
 Config Read     | Exposure       | Encryption
 Config Modify   | Tampering      | Integrity Check
 Config Load     | Race Condition | Atomic Updates
-```
+ 
 
 ### Privacy Bounds Protection
 
@@ -1310,13 +1311,13 @@ Config Load     | Race Condition | Atomic Updates
 
 #### Privacy Bounds Definition
 
-```
+ 
 Boundary Type    | Description                  | Protection Measure
 -----------------|------------------------------|------------------
 Data Minimization| Limit PII/sensitive data    | Data filtering
 Access Control   | Restrict model access       | Query rate limits
 Output Control   | Prevent data leakage       | Result sanitization
-```
+ 
 
 #### Implementation Examples
 
@@ -1362,13 +1363,13 @@ typedef struct {
 
 #### Required Protections
 
-```
+ 
 Operation | Risk | Mitigation |
 |-----------|------|------------|
 | Page-out | Memory exposure | Encrypt before swap |
 | Page-in | Data tampering | Integrity check |
 | Swap Space | Data persistence | Secure wipe |
-```
+ 
 
 #### Implementation Strategy
 
@@ -1425,7 +1426,7 @@ vmstat -s
 
 ### Development Priority & Dependencies
 
-```
+ 
 Phase | Tool             | Core Features
 ------|-----------------|--------------------
 1     | IO Interceptor  | - Path control
@@ -1443,7 +1444,7 @@ Phase | Tool             | Core Features
 
 4     | CPU Manager     | - VMEXIT protection
        |                 | - Resource quotas
-```
+ 
 
 ### Usage Examples
 
@@ -1531,13 +1532,13 @@ sudo ./setup_network_rules.sh
 ```
 
 #### Validation Checklist
-```
+
 □ Required ports (8002,8003,8443,9443) are open
 □ All other ports are blocked
 □ Rules persist after reboot
 □ Monitoring shows expected traffic
 □ No unauthorized connections
-```
+
 
 #### Monitoring and Debugging
 ```bash
