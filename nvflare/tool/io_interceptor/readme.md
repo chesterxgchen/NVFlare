@@ -143,10 +143,10 @@ VM-based TEEs provide:
 2. **tmp-fs (Temporary Filesystem)**:
 | Characteristic | Status | Protection Needed |
 |---------------|--------|-------------------|
-| Volatility | In-memory | ✓ Memory wiping |
-| Encryption | Not by default | ✓ IO interception |
-| Access Pattern | Dynamic | ✓ Pattern hiding |
-| Persistence | None | ✓ Secure cleanup |
+| Volatility | In-memory | Memory wiping |
+| Encryption | Not by default | IO interception |
+| Access Pattern | Dynamic | Pattern hiding |
+| Persistence | None | Secure cleanup |
 
 **Protection Requirements**:
 
