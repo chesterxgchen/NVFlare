@@ -133,6 +133,7 @@ VM-based TEEs provide:
 **Filesystem Types in TEE**:
 
 1. **root-fs (Root Filesystem)**:
+
 | Characteristic | Status | Recommendation |
 |---------------|--------|----------------|
 | Immutability | Sealed at build | No runtime changes |
@@ -141,12 +142,13 @@ VM-based TEEs provide:
 | Access Pattern | Read-only | Predictable I/O |
 
 2. **tmp-fs (Temporary Filesystem)**:
+
 | Characteristic | Status | Protection Needed |
 |---------------|--------|-------------------|
-| Volatility | In-memory | Memory wiping |
-| Encryption | Not by default | IO interception |
-| Access Pattern | Dynamic | Pattern hiding |
-| Persistence | None | Secure cleanup |
+| Volatility | In-memory | ✓ Memory wiping |
+| Encryption | Not by default | ✓ IO interception |
+| Access Pattern | Dynamic | ✓ Pattern hiding |
+| Persistence | None | ✓ Secure cleanup |
 
 **Protection Requirements**:
 
