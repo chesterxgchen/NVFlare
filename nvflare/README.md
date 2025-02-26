@@ -32,3 +32,23 @@ to install all optional dependency, use
 ```
   pip install nvflare[all]
 ```
+
+## Security Components
+
+1. **IO Interceptor** (`tool/io_interceptor`)
+  - Protects file I/O operations
+  - Secures memory operations
+  - System call interception
+  - Focuses on storage & memory security
+
+2. **System Hardening** (`tool/system_hardening`)
+  - Handles all network security
+  - Network security and isolation
+  - Port management
+  - Traffic control
+  - System lockdown
+
+3. **TEE Integration**
+  - Memory encryption
+  - Hardware isolation
+  - Attestation support

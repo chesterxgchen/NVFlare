@@ -57,6 +57,17 @@ EOF
     
     # Apply sysctl changes
     sysctl -p
+    
+    # Disable unused services
+    systemctl disable telnet
+    systemctl disable rsh
+    
+    # Secure SSH
+    sed -i 's/#PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
+    
+    # File permissions
+    chmod 700 /etc/iptables
+    chmod 600 /etc/iptables/rules.v4
 }
 
 # 4. TEE Integration
@@ -75,6 +86,39 @@ verify_tee_context=true
 EOF
 }
 
+# Network Security Configuration
+setup_network_security() {
+    # 1. Port Management
+    configure_ports() {
+        # Allow only specific FL ports
+        iptables -A INPUT -p tcp --dport 8002 -j ACCEPT  # FL communication
+        iptables -A INPUT -p tcp --dport 8003 -j ACCEPT  # Admin API
+        # Block all other incoming
+        iptables -P INPUT DROP
+    }
+
+    # 2. Network Isolation
+    setup_network_isolation() {
+        # Restrict to specific interfaces
+        iptables -A INPUT -i lo -j ACCEPT
+        iptables -A INPUT -i eth0 -j ACCEPT
+        # Drop from other interfaces
+        iptables -A INPUT -j DROP
+    }
+
+    # 3. Traffic Control
+    setup_traffic_control() {
+        # Rate limiting
+        iptables -A INPUT -p tcp --dport 8002 -m limit --limit 100/minute -j ACCEPT
+        # Connection tracking
+        iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+    }
+
+    configure_ports
+    setup_network_isolation
+    setup_traffic_control
+}
+
 # Main execution
 main() {
     echo "Starting system security configuration..."
@@ -83,6 +127,7 @@ main() {
     configure_login_security
     harden_system
     configure_tee
+    setup_network_security
     
     echo "Security configuration completed."
 }

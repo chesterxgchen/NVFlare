@@ -17,7 +17,6 @@
      - Security Analysis
    - Detailed Attack Vectors Analysis
    - Comprehensive Mitigation Strategy
-   - Network Security & Port Management
    - Risk Summary and Recommendations
 
 3. Protection Measures
@@ -25,10 +24,6 @@
    - I/O Protection Strategy
      - File Operation Security
      - System Call Interception
-   - Network Protection Strategy
-     - Port Management
-     - Traffic Shaping
-     - Protocol Security
 
 4. Implementation
    - Architecture
@@ -54,7 +49,6 @@
 7. Risk Areas Not Covered
    - Memory & TEE Risks
    - I/O Related Risks
-   - Network Protocol Risks
    - Build-time Risks
  
 ### Purpose and Objectives
@@ -68,7 +62,6 @@ A system-level IO protection mechanism designed to complement VM-based Trusted E
 ### Protection Scope
 - File I/O operations
 - Memory operations
-- Network I/O
 - System call interception
 
 ## 2. Risk Analysis
@@ -147,10 +140,6 @@ A system-level IO protection mechanism designed to complement VM-based Trusted E
 | Cross-VM | Cross-VM memory attacks | HIGH | IOMMU<br>- Memory isolation<br>- VM pinning |
 | Speculative | Speculative execution attacks | HIGH | CPU mitigations |
 | **I/O Operations** |
-| **Network Protocol** |
-| Attestation | - TEE remote attestation protocol flaws<br>- Quote verification issues<br>- Key exchange vulnerabilities | MEDIUM | Must be fixed by TEE vendor |
-| Protocol | - Session hijacking<br>- Data manipulation<br>- Service disruption | HIGH | Nonce + timestamps |
-| ML Protocol | Custom ML protocol vulnerabilities | HIGH | Protocol hardening |
 | **Build Process** |
 | Image | - Malicious code injection<br>- Backdoor insertion<br>- Security bypass | CRITICAL | Secure boot chain |
 | Configuration | - Security misconfiguration<br>- Policy bypass<br>- Access control failure | HIGH | Config encryption |
@@ -198,7 +187,6 @@ These risks are addressed through:
 ### Threat Categories
 - Runtime Memory Threats
 - I/O Operation Threats
-- Network Communication Threats
 - Build/Deploy Time Threats
 
 ### Attack Surface Analysis
@@ -280,8 +268,6 @@ Attack Type          | Risk Level | Detection     | Prevention
 --------------------|------------|---------------|-------------
 Memory Inspection   | LOW        | TEE Protected | N/A
 I/O Monitoring     | HIGH       | Pattern Det.  | Encryption+Noise
-Network Analysis   | HIGH       | Traffic Mon.  | Traffic Shaping
-Side Channels      | MEDIUM     | Timing Mon.   | Randomization
 
 
 2. **Build/Deploy Attacks**
@@ -312,91 +298,14 @@ Configuration Leak  | MEDIUM     | Config Scan   | Encryption
 Operation     | Strategy
 --------------|----------------------------------
 File Write    | Multi-layer encryption + padding
-Network I/O   | Traffic shaping + encryption
 System Calls  | Pattern hiding + batching
 Temp Files    | Memory-only + secure cleanup
 
 
-3. **Network Protection**
-
-Layer         | Protection Measure
---------------|----------------------------------
-Application   | Data encryption
-Transport     | TLS 1.3 + certificate pinning
-Network       | Traffic shaping
-Physical      | Network isolation
-
-
-### Network Security & Port Management
-
-| Direction | Port Range | Traffic Type | Default Policy |
-|-----------|------------|--------------|----------------|
-| Inbound | 8002,8003 | ML Training | DROP |
-| Inbound | 8443,9443 | Operations | DROP |
-| Outbound | Dynamic | Response Traffic | DROP |
-
-#### Policy Justification
-
-| Direction | Default | Reason |
-|-----------|---------|---------|
-| Inbound | DROP | Block unauthorized connection attempts |
-| Outbound | DROP | Prevent unauthorized data exfiltration |
-
-#### Required Traffic Flow
-
-| Port | Inbound | Outbound | Reason |
-|------|---------|----------|---------|
-| 8002 | Client requests | Training responses | ML Training |
-| 8003 | Training data | Results/Metrics | ML Training |
-| 8443 | Secure operations | Operation responses | ML Ops |
-| 9443 | Attestation reqs | Attestation proofs | TEE Security |
-
-#### Complete Port Lockdown Configuration
-
-The port lockdown approach:
-
-1. **Default Policy**: Block all incoming and outgoing traffic
-2. **Essential Ports**:
-   | Port | Purpose |
-   |------|---------|
-   | 8002 | ML Training Communication |
-   | 8003 | ML Training Communication |
-   | 8443 | Secure ML Operations |
-   | 9443 | TEE Attestation |
-
-3. **Connection Rules**:
-   - Allow incoming connections only to essential ports
-   - Allow outgoing responses from services
-   - Allow established connections
-   - Drop all other traffic
-
-This configuration ensures:
-- Minimal attack surface
-- Only required ports are open
-- Secure communication channels
-- No unauthorized access
-
-#### Runtime Network Validation
-
-1. **Port Configuration**:
-   | Requirement | Setting | Purpose |
-   |------------|---------|---------|
-   | Allowed Ports | 8002, 8003, 8443, 9443 | Essential service ports |
-   | Block Other Ports | Yes | Prevent unauthorized access |
-   | Log Blocked Attempts | Yes | Security monitoring |
-
-2. **Service Control**:
-   | Service | Status | Reason |
-   |---------|--------|--------|
-   | SSH | Disabled | No remote access needed |
-   | HTTP | Disabled | No web services |
-   | Management | Disabled | No remote management |
-
-This approach:
-- Clearly defines network security requirements
-- Easy to understand and audit
-- Separates policy from implementation
-- Maintainable documentation
+3. **System Integration**
+    - Works with system hardening
+    - Complements TEE protection
+    - Focus on I/O and memory security
 
 ### Risk Summary and Recommendations
 
@@ -404,7 +313,6 @@ This approach:
 |----------|-----------|------|------------|
 | P0 | Model Data | Extraction | Encryption |
 | P0 | Runtime Memory | Page Exposure | TEE + Wipe |
-| P0 | Network Traffic | Pattern Analysis | Shaping |
 | P1 | Filesystem | Data Residue | Secure Delete |
 | P1 | System Calls | Timing Analysis | Randomization |
 | P2 | Build Process | Image Tampering | Signing |
@@ -424,13 +332,11 @@ This approach:
    |-----------|-------------------|
    | Memory | Page faults, swaps |
    | I/O | Patterns, timing |
-   | Network | Traffic analysis |
    | System | Call patterns |
 
 3. **Deployment Checklist**:
    - [ ] TEE Enabled
    - [ ] I/O Intercepted
-   - [ ] Network Secured
    - [ ] Memory Protected
 
 ### Runtime I/O Attack Analysis
@@ -528,11 +434,6 @@ This approach:
   - LD_PRELOAD mechanism
   - Operation validation
   - Pattern hiding
-
-### Network Protection Strategy
-- Port management and access control
-- Traffic shaping and pattern hiding
-- Protocol security measures
 
 ## 4. Implementation
 
@@ -748,8 +649,10 @@ Our implementation provides:
 |--------------|------|---------------|-------------------|-------------------|
 | **Memory & TEE** |
 | Side-channel | **Cache Timing:**<br>- Requires physical access<br>- Sophisticated hardware attack<br>- Limited data extraction | LOW | **TEE Protection:**<br>- Hardware isolation<br>- Memory encryption<br>- Cache isolation |
-| **Network Protocol** |
-| Attestation | - TEE remote attestation protocol flaws<br>- Quote verification issues<br>- Key exchange vulnerabilities | MEDIUM | Must be fixed by TEE vendor |
+| **Build Process** |
+| Image | - Malicious code injection<br>- Backdoor insertion<br>- Security bypass | CRITICAL | Secure boot chain |
+| Configuration | - Security misconfiguration<br>- Policy bypass<br>- Access control failure | HIGH | Config encryption |
+| Supply Chain | Supply chain attacks | HIGH | Build verification |
 
 Note: These risks are outside the scope of the I/O interceptor because:
 - Our interceptor works at system call level

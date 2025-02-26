@@ -77,10 +77,16 @@
 ### Deferred Requirements
 | Requirement | Status | Reason |
 |------------|--------|---------|
-| Network I/O protection | Planned | Future extension |
 | Custom encryption modes | Planned | Future extension |
 | Remote attestation | Planned | Requires TEE vendor support |
 | Hardware-specific optimizations | Planned | Platform-specific work |
+
+### Network Protection Note
+Network security is handled by system hardening (`secure_build.sh`) which provides:
+- Port blocking and filtering
+- Network lockdown
+- Traffic control
+- Network isolation
 
 ## Notes
 
@@ -121,4 +127,14 @@
 | File Write | Whitelisted | 3-4% |
 | File Write | Encrypted | 10-15% |
 | Memory Ops | TEE Region | 1-2% |
-| Memory Ops | Secure Wipe | 3-5% | 
+| Memory Ops | Secure Wipe | 3-5% |
+
+## Core Security Requirements
+
+1. **Build and Runtime Security**:
+   | Requirement | Purpose | Description |
+   |------------|---------|-------------|
+   | Build Signature | Build integrity | Verify build signature |
+   | Attestation | Runtime proof | Include in TEE attestation |
+   | Network Security | Network protection | Handled by system_hardening |
+   | Build ID | Identification | 32-byte unique build identifier | 
