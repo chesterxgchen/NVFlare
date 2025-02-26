@@ -35,6 +35,12 @@ typedef struct {
     encrypt_policy_t policy;
 } path_pattern_t;
 
+// Configuration
+typedef struct {
+    char* rw_patterns;  // Read-write encryption patterns
+    char* wo_patterns;  // Write-only encryption patterns
+} interceptor_config_t;
+
 // Function declarations
 bool register_whitelist_path(const char* path);
 bool register_system_path(const char* path);
@@ -57,5 +63,8 @@ int get_operation_type_flags(int flags);
 bool add_encryption_pattern(const char* pattern, encrypt_policy_t policy);
 bool remove_encryption_pattern(const char* pattern);
 encrypt_policy_t get_path_encryption_policy(const char* path);
+
+// Initialize with config file
+bool init_interceptor_config(const char* config_path);
 
 #endif /* IO_INTERCEPTOR_H */ 

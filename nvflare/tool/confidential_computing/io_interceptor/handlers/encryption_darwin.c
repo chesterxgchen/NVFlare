@@ -1,9 +1,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <syslog.h>
+#include <fcntl.h>      // For O_RDONLY
+#include <unistd.h>     // For read/close
 #include <CommonCrypto/CommonCrypto.h>
 #include <CommonCrypto/CommonRandom.h>
-#include "encryption_handler.h"
+#include "./encryption_handler.h"
 
 struct cipher_ctx {
     CCCryptorRef ctx;
@@ -222,7 +225,19 @@ bool initialize_encryption_keys(struct tee_keys* keys) {
         return true;
     }
 
-    // Generate master key using CommonCrypto
+    // Try to use hardware-based RNG first
+    int random_fd = open("/dev/random", O_RDONLY);
+    if (random_fd >= 0) {
+        ssize_t bytes_read = read(random_fd, keys->master_key, sizeof(keys->master_key));
+        close(random_fd);
+        
+        if (bytes_read == sizeof(keys->master_key)) {
+            keys->initialized = true;
+            return true;
+        }
+    }
+
+    // Fallback to CommonCrypto's secure RNG
     if (CCRandomGenerateBytes(keys->master_key, sizeof(keys->master_key)) != kCCSuccess) {
         syslog(LOG_ERR, "Failed to generate master key in TEE");
         return false;
@@ -233,6 +248,7 @@ bool initialize_encryption_keys(struct tee_keys* keys) {
 }
 
 bool derive_encryption_key(struct tee_keys* keys, const char* path) {
+    // Use HMAC-SHA256 for key derivation
     CCHmacContext ctx;
     CCHmacInit(&ctx, kCCHmacAlgSHA256, keys->master_key, sizeof(keys->master_key));
     CCHmacUpdate(&ctx, path, strlen(path));
@@ -242,6 +258,7 @@ bool derive_encryption_key(struct tee_keys* keys, const char* path) {
 
 void cleanup_encryption_keys(struct tee_keys* keys) {
     if (keys->initialized) {
+        // Use secure memory wiping
         memset_s(keys, sizeof(*keys), 0, sizeof(*keys));
     }
 }

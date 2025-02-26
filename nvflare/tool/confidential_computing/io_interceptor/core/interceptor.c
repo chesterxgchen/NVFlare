@@ -13,7 +13,7 @@
 #include <time.h>
 #include <limits.h>  // For PATH_MAX
 #include <fnmatch.h>
-#include "encryption_handler.h"
+#include "../handlers/encryption_handler.h"
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096     // Default value if not defined
@@ -232,6 +232,43 @@ static void sanitize_path_for_logs(const char* path, char* safe_path) {
     safe_path[PATH_MAX - 1] = '\0';  // Ensure null termination
 }
 
+// Configuration
+typedef struct {
+    char* rw_patterns;  // Read-write encryption patterns
+    char* wo_patterns;  // Write-only encryption patterns
+} interceptor_config_t;
+
+// Initialize with config file
+bool init_interceptor_config(const char* config_path) {
+    FILE* fp = fopen(config_path, "r");
+    if (!fp) {
+        syslog(LOG_ERR, "Failed to open config file: %s", config_path);
+        return false;
+    }
+
+    char line[1024];
+    while (fgets(line, sizeof(line), fp)) {
+        // Skip comments and empty lines
+        if (line[0] == '#' || line[0] == '\n') continue;
+
+        char* key = strtok(line, "=");
+        char* value = strtok(NULL, "\n");
+        if (!key || !value) continue;
+
+        // Trim whitespace
+        while (*value == ' ') value++;
+
+        if (strcmp(key, "ENCRYPT_RW_PATHS") == 0) {
+            config.rw_patterns = strdup(value);
+        } else if (strcmp(key, "ENCRYPT_WO_PATHS") == 0) {
+            config.wo_patterns = strdup(value);
+        }
+    }
+
+    fclose(fp);
+    return true;
+}
+
 // Initialize interceptor
 __attribute__((constructor))
 static void init_interceptor(void) {
@@ -240,6 +277,12 @@ static void init_interceptor(void) {
 
     // Initialize default system and tmpfs paths
     init_default_paths();
+
+    // Initialize encryption patterns from config file
+    const char* config_path = "/etc/nvflare/interceptor.conf";
+    if (!init_interceptor_config(config_path)) {
+        syslog(LOG_WARNING, "Failed to load config, using defaults");
+    }
 
     // Load original functions
     original_fopen = dlsym(RTLD_NEXT, "fopen");
@@ -424,6 +467,10 @@ static void init_default_paths(void) {
 // Cleanup on unload
 __attribute__((destructor))
 static void cleanup_interceptor(void) {
+    // Free config strings
+    free(config.rw_patterns);
+    free(config.wo_patterns);
+
     // Securely wipe TEE keys
     if (tee_keys.initialized) {
         cleanup_encryption_keys(&tee_keys);

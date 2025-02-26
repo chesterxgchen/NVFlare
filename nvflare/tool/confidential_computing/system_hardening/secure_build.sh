@@ -9,6 +9,10 @@ fi
 
 source "$CONFIG_FILE"
 
+# Set encryption patterns
+export NVFLARE_ENCRYPT_RW_PATHS="$ENCRYPT_RW_PATHS"
+export NVFLARE_ENCRYPT_WO_PATHS="$ENCRYPT_WO_PATHS"
+
 # System service configuration
 configure_services() {
     echo "Configuring system services..."

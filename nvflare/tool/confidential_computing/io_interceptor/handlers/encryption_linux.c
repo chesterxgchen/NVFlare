@@ -1,10 +1,13 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <syslog.h>
+#include <fcntl.h>      // For O_RDONLY
+#include <unistd.h>     // For read/close
 #include <openssl/evp.h>
 #include <openssl/err.h>
 #include <openssl/rand.h>
-#include "encryption_handler.h"
+#include "./encryption_handler.h"
 
 struct cipher_ctx {
     EVP_CIPHER_CTX* ctx;
@@ -223,7 +226,19 @@ bool initialize_encryption_keys(struct tee_keys* keys) {
         return true;
     }
 
-    // Generate master key using OpenSSL
+    // Try to use hardware-based RNG first
+    int urandom_fd = open("/dev/urandom", O_RDONLY);
+    if (urandom_fd >= 0) {
+        ssize_t bytes_read = read(urandom_fd, keys->master_key, sizeof(keys->master_key));
+        close(urandom_fd);
+        
+        if (bytes_read == sizeof(keys->master_key)) {
+            keys->initialized = true;
+            return true;
+        }
+    }
+
+    // Fallback to OpenSSL's RAND which may use different entropy sources
     if (RAND_bytes(keys->master_key, sizeof(keys->master_key)) != 1) {
         syslog(LOG_ERR, "Failed to generate master key in TEE");
         return false;

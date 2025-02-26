@@ -1,5 +1,24 @@
 #!/bin/bash
 
+# Find OpenSSL installation
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    # Linux - try pkg-config first
+    if pkg-config openssl; then
+        export CFLAGS="$(pkg-config --cflags openssl)"
+        export LDFLAGS="$(pkg-config --libs openssl)"
+    else
+        # Fallback paths
+        export CFLAGS="-I/usr/include/openssl"
+        export LDFLAGS="-L/usr/lib -lssl -lcrypto"
+    fi
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+    # Mac OS X - use brew paths
+    if [ -d "/usr/local/opt/openssl" ]; then
+        export CFLAGS="-I/usr/local/opt/openssl/include"
+        export LDFLAGS="-L/usr/local/opt/openssl/lib -lssl -lcrypto"
+    fi
+fi
+
 # Check OS
 if [[ "$OSTYPE" == "darwin"* ]]; then
     # Mac OS X
@@ -18,5 +37,5 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     gcc -c encryption_darwin.c -o encryption.o
 else
     # Linux build
-    gcc -c encryption_linux.c -o encryption.o
+    gcc $CFLAGS -c encryption_linux.c -o encryption.o $LDFLAGS
 fi 
