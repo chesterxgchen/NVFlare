@@ -143,12 +143,10 @@ A system-level IO protection mechanism designed to complement VM-based Trusted E
 |----------|------|-------|------------|
 | **Memory & TEE** |
 | Side-channel | **Cache Timing:**<br>- Requires physical access<br>- Sophisticated hardware attack<br>- Limited data extraction | LOW | **TEE Protection:**<br>- Hardware isolation<br>- Memory encryption<br>- Cache isolation |
-| Memory Bus | ~~Removed - Memory bus traffic is protected by TEE encryption~~ |
 | Execution Timing | - Algorithm behavior leakage<br>- Control flow exposure<br>- Operation complexity | HIGH | - Operation batching<br>- Random delays<br>- Constant-time algorithms |
 | Cross-VM | Cross-VM memory attacks | HIGH | IOMMU<br>- Memory isolation<br>- VM pinning |
 | Speculative | Speculative execution attacks | HIGH | CPU mitigations |
 | **I/O Operations** |
-| I/O Pattern | **Access Patterns:**<br>- File size patterns<br>- Access timing patterns | MEDIUM | - Random padding<br>- Access batching |
 | **Network Protocol** |
 | Attestation | - TEE remote attestation protocol flaws<br>- Quote verification issues<br>- Key exchange vulnerabilities | MEDIUM | Must be fixed by TEE vendor |
 | Protocol | - Session hijacking<br>- Data manipulation<br>- Service disruption | HIGH | Nonce + timestamps |
@@ -660,8 +658,6 @@ Our implementation provides:
 |--------------|------|---------------|-------------------|-------------------|
 | **Memory & TEE** |
 | Side-channel | **Cache Timing:**<br>- Requires physical access<br>- Sophisticated hardware attack<br>- Limited data extraction | LOW | **TEE Protection:**<br>- Hardware isolation<br>- Memory encryption<br>- Cache isolation |
-| **I/O Operations** |
-| I/O Pattern | **Access Patterns:**<br>- File size patterns<br>- Access timing patterns | MEDIUM | - Random padding<br>- Access batching |
 | **Network Protocol** |
 | Attestation | - TEE remote attestation protocol flaws<br>- Quote verification issues<br>- Key exchange vulnerabilities | MEDIUM | Must be fixed by TEE vendor |
 
