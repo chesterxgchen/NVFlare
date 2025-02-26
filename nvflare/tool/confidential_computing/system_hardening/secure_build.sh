@@ -9,6 +9,24 @@ fi
 
 source "$CONFIG_FILE"
 
+# System service configuration
+configure_services() {
+    echo "Configuring system services..."
+    
+    # Disable SSH access
+    systemctl disable ssh
+    systemctl disable sshd
+    systemctl stop ssh
+    systemctl stop sshd
+    
+    # Backup and remove SSH keys
+    if [ -d "/etc/ssh" ]; then
+        timestamp=$(date +%Y%m%d_%H%M%S)
+        tar czf "/root/ssh_backup_${timestamp}.tar.gz" /etc/ssh/
+        rm -f /etc/ssh/ssh_host_*
+    fi
+}
+
 setup_network_security() {
     # 1. Port Management
     configure_ports() {
@@ -17,6 +35,10 @@ setup_network_security() {
         for port in "${FL_PORT_LIST[@]}"; do
             iptables -A INPUT -p tcp --dport "$port" -j ACCEPT
         done
+        
+        # Block SSH ports explicitly
+        iptables -A INPUT -p tcp --dport 22 -j DROP   # SSH
+        iptables -A INPUT -p tcp --dport 2222 -j DROP # Alternative SSH
         
         # Configure monitoring ports if monitoring network is set
         if [ ! -z "$MONITOR_NETWORK" ]; then
