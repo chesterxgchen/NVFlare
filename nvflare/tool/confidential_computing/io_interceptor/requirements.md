@@ -1,4 +1,86 @@
-# IO Interceptor Requirements & Implementation Status
+# IO Interceptor Requirements
+
+## 1. Core Requirements
+
+### Access Control
+- Whitelist-based path access control
+- System path read-only protection
+- Temporary filesystem read-write access
+- Path pattern matching support
+
+### Encryption
+- Pattern-based encryption policies
+- Two encryption modes:
+  - Read-Write (RW): Full encryption for both reads and writes
+  - Write-Only (WO): Encrypt only write operations
+- Support for file patterns (e.g., *.pt, *.ckpt)
+- Transparent encryption/decryption
+
+### Monitoring
+- Security event logging
+- Operation auditing
+- Path sanitization for logs
+- Monitoring metrics
+
+## 2. Encryption Requirements
+
+### Pattern-Based Encryption
+- Support glob patterns for file matching
+- Configure encryption policies per pattern
+- Maximum 128 encryption patterns
+- Default to no encryption if no pattern matches
+
+### Encryption Policies
+```
+Read-Write Patterns:
+- Model files: /workspace/models/*.pt
+- Checkpoints: /workspace/checkpoints/*.ckpt
+- State files: /workspace/state/*.state
+
+Write-Only Patterns:
+- Log files: /var/log/nvflare/*.log
+- Metrics: /workspace/metrics/*.json
+```
+
+### Encryption Operations
+- Transparent to applications
+- Automatic key management
+- IV generation per file
+- Secure key cleanup
+
+## 3. Security Requirements
+
+### Path Security
+- No path traversal
+- No symlink attacks
+- Pattern validation
+- Safe pattern matching
+
+### Memory Security
+- Secure key handling
+- Memory wiping
+- Buffer overflow protection
+- Safe memory allocation
+
+### Operation Security
+- Operation validation
+- Safe file descriptor tracking
+- Error handling
+- Resource cleanup
+
+## 4. Performance Requirements
+
+### Overhead
+- Minimal encryption overhead
+- Efficient pattern matching
+- Optimized file operations
+- Resource-efficient tracking
+
+### Scalability
+- Handle multiple patterns
+- Support concurrent operations
+- Manage multiple file descriptors
+- Scale with file size
 
 ## Core Security Requirements
 

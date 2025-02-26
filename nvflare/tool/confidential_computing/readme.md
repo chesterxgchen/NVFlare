@@ -55,11 +55,6 @@
 ### Purpose and Objectives
 A system-level IO protection mechanism designed to complement VM-based Trusted Execution Environments (TEEs) like Intel TDX and AMD SEV-SNP by securing I/O operations that are not protected by memory encryption.
 
-### Integration with TEE
-- Complement TEE memory protection
-- Secure I/O operations outside TEE
-- Integrate with TEE attestation
-
 ### Protection Scope
 - File I/O operations
 - Memory operations
@@ -79,59 +74,6 @@ A system-level IO protection mechanism designed to complement VM-based Trusted E
 | Cache Timing | ✗ Limited | Timing side-channels |
 | Power Analysis | ✗ Limited | Power side-channels |
 | Resource Sharing | ✗ Limited | Contention channels |
-
-**Why Side-Channels Matter**:
-- TEE protects memory content but not access patterns
-- Shared hardware resources remain observable
-- Timing differences can leak information
-- Power consumption can be monitored
-
-#### Side-Channel Attack Details
-
-1. **Cache Side-Channel Attack**
-   - **How it works**:
-     - Attacker and victim share CPU cache lines
-     - Attacker measures memory access times
-     - Fast access = cache hit (victim accessed data)
-     - Slow access = cache miss (victim didn't access)
-   - **What can be leaked**:
-     - Memory access patterns
-     - Cryptographic keys
-     - Model architecture details
-   - **Example**: Attacker can determine which model layers are active by monitoring cache access patterns
-
-2. **Memory Bus Attack**
-   - **How it works**:
-     - Attacker monitors memory bus activity
-     - Measures timing and frequency of memory accesses
-     - Observes data transfer patterns
-   - **What can be leaked**:
-     - Data transfer sizes
-     - Memory access frequency
-     - Workload characteristics
-   - **Example**: Attacker can infer batch size and model structure from memory transfer patterns
-
-3. **Execution Timing Attack**
-   - **How it works**:
-     - Attacker measures operation completion time
-     - Different data causes different execution paths
-     - Timing variations leak information
-   - **What can be leaked**:
-     - Control flow paths
-     - Data-dependent operations
-     - Algorithm behavior
-   - **Example**: Attacker can infer model complexity from operation timing
-
-#### Mitigation Effectiveness
-
-| Attack Type | Mitigation | Effectiveness | Trade-off |
-|-------------|------------|---------------|-----------|
-| Cache | Cache partitioning | High | Performance impact |
-| Cache | Constant-time ops | High | Code complexity |
-| Memory Bus | Access batching | Medium | Latency increase |
-| Memory Bus | Dummy accesses | Medium | Bandwidth waste |
-| Timing | Random delays | Medium | Performance impact |
-| Timing | Operation batching | High | Response latency |
 
 | Category | Risk | Level | Mitigation |
 |----------|------|-------|------------|
@@ -155,23 +97,17 @@ These risks are addressed through:
 ### Security Requirements
 
 1. **Build and Runtime Security**:
+
    | Requirement | Purpose | Description |
    |------------|---------|-------------|
    | Build Signature | Build integrity | Verify build signature |
    | Attestation | Runtime proof | Include in TEE attestation |
-   | Build ID | Identification | 32-byte unique build identifier |
    | Runtime Integrity | Monitoring | Continuous integrity checks |
-   | Reproducible Builds | Build verification | Ensure build reproducibility |
-   | Build Environment | Environment security | Attestation of build environment |
-   | Source Verification | Code integrity | Verify source code authenticity |
    | Image Signing | Image integrity | Sign all build artifacts |
-   | Version Control | Build tracking | Track all build versions |
-   | Artifact Tracking | Supply chain | Track build artifact lineage |
    | Integrity Monitoring | Runtime security | Continuous integrity verification |
-   | Attestation Chain | Security proof | Complete attestation inclusion |
-   | Version Verification | Runtime verification | Verify running version |
 
 2. **OEM Protection**:
+
    | Component | Requirement | Description |
    |-----------|------------|-------------|
    | Boot Measurement | Expected measurement | 32-byte boot measurement validation |
@@ -179,16 +115,74 @@ These risks are addressed through:
    | Configuration | Encrypt config | Configuration file encryption |
 
 3. **Launch Protection**:
+
    | Component | Requirement | Description |
    |-----------|------------|-------------|
    | Binary Control | Whitelist binaries | List of allowed executables |
    | Runtime Check | Continuous verification | Ongoing integrity checks |
    | Config Loading | Secure loading | Secure configuration handling |
 
+4. **Side-Channel Attack**
+
+4.1 **Why Side-Channels Matter**:
+   - TEE protects memory content but not access patterns
+   - Shared hardware resources remain observable
+   - Timing differences can leak information
+   - Power consumption can be monitored
+
+4.2 **Cache Side-Channel Attack**
+
+- **How it works**:
+  - Attacker and victim share CPU cache lines
+  - Attacker measures memory access times
+  - Fast access = cache hit (victim accessed data)
+  - Slow access = cache miss (victim didn't access)
+- **What can be leaked**:
+  - Memory access patterns
+  - Cryptographic keys
+  - Model architecture details
+  - **Example**: Attacker can determine which model layers are active by monitoring cache access patterns
+
+4.3. **Memory Bus Attack**
+- **How it works**:
+  - Attacker monitors memory bus activity
+  - Measures timing and frequency of memory accesses
+  - Observes data transfer patterns
+- **What can be leaked**:
+  - Data transfer sizes
+  - Memory access frequency
+  - Workload characteristics
+- **Example**: Attacker can infer batch size and model structure from memory transfer patterns
+
+4.4 **Execution Timing Attack**
+
+    - **How it works**:
+        - Attacker measures operation completion time
+        - Different data causes different execution paths
+        - Timing variations leak information
+
+    - **What can be leaked**:
+        - Control flow paths
+        - Data-dependent operations
+        - Algorithm behavior
+    - **Example**: Attacker can infer model complexity from operation timing
+
+4.4 Mitigation Effectiveness
+
+| Attack Type | Mitigation | Effectiveness | Trade-off |
+|-------------|------------|---------------|-----------|
+| Cache | Cache partitioning | High | Performance impact |
+| Cache | Constant-time ops | High | Code complexity |
+| Memory Bus | Access batching | Medium | Latency increase |
+| Memory Bus | Dummy accesses | Medium | Bandwidth waste |
+| Timing | Random delays | Medium | Performance impact |
+| Timing | Operation batching | High | Response latency |
+
 ### Threat Categories
 - Runtime Memory Threats
 - I/O Operation Threats
 - Build/Deploy Time Threats
+
 
 ### Attack Surface Analysis
 ```
@@ -321,6 +315,7 @@ Temp Files    | Memory-only + secure cleanup
 ### Implementation Requirements
 
 1. **Core Security Features**:
+
    | Feature | Requirement | Purpose |
    |---------|------------|---------|
    | Encryption Layers | Minimum 3 | Multi-layer protection |
@@ -329,6 +324,7 @@ Temp Files    | Memory-only + secure cleanup
    | Memory Cleanup | Secure wipe | Remove sensitive data |
 
 2. **Monitoring Requirements**:
+
    | Component | Metrics to Monitor |
    |-----------|-------------------|
    | Memory | Page faults, swaps |
@@ -336,6 +332,7 @@ Temp Files    | Memory-only + secure cleanup
    | System | Call patterns |
 
 3. **Deployment Checklist**:
+
    - [ ] TEE Enabled
    - [ ] I/O Intercepted
    - [ ] Memory Protected
@@ -392,6 +389,7 @@ Access Patterns | - Training phase<br>- Model structure<br>- Data organization |
 #### Implementation Strategy
 
 1. **OS Protection**:
+ 
    | Feature | Purpose | Strategy |
    |---------|---------|----------|
    | Page Encryption | Page file protection | Encrypt swapped pages |
@@ -399,6 +397,7 @@ Access Patterns | - Training phase<br>- Model structure<br>- Data organization |
    | Secure Buffer | Sensitive data protection | Keep in TEE memory |
 
 2. **Model Protection**:
+
    | Feature | Purpose | Strategy |
    |---------|---------|----------|
    | Whitelist Paths | Control save locations | Define allowed paths |
@@ -406,6 +405,7 @@ Access Patterns | - Training phase<br>- Model structure<br>- Data organization |
    | Checkpoint Security | Protect model states | Secure checkpoint handling |
 
 3. **Pattern Protection**:
+
    | Feature | Purpose | Strategy |
    |---------|---------|----------|
    | Size Padding | Hide data size | Minimum padding size |

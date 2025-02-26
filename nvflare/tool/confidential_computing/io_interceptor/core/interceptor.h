@@ -22,6 +22,19 @@ typedef enum {
     PATH_BLOCKED
 } path_type_t;
 
+// Encryption policy types
+typedef enum {
+    ENCRYPT_NONE = 0,
+    ENCRYPT_READ_WRITE = 1,  // Both encryption and decryption
+    ENCRYPT_WRITE_ONLY = 2   // Only encrypt writes
+} encrypt_policy_t;
+
+// Path pattern configuration
+typedef struct {
+    char pattern[256];
+    encrypt_policy_t policy;
+} path_pattern_t;
+
 // Function declarations
 bool register_whitelist_path(const char* path);
 bool register_system_path(const char* path);
@@ -39,5 +52,10 @@ ssize_t handle_encrypted_write(int fd, const void* buf, size_t count);
 ssize_t handle_encrypted_read(int fd, void* buf, size_t count);
 int get_operation_type(const char* mode);
 int get_operation_type_flags(int flags);
+
+// Configure encryption patterns
+bool add_encryption_pattern(const char* pattern, encrypt_policy_t policy);
+bool remove_encryption_pattern(const char* pattern);
+encrypt_policy_t get_path_encryption_policy(const char* path);
 
 #endif /* IO_INTERCEPTOR_H */ 

@@ -1,247 +1,228 @@
-# IO Interceptor Design Document
+# IO Interceptor Design
 
-## Architecture Overview
+## 1. Architecture Overview
 
-### Core Components
+### Components
 ```
-┌──────────────────────────────────────────────────┐
-│                IO Interceptor                     │
-│                                                  │
-│  ┌─────────────┐    ┌──────────┐   ┌─────────┐  │
-│  │ Core        │    │ Handlers │   │ TEE     │  │
-│  │ Interceptor │───▶│ Layer   │──▶│ Bridge  │  │
-│  └─────────────┘    └──────────┘   └─────────┘  │
-│         │               │              │         │
-│    Path Control    Encryption     Memory Mgmt    │
-└──────────────────────────────────────────────────┘
+┌──────────────────────────────────────────┐
+│              Application                 │
+└───────────────────┬──────────────────────┘
+                    │
+┌───────────────────▼──────────────────────┐
+│           IO Interceptor                 │
+├──────────────┬──────────────┬────────────┤
+│  Path        │ Encryption   │ Memory     │
+│  Control     │ Handler      │ Handler    │
+└──────────────┴──────────────┴────────────┘
 ```
 
-### Component Details
+### Key Components
+1. Path Control: Access control and pattern matching
+2. Encryption Handler: File encryption/decryption
+3. Memory Handler: Secure memory operations
 
-1. **Core Interceptor** (`core/interceptor.c`)
-   - Function interception via LD_PRELOAD
-   - Path validation and access control
-   - Handler dispatch
-   - Configuration management
+## 2. Pattern-Based Encryption Design
 
-2. **Handlers Layer**
-   - Encryption Handler: AES-256-GCM implementation
-   - Memory Handler: Secure memory operations
-   - Pattern Protection: Access pattern hiding
-
-3. **TEE Bridge**
-   - Memory allocation in TEE regions
-   - Key management
-   - Attestation integration
-
-## Implementation Details
-
-### Path Control
+### Encryption Policy Structure
 ```c
-typedef struct {
-    char* path;
-    enum PathType {
-        WHITELIST,
-        SYSTEM,
-        TMPFS
-    } type;
-    bool encrypted;
-} path_entry_t;
+typedef enum {
+    ENCRYPT_READ_WRITE = 1,  // Encrypt both read/write (model files)
+    ENCRYPT_WRITE_ONLY = 2   // Encrypt write, discard on read (logs)
+} encrypt_policy_t;
+
+// TEE-managed encryption keys
+struct tee_keys {
+    uint8_t master_key[32];    // Master key for this TEE session
+    uint8_t file_key[32];      // Derived key for file encryption
+    bool initialized;          // Set when keys are generated
+};
 
 typedef struct {
-    path_entry_t* entries;
-    size_t count;
-    pthread_rwlock_t lock;
-} path_table_t;
+    char pattern[256];
+    encrypt_policy_t policy;
+} path_pattern_t;
 ```
 
-### Memory Management
+### Pattern Matching Flow
+```
+File Operation Request
+       │
+       ▼
+  Match Pattern ──────┐
+       │             │
+       ▼             ▼
+  Block Write   Match Found
+       │             │
+       ▼             ▼
+ Read Only     Check Policy
+                    │
+               ┌────┴────┐
+               ▼         ▼
+          Read-Write  Write-Only
+               │         │
+               ▼         ▼
+          Encrypt/   Encrypt
+          Decrypt    Write Only
+```
+
+### Key Management
+```
+TEE Start
+    │
+    ▼
+Generate Master Key
+    │
+    ▼
+Store in TEE Memory ───┐
+    │                   │
+    ▼                   ▼
+Derive File Keys    TEE Restart
+    │                   │
+    ▼                   └─────┐
+Encrypt/Decrypt         New  │
+Operations             Keys  ▼
+```
+
+## 3. Implementation Details
+
+### Pattern Management
+- Maximum 128 patterns
+- Glob pattern support (fnmatch)
+- All writes must match a pattern
+- Read-only for unmatched paths
+
+### Encryption Contexts
 ```c
-typedef struct {
-    void* addr;
-    size_t size;
-    enum MemoryType {
-        MEM_TEE,
-        MEM_LOCKED,
-        MEM_NORMAL
-    } type;
-    bool encrypted;
-} memory_region_t;
+struct encryption_ctx {
+    int fd;                // File descriptor
+    uint8_t* key;         // Key derived from master
+    size_t key_len;       // Key length
+    void* cipher_ctx;     // Platform-specific context
+    bool write_allowed;   // True if pattern matched
+};
 ```
 
-### Encryption Context
+### Platform-Specific Implementation
 ```c
-typedef struct {
-    uint8_t key[32];
-    uint8_t iv[12];
-    uint8_t tag[16];
-    size_t data_len;
-    bool padding_enabled;
-} encryption_ctx_t;
+// Linux (OpenSSL)
+struct cipher_ctx {
+    EVP_CIPHER_CTX* ctx;
+    uint8_t iv[IV_SIZE];
+};
+
+// macOS (CommonCrypto)
+struct cipher_ctx {
+    CCCryptorRef ctx;
+    uint8_t iv[IV_SIZE];
+};
 ```
 
-## Key Workflows
+## 4. File Operation Flow
 
-### 1. File Operation Interception
-```c
-// 1. Intercept system call
-FILE* fopen(const char* path, const char* mode) {
-    // 2. Validate path
-    if (!validate_path(path)) {
-        errno = EACCES;
-        return NULL;
-    }
-
-    // 3. Apply protection policy
-    protection_ctx_t* ctx = get_protection_context(path);
-    
-    // 4. Handle operation
-    if (ctx->encrypted) {
-        return handle_encrypted_open(path, mode, ctx);
-    }
-    
-    // 5. Call original function
-    return original_fopen(path, mode);
-}
+### File Open Operation
+```
+fopen/open
+    │
+    ▼
+Path Allowed?
+    │
+    ▼
+Get Encryption Policy
+    │
+    ▼
+Create Context if Needed
+    │
+    ▼
+Track File Descriptor
+    │
+    ▼
+Return Handle
 ```
 
-### 2. Memory Protection
-```c
-// 1. Allocate secure memory
-void* allocate_secure_memory(size_t size, int type) {
-    // 2. Get TEE region if needed
-    if (type == MEM_TEE) {
-        return allocate_tee_memory(size);
-    }
-    
-    // 3. Lock memory pages
-    void* mem = mmap(NULL, size, PROT_READ|PROT_WRITE,
-                    MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
-    mlock(mem, size);
-    
-    // 4. Register region
-    register_memory_region(mem, size, type);
-    
-    return mem;
-}
+### Read/Write Operations
+```
+read/write
+    │
+    ▼
+Check File Descriptor
+    │
+    ▼
+Get Encryption Context
+    │
+    ▼
+Apply Policy
+    │
+┌───┴────┐
+▼        ▼
+Encrypt  Decrypt
+Write    Read
 ```
 
-### 3. Encryption Flow
-```c
-// 1. Initialize encryption context
-encryption_ctx_t* init_encryption(const char* path) {
-    encryption_ctx_t* ctx = malloc(sizeof(encryption_ctx_t));
-    
-    // 2. Generate key/IV in TEE
-    generate_encryption_params(ctx);
-    
-    // 3. Configure padding if enabled
-    if (config.enable_padding) {
-        ctx->padding_enabled = true;
-        ctx->padding_size = calculate_padding_size();
-    }
-    
-    return ctx;
-}
-```
+## 5. Security Considerations
 
-## Security Considerations
+### Pattern Security
+- Validate patterns before registration
+- Prevent path traversal in patterns
+- Safe pattern matching implementation
+- Pattern update atomicity
+
+### Key Management
+- Per-file encryption keys
+- Secure key generation
+- Key cleanup on close
+- IV uniqueness per operation
 
 ### Memory Protection
-1. All sensitive memory regions are locked using mlock()
-2. TEE memory is allocated in protected regions
-3. Memory is wiped before freeing
-4. Page alignment for sensitive data
+- Secure memory allocation
+- Memory wiping after use
+- Buffer overflow prevention
+- Resource tracking
+
+## 6. Performance Optimizations
+
+### Pattern Matching
+- Pattern caching
+- Quick rejection paths
+- Optimized glob matching
+- Pattern ordering by frequency
 
 ### Encryption
-1. Keys stored only in TEE memory
-2. Unique IV for each file
-3. Authentication tags verified
-4. Padding for pattern hiding
+- Buffer size optimization
+- Context reuse when possible
+- Minimal copying
+- Efficient IV generation
 
-### Thread Safety
-1. Read-write locks for path table
-2. Thread-local storage for contexts
-3. Atomic operations where needed
-4. Lock-free algorithms for performance
+## 7. Integration Points
 
-## Performance Optimizations
+### Configuration
+```conf
+# Encryption patterns
+ENCRYPT_RW_PATHS="/workspace/models/*.pt,/workspace/checkpoints/*.ckpt"
+ENCRYPT_WO_PATHS="/var/log/nvflare/*.log,/workspace/metrics/*.json"
+```
 
-1. **Path Validation**
-   - Hash table for quick lookups
-   - Cache validation results
-   - Minimize string operations
+### API Integration
+```c
+// Add encryption pattern
+bool add_encryption_pattern(const char* pattern, encrypt_policy_t policy);
 
-2. **Encryption**
-   - Buffer pooling
-   - Batch operations
-   - Hardware acceleration when available
+// Remove encryption pattern
+bool remove_encryption_pattern(const char* pattern);
 
-3. **Memory Management**
-   - Page-aligned allocations
-   - Pre-allocated pools
-   - Minimize system calls
+// Get path encryption policy
+encrypt_policy_t get_path_encryption_policy(const char* path);
+```
 
-## Error Handling
+## 8. Monitoring and Debugging
 
-1. **System Call Failures**
-   ```c
-   if (result == -1) {
-       log_error("Operation failed: %s", strerror(errno));
-       return handle_error(errno);
-   }
-   ```
+### Logging
+- Operation logging
+- Pattern match results
+- Encryption operations
+- Error conditions
 
-2. **Memory Allocation**
-   ```c
-   if (!ptr) {
-       log_error("Memory allocation failed");
-       errno = ENOMEM;
-       return NULL;
-   }
-   ```
-
-3. **Encryption Errors**
-   ```c
-   if (EVP_Encrypt_Final_ex(...) != 1) {
-       log_error("Encryption failed: %s", 
-                ERR_error_string(ERR_get_error(), NULL));
-       cleanup_context(ctx);
-       return -1;
-   }
-   ```
-
-## Testing Strategy
-
-1. **Unit Tests**
-   - Path validation
-   - Encryption operations
-   - Memory management
-   - Error handling
-
-2. **Integration Tests**
-   - Full I/O workflows
-   - TEE integration
-   - Performance benchmarks
-
-3. **Security Tests**
-   - Memory leak detection
-   - Encryption validation
-   - Access control verification
-
-## Future Enhancements
-
-1. **Network Protection**
-   - Socket interception
-   - Traffic pattern hiding
-   - Protocol security
-
-2. **Advanced Encryption**
-   - Multiple encryption modes
-   - Custom algorithms
-   - Hardware acceleration
-
-3. **Enhanced Monitoring**
-   - Detailed metrics
-   - Anomaly detection
-   - Performance tracking 
+### Metrics
+- Pattern match counts
+- Encryption operations
+- Performance timing
+- Resource usage 

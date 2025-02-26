@@ -12,6 +12,8 @@
 #include <stdarg.h>
 #include <time.h>
 #include <limits.h>  // For PATH_MAX
+#include <fnmatch.h>
+#include "encryption_handler.h"
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096     // Default value if not defined
@@ -57,6 +59,71 @@ struct monitoring_config {
     .port = 8125,
     .auth_token = ""
 };
+
+// Encryption pattern tracking
+#define MAX_PATTERNS 128
+static path_pattern_t encryption_patterns[MAX_PATTERNS];
+static int num_patterns = 0;
+
+// TEE key management
+static struct tee_keys tee_keys = {0};
+
+static bool initialize_tee_keys(void) {
+    return initialize_encryption_keys(&tee_keys);
+}
+
+static bool derive_file_key(const char* path) {
+    return derive_encryption_key(&tee_keys, path);
+}
+
+bool add_encryption_pattern(const char* pattern, encrypt_policy_t policy) {
+    if (num_patterns >= MAX_PATTERNS) {
+        return false;
+    }
+    strncpy(encryption_patterns[num_patterns].pattern, pattern, 255);
+    encryption_patterns[num_patterns].pattern[255] = '\0';
+    encryption_patterns[num_patterns].policy = policy;
+    num_patterns++;
+    return true;
+}
+
+bool remove_encryption_pattern(const char* pattern) {
+    for (int i = 0; i < num_patterns; i++) {
+        if (strcmp(encryption_patterns[i].pattern, pattern) == 0) {
+            // Remove by shifting remaining elements
+            for (int j = i; j < num_patterns - 1; j++) {
+                encryption_patterns[j] = encryption_patterns[j + 1];
+            }
+            num_patterns--;
+            return true;
+        }
+    }
+    return false;
+}
+
+encrypt_policy_t get_path_encryption_policy(const char* path) {
+    for (int i = 0; i < num_patterns; i++) {
+        if (fnmatch(encryption_patterns[i].pattern, path, 0) == 0) {
+            return encryption_patterns[i].policy;
+        }
+    }
+    return ENCRYPT_NONE;
+}
+
+static bool should_encrypt_operation(const char* path, int mode) {
+    encrypt_policy_t policy = get_path_encryption_policy(path);
+    
+    switch (policy) {
+        case ENCRYPT_READ_WRITE:
+            return true;
+        case ENCRYPT_WRITE_ONLY:
+            // Only encrypt write operations
+            return (mode & O_WRONLY) || (mode & O_RDWR);
+        case ENCRYPT_NONE:
+        default:
+            return false;
+    }
+}
 
 static void log_monitoring_event(const char* path, const char* operation, const char* reason) {
     // Just log to syslog/audit file - monitoring handled by external tools
@@ -226,17 +293,31 @@ static bool is_path_allowed(const char* path, int operation) {
 FILE* fopen(const char* path, const char* mode) {
     if (!is_path_allowed(path, get_operation_type(mode))) {
         log_security_event(path, mode, "Access denied - Path not allowed");
-        errno = EPERM;   // Operation not permitted (error code 1)
+        errno = EPERM;
         return NULL;
     }
     
-    if (is_encrypted_path(path)) {
-        // Log encrypted file access
+    // All writes must be encrypted
+    if (strchr(mode, 'w') || strchr(mode, 'a')) {
+        if (!initialize_tee_keys() || !derive_file_key(path)) {
+            log_security_event(path, mode, "Failed to initialize encryption");
+            errno = EIO;
+            return NULL;
+        }
         log_security_event(path, mode, "Encrypted file access");
         return handle_encrypted_open(path, mode);
     }
     
-    // Log allowed access
+    // For reads, check if file is encrypted
+    if (is_encrypted_path(path)) {
+        if (!initialize_tee_keys() || !derive_file_key(path)) {
+            log_security_event(path, mode, "Failed to initialize decryption");
+            errno = EIO;
+            return NULL;
+        }
+        return handle_encrypted_open(path, mode);
+    }
+    
     log_security_event(path, mode, "Access allowed");
     return original_fopen(path, mode);
 }
@@ -256,7 +337,7 @@ int open(const char* path, int flags, ...) {
         return -1;
     }
     
-    if (is_encrypted_path(path)) {
+    if (should_encrypt_operation(path, flags)) {
         // Log encrypted file access with flags
         char op_desc[64];
         snprintf(op_desc, sizeof(op_desc), "open(flags=0x%x)", flags);
@@ -343,6 +424,11 @@ static void init_default_paths(void) {
 // Cleanup on unload
 __attribute__((destructor))
 static void cleanup_interceptor(void) {
+    // Securely wipe TEE keys
+    if (tee_keys.initialized) {
+        cleanup_encryption_keys(&tee_keys);
+    }
+
     if (audit_file) {
         fclose(audit_file);
         audit_file = NULL;

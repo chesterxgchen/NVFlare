@@ -42,4 +42,16 @@ extern FILE* (*original_fopen)(const char*, const char*);
 extern int (*original_open)(const char*, int, ...);
 extern int (*original_close)(int);
 
+// TEE key management
+struct tee_keys {
+    uint8_t master_key[32];
+    uint8_t file_key[32];
+    bool initialized;
+};
+
+// Platform-specific key management functions
+bool initialize_encryption_keys(struct tee_keys* keys);
+bool derive_encryption_key(struct tee_keys* keys, const char* path);
+void cleanup_encryption_keys(struct tee_keys* keys);
+
 #endif /* ENCRYPTION_HANDLER_H */ 
