@@ -142,15 +142,13 @@ A system-level IO protection mechanism designed to complement VM-based Trusted E
 | Category | Risk | Level | Mitigation |
 |----------|------|-------|------------|
 | **Memory & TEE** |
-| Cache Side-channel | - Model architecture leakage<br>- Training pattern exposure<br>- Potential key extraction | CRITICAL | - Cache partitioning<br>- Cache line padding<br>- Constant-time operations |
-| Memory Bus | - Data size leakage<br>- Workload pattern exposure<br>- Memory access timing | HIGH | - Memory access randomization<br>- Dummy accesses<br>- Access batching |
+| Cache Side-channel | - Model architecture leakage<br>- Training pattern exposure | CRITICAL | Requires CPU/hardware support |
+| Memory Bus | - Data size leakage<br>- Memory access timing | HIGH | Requires hardware support |
 | Execution Timing | - Algorithm behavior leakage<br>- Control flow exposure<br>- Operation complexity | HIGH | - Operation batching<br>- Random delays<br>- Constant-time algorithms |
 | Cross-VM | Cross-VM memory attacks | HIGH | IOMMU<br>- Memory isolation<br>- VM pinning |
 | Speculative | Speculative execution attacks | HIGH | CPU mitigations |
 | **I/O Operations** |
-| Application | **Framework Memory Management:**<br>- Memory leaks in ML frameworks<br>- Resource cleanup issues | LOW | - Framework updates<br>- Resource monitoring |
-| Data Format | - Buffer overflows<br>- Data corruption<br>- System crashes | HIGH | Format verification |
-| Exfiltration | Covert channel data leaks | HIGH | I/O monitoring |
+| I/O Pattern | **Access Patterns:**<br>- File size patterns<br>- Access timing patterns | MEDIUM | - Random padding<br>- Access batching |
 | **Network Protocol** |
 | Attestation | - TEE remote attestation protocol flaws<br>- Quote verification issues<br>- Key exchange vulnerabilities | MEDIUM | Must be fixed by TEE vendor |
 | Protocol | - Session hijacking<br>- Data manipulation<br>- Service disruption | HIGH | Nonce + timestamps |
@@ -661,12 +659,10 @@ Our implementation provides:
 | Risk Category | Risk | Impact | Risk Level | Mitigation Strategy |
 |--------------|------|---------------|-------------------|-------------------|
 | **Memory & TEE** |
-| Cache Side-channel | - Model architecture leakage<br>- Training pattern exposure<br>- Potential key extraction | CRITICAL | Requires CPU/hardware support |
-| Memory Bus | - Data size leakage<br>- Workload pattern exposure<br>- Memory access timing | HIGH | Requires hardware support |
+| Cache Side-channel | - Model architecture leakage<br>- Training pattern exposure | CRITICAL | Requires CPU/hardware support |
+| Memory Bus | - Data size leakage<br>- Memory access timing | HIGH | Requires hardware support |
 | **I/O Operations** |
-| Application | **Framework Memory Management:**<br>- Memory leaks in ML frameworks<br>- Resource cleanup issues | LOW | - Framework updates<br>- Resource monitoring |
-| Data Format | - Buffer overflows<br>- Data corruption<br>- System crashes | HIGH | Format verification |
-| Exfiltration | Covert channel data leaks | HIGH | I/O monitoring |
+| I/O Pattern | **Access Patterns:**<br>- File size patterns<br>- Access timing patterns | MEDIUM | - Random padding<br>- Access batching |
 | **Network Protocol** |
 | Attestation | - TEE remote attestation protocol flaws<br>- Quote verification issues<br>- Key exchange vulnerabilities | MEDIUM | Must be fixed by TEE vendor |
 
@@ -675,19 +671,11 @@ Note: These risks are outside the scope of the I/O interceptor because:
 - Can't protect against bugs in ML frameworks
 - Can't fix flaws in TEE vendor code
 - Application logic must be secured separately
-- Our interceptor can't prevent:
-  - Unsafe model loading (e.g., pickle exploits)
-  - Memory leaks from framework bugs
-  - Logic flaws in training code
-  - Insecure data preprocessing
-- These must be addressed at application level
 - Our interceptor handles:
-  - All file path access control
-  - I/O encryption
-  - Path whitelisting
-- Remaining risks are limited to:
-  - Internal framework memory management
-  - Resource cleanup efficiency
+  - All file I/O protection
+  - Memory-mapped files
+  - Temp file protection
+  - Resource cleanup
 
 Risk Level Legend:
 - CRITICAL: Immediate business impact, requires urgent mitigation
