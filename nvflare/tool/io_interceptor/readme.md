@@ -73,6 +73,33 @@ A system-level IO protection mechanism designed to complement VM-based Trusted E
 
 ## 2. Risk Analysis
 
+### Risk Categories and Mitigations
+
+| Category | Risk | Level | Mitigation |
+|----------|------|-------|------------|
+| **Memory & TEE** |
+| Side-channel | Side-channel attacks within TEE | HIGH | TEE memory isolation |
+| Cross-VM | Cross-VM memory attacks | HIGH | Memory encryption |
+| Speculative | Speculative execution attacks | HIGH | CPU mitigations |
+| **I/O Operations** |
+| Application | Parsing vulnerabilities | MEDIUM | Input validation |
+| Data Format | Malicious input attacks | MEDIUM | Format verification |
+| Exfiltration | Covert channel data leaks | HIGH | I/O monitoring |
+| **Network Protocol** |
+| Attestation | Malformed attestation messages | HIGH | Message validation |
+| Protocol | Protocol-level replay attacks | HIGH | Nonce + timestamps |
+| ML Protocol | Custom ML protocol vulnerabilities | HIGH | Protocol hardening |
+| **Build Process** |
+| Image | Image tampering before measurement | HIGH | Secure boot chain |
+| Configuration | Configuration injection | MEDIUM | Config encryption |
+| Supply Chain | Supply chain attacks | HIGH | Build verification |
+
+These risks are addressed through:
+- Comprehensive security requirements
+- Multi-layer protection strategy
+- Continuous monitoring and validation
+- Regular security assessments
+
 ### Security Requirements
 
 1. **Build and Runtime Security**:
@@ -82,6 +109,15 @@ A system-level IO protection mechanism designed to complement VM-based Trusted E
    | Attestation | Runtime proof | Include in TEE attestation |
    | Build ID | Identification | 32-byte unique build identifier |
    | Runtime Integrity | Monitoring | Continuous integrity checks |
+   | Reproducible Builds | Build verification | Ensure build reproducibility |
+   | Build Environment | Environment security | Attestation of build environment |
+   | Source Verification | Code integrity | Verify source code authenticity |
+   | Image Signing | Image integrity | Sign all build artifacts |
+   | Version Control | Build tracking | Track all build versions |
+   | Artifact Tracking | Supply chain | Track build artifact lineage |
+   | Integrity Monitoring | Runtime security | Continuous integrity verification |
+   | Attestation Chain | Security proof | Complete attestation inclusion |
+   | Version Verification | Runtime verification | Verify running version |
 
 2. **OEM Protection**:
    | Component | Requirement | Description |
@@ -568,31 +604,27 @@ sudo ./setup_network_rules.sh
 - Configuration injection during build
 - Supply chain attacks
 
-### Security Requirements
+| Risk Category | Risk | Potential Tools/Strategies | Status |
+|--------------|------|---------------------------|---------|
+| **Memory & TEE** |
+| Side-channel | Side-channel attacks within TEE | - Intel TME<br>- AMD SME<br>- Cache partitioning | Future |
+| Cross-VM | Cross-VM memory attacks | - IOMMU<br>- Memory isolation<br>- VM pinning | Future |
+| Speculative | Speculative execution attacks | - Microcode updates<br>- Kernel patches<br>- Hardware fixes | Future |
+| **I/O Operations** |
+| Application | Parsing vulnerabilities | - Fuzzing tools<br>- Static analysis<br>- Input sanitization | Planned |
+| Data Format | Malicious input attacks | - Schema validation<br>- Format checkers<br>- Safe parsers | Planned |
+| Exfiltration | Covert channel data leaks | - DLP tools<br>- Traffic analysis<br>- Behavioral monitoring | Planned |
+| **Network Protocol** |
+| Attestation | Malformed messages | - Protocol fuzzing<br>- Message validation<br>- Rate limiting | Future |
+| Protocol | Replay attacks | - Timestamps<br>- Nonce tracking<br>- Session management | Future |
+| ML Protocol | Custom protocol vulnerabilities | - Protocol hardening<br>- Secure design review<br>- Penetration testing | Future |
+| **Build Process** |
+| Image | Image tampering | - Secure boot<br>- TPM measurement<br>- Chain of trust | Planned |
+| Configuration | Configuration injection | - Config signing<br>- Validation checks<br>- Access controls | Planned |
+| Supply Chain | Supply chain attacks | - SBOM<br>- Dependency scanning<br>- Build reproducibility | Planned |
 
-1. **Build Process Security**:
-   | Requirement | Purpose | Description |
-   |------------|---------|-------------|
-   | Build Signature | Build integrity | Verify build signature |
-   | Attestation | Runtime proof | Include in TEE attestation |
-   | Build ID | Identification | 32-byte unique build identifier |
-   | Runtime Integrity | Monitoring | Continuous integrity checks |
-
-2. **Security Controls**:
-   - Reproducible builds
-   - Build environment attestation
-   - Source code verification
-   - Image signing
-   - Version control
-   - Build artifact tracking
-
-3. **Runtime Verification**:
-   - Integrity monitoring
-   - Attestation inclusion
-   - Version verification
-
-This organization:
-- Clearly presents requirements upfront
-- Eliminates redundancy
-- Maintains consistent documentation style
-- Makes requirements easier to track
+Status Legend:
+- Future: Not currently covered, future roadmap item
+- Planned: Implementation in progress or planned
+- Current: Partially addressed by current implementation
+ 
