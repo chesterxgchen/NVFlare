@@ -1229,7 +1229,7 @@ Notes:
 │  │ML Model  │        │Swap Space    │        │
 │  └──────────┘        └──────────────┘        │
 │       ✓                     △                 │
-│  TEE Protected        TEE Protected          │
+│    TEE Protected        TEE Protected          │
 │                      (until swap-out)        │
 │       └──────────────────────────────────────┘
 ```
