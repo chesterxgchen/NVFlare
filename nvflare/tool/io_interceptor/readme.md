@@ -142,7 +142,7 @@ A system-level IO protection mechanism designed to complement VM-based Trusted E
 | Category | Risk | Level | Mitigation |
 |----------|------|-------|------------|
 | **Memory & TEE** |
-| Cache Side-channel | - Model architecture leakage<br>- Training pattern exposure | CRITICAL | Requires CPU/hardware support |
+| Side-channel | **Cache Timing:**<br>- Requires physical access<br>- Sophisticated hardware attack<br>- Limited data extraction | LOW | **TEE Protection:**<br>- Hardware isolation<br>- Memory encryption<br>- Cache isolation |
 | Memory Bus | ~~Removed - Memory bus traffic is protected by TEE encryption~~ |
 | Execution Timing | - Algorithm behavior leakage<br>- Control flow exposure<br>- Operation complexity | HIGH | - Operation batching<br>- Random delays<br>- Constant-time algorithms |
 | Cross-VM | Cross-VM memory attacks | HIGH | IOMMU<br>- Memory isolation<br>- VM pinning |
@@ -659,8 +659,7 @@ Our implementation provides:
 | Risk Category | Risk | Impact | Risk Level | Mitigation Strategy |
 |--------------|------|---------------|-------------------|-------------------|
 | **Memory & TEE** |
-| Cache Side-channel | - Model architecture leakage<br>- Training pattern exposure | CRITICAL | Requires CPU/hardware support |
-| Memory Bus | ~~Removed - Memory bus traffic is protected by TEE encryption~~ |
+| Side-channel | **Cache Timing:**<br>- Requires physical access<br>- Sophisticated hardware attack<br>- Limited data extraction | LOW | **TEE Protection:**<br>- Hardware isolation<br>- Memory encryption<br>- Cache isolation |
 | **I/O Operations** |
 | I/O Pattern | **Access Patterns:**<br>- File size patterns<br>- Access timing patterns | MEDIUM | - Random padding<br>- Access batching |
 | **Network Protocol** |
@@ -671,11 +670,11 @@ Note: These risks are outside the scope of the I/O interceptor because:
 - Can't protect against bugs in ML frameworks
 - Can't fix flaws in TEE vendor code
 - Application logic must be secured separately
-- Our interceptor handles:
-  - All file I/O protection
-  - Memory-mapped files
-  - Temp file protection
-  - Resource cleanup
+- Side-channel mitigation requires:
+  - Hardware support (CPU features)
+  - Compiler support
+  - Careful coding practices
+  - Performance trade-offs
 
 Risk Level Legend:
 - CRITICAL: Immediate business impact, requires urgent mitigation
