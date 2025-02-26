@@ -670,15 +670,20 @@ Note: These risks are outside the scope of the I/O interceptor because:
 - Can't protect against bugs in ML frameworks
 - Can't fix flaws in TEE vendor code
 - Application logic must be secured separately
-- Side-channel mitigation requires:
-  - Hardware support (CPU features)
-  - Compiler support
-  - Careful coding practices
-  - Performance trade-offs
 
-Risk Level Legend:
-- CRITICAL: Immediate business impact, requires urgent mitigation
-- HIGH: Significant impact, requires planned mitigation
-- MEDIUM: Moderate impact, should be addressed
-- LOW: Minor impact, can be accepted with monitoring
- 
+Note on side-channel attack
+- Attack Prerequisites in TEE:
+    Attacker needs to be co-located in same physical machine
+    Must bypass TEE isolation
+    Must have precise timing measurements
+    Must know what to look for in patterns
+- TEE Protection:
+    Memory is encrypted
+    Cache lines are isolated
+    Memory bus is protected
+    Hardware-level isolation
+- Realistic Attack Difficulty:
+    Very sophisticated attack
+    Requires hardware expertise
+    Needs physical access
+    Hard to extract meaningful data
