@@ -180,7 +180,8 @@ VM-based TEEs provide:
 | OEM           | Measured+Sealed  | Launch Time Only |
 | root-fs       | Full TEE        | Runtime Protected |
 | tmp-fs        | Dynamic         | Needs Protection |
-```
+
+
 
 #### OEM Partition Security Analysis
 
