@@ -1,128 +1,130 @@
-# NVFLARE Security Components Integration
+# NVFLARE Confidential Computing Security
 
-## IO Interceptor and System Hardening Integration
+## Overview
 
-### Security Boundaries
+This document describes the security architecture of NVFLARE's confidential computing implementation, focusing on the integration between IO Interceptor and System Hardening components.
 
-1. **IO Interceptor Responsibilities**
-   - File operations security
-   - Memory protection
-   - System call interception
-   - Storage encryption
+## Component Integration
 
-2. **System Hardening Responsibilities**
-   - Network port management
-   - Traffic control
-   - Network isolation
-   - System lockdown
-
-### Integration Points
+### 1. Security Boundaries
 
 ```
-┌─────────────────────┐      ┌─────────────────────┐
-│    IO Interceptor   │      │   System Hardening  │
-│                     │      │                     │
-│  - File I/O        ◄┼──────┤  - Network Rules    │
-│  - Memory Ops      │      │  - Port Control     │
-│  - System Calls    │      │  - Traffic Shaping  │
-└─────────────────────┘      └─────────────────────┘
-         │                            │
-         │                            │
-    Storage Layer              Network Layer
+┌──────────────────────────────────────┐
+│         Confidential VM              │
+│                                      │
+│  ┌─────────────┐    ┌─────────────┐  │
+│  │     IO      │    │   System    │  │
+│  │ Interceptor │    │  Hardening  │  │
+│  └─────────────┘    └─────────────┘  │
+│     Storage/Memory     Network/Host   │
+└──────────────────────────────────────┘
 ```
 
-### Security Flow
+#### IO Interceptor Scope
+- File I/O protection
+- Memory operations security
+- System call interception
+- Storage encryption
 
-1. **Startup Sequence**
-   ```
-   1. System Hardening applies network rules
-   2. IO Interceptor initializes
-   3. System validates security configuration
-   ```
+#### System Hardening Scope
+- Network security configuration
+- Port and traffic management
+- System lockdown
+- Runtime protection
 
-2. **Runtime Protection**
-   - System Hardening:
-     - Controls all network traffic
-     - Manages port access
-     - Enforces network isolation
-   
-   - IO Interceptor:
-     - Protects file operations
-     - Secures memory usage
-     - Handles storage encryption
+### 2. Configuration Management
 
-3. **Interaction Examples**
+1. **Network Security Configuration** (`security.conf`)
+```bash
+# FL Communication ports (comma-separated)
+FL_PORTS="8002,8003"
 
-   a. Model Save Operation:
-   ```
-   IO Interceptor:
-   - Validates save path
-   - Encrypts model data
-   - Handles file operations
-   
-   System Hardening:
-   - Ensures network isolation
-   - Prevents unauthorized access
-   - Controls data transfer ports
-   ```
+# Allowed networks (CIDR notation, comma-separated)
+ALLOWED_NETWORKS="10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 
-   b. Training Communication:
-   ```
-   System Hardening:
-   - Manages FL communication ports
-   - Rate limits connections
-   - Enforces traffic rules
-   
-   IO Interceptor:
-   - Secures checkpoint storage
-   - Protects memory operations
-   - Handles local file I/O
-   ```
+# Connection limits
+MAX_CONNECTIONS_FL=20
+MAX_CONNECTIONS_ADMIN=5
 
-### Security Validation
+# Rate limiting
+RATE_LIMIT="100/minute"
+```
 
-1. **Combined Testing**
-   ```bash
-   # Test network isolation
-   ./test_network_security.sh
-   
-   # Test storage security
-   ./test_io_security.sh
-   
-   # Validate integration
-   ./validate_security.sh
-   ```
+  2. **Configuration Validation**
+     - Port range validation
+     - Network CIDR format checking
+     - Connection limit verification
+     - Rate limit syntax validation
 
-2. **Security Checks**
-   - Network port status
-   - File permission verification
-   - Memory protection validation
-   - System call interception checks
 
-### Monitoring and Logging
+### 3. Security Flow
 
-1. **IO Interceptor Logs**
-   - File operation events
-   - Memory allocation tracking
-   - Security violations
+#### Initialization Sequence
+1. Load security configuration
+2. Apply system hardening rules
+3. Initialize IO interceptor
+4. Validate security settings
 
-2. **System Hardening Logs**
-   - Network access attempts
-   - Port scanning detection
-   - Traffic anomalies
+#### Runtime Protection
+- **System Hardening**
+  - Network traffic control based on configuration
+  - Port access management
+  - Network isolation enforcement
+  - Connection tracking for FL ports
 
-### Emergency Procedures
+- **IO Interceptor**
+  - File operation protection
+  - Secure memory management
+  - Storage encryption handling
 
-1. **Security Incident Response**
-   ```bash
-   # Network isolation
-   ./emergency_network_lockdown.sh
-   
-   # Storage protection
-   ./emergency_storage_lockdown.sh
-   ```
+### 4. Security Validation
 
-2. **Recovery Steps**
-   - Validate system integrity
-   - Check security logs
-   - Restore secure state 
+#### Validation Tools
+```bash
+# Validate system hardening
+./validate_security.sh
+
+# Test IO protection
+./test_io_security.sh
+```
+
+#### Security Checks
+- Configuration validation
+- Port accessibility checks
+- Network isolation verification
+- Rate limiting validation
+- Network port status
+- File permission verification
+- Memory protection validation
+- System call interception checks
+  
+
+### 5. Monitoring and Logging
+
+ #### **IO Interceptor Logs**
+    - File operation events
+    - Memory allocation tracking
+    - Security violations
+  
+#### **System Hardening Logs**
+    - Network access attempts
+    - Port scanning detection
+    - Traffic anomalies
+    - Rate limit violations
+    - Connection tracking events
+  
+
+## Security Considerations
+
+### Protected Assets
+- FL model data
+- Training artifacts
+- System configuration
+- Runtime memory
+- Network communications
+
+### Threat Model
+- Network-based attacks
+- File system attacks
+- Memory-based attacks
+- Side-channel attacks
