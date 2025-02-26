@@ -256,23 +256,23 @@ typedef struct {
 ```
 
 1. **Runtime Attacks**
-```
+
 Attack Type          | Risk Level | Detection     | Prevention
 --------------------|------------|---------------|-------------
 Memory Inspection   | LOW        | TEE Protected | N/A
 I/O Monitoring     | HIGH       | Pattern Det.  | Encryption+Noise
 Network Analysis   | HIGH       | Traffic Mon.  | Traffic Shaping
 Side Channels      | MEDIUM     | Timing Mon.   | Randomization
-```
+
 
 2. **Build/Deploy Attacks**
-```
+
 Attack Type          | Risk Level | Detection     | Prevention
 --------------------|------------|---------------|-------------
 Image Tampering     | LOW        | Measurement   | Signing
 Supply Chain        | MEDIUM     | Attestation   | Verification
 Configuration Leak  | MEDIUM     | Config Scan   | Encryption
-```
+
 
 ### Comprehensive Mitigation Strategy
 
@@ -289,24 +289,24 @@ Configuration Leak  | MEDIUM     | Config Scan   | Encryption
 ```
 
 2. **I/O Protection**
-```
+
 Operation     | Strategy
 --------------|----------------------------------
 File Write    | Multi-layer encryption + padding
 Network I/O   | Traffic shaping + encryption
 System Calls  | Pattern hiding + batching
 Temp Files    | Memory-only + secure cleanup
-```
+
 
 3. **Network Protection**
-```
+
 Layer         | Protection Measure
 --------------|----------------------------------
 Application   | Data encryption
 Transport     | TLS 1.3 + certificate pinning
 Network       | Traffic shaping
 Physical      | Network isolation
-```
+
 
 ### Network Security & Port Management
 
