@@ -175,11 +175,11 @@ VM-based TEEs provide:
 └──────────────────────────────────────────────────────┘
 ```
 
-Partition Type | Protection Level | Risk Assessment
----------------|-----------------|------------------
-OEM           | Measured+Sealed  | Launch Time Only
-root-fs       | Full TEE        | Runtime Protected
-tmp-fs        | Dynamic         | Needs Protection
+| Partition Type | Protection Level | Risk Assessment |
+|----------------|-----------------|------------------|
+| OEM           | Measured+Sealed  | Launch Time Only |
+| root-fs       | Full TEE        | Runtime Protected |
+| tmp-fs        | Dynamic         | Needs Protection |
 ```
 
 #### OEM Partition Security Analysis
