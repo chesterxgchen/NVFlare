@@ -34,7 +34,7 @@ This document describes the security architecture of NVFLARE's confidential comp
 
 ### 2. Configuration Management
 
-1. **Network Security Configuration** (`security.conf`)
+#### **Network Security Configuration** (`security.conf`)
 ```bash
 # FL Communication ports (comma-separated)
 FL_PORTS="8002,8003"
@@ -50,7 +50,7 @@ MAX_CONNECTIONS_ADMIN=5
 RATE_LIMIT="100/minute"
 ```
 
-  2. **Configuration Validation**
+#### **Configuration Validation**
      - Port range validation
      - Network CIDR format checking
      - Connection limit verification
@@ -108,12 +108,12 @@ RATE_LIMIT="100/minute"
   
 #### **System Hardening Logs**
     - Network access attempts
+
     - Port scanning detection
     - Traffic anomalies
     - Rate limit violations
     - Connection tracking events
   
-
 ## Security Considerations
 
 ### Protected Assets
