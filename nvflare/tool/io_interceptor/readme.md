@@ -142,22 +142,22 @@ A system-level IO protection mechanism designed to complement VM-based Trusted E
 | Category | Risk | Level | Mitigation |
 |----------|------|-------|------------|
 | **Memory & TEE** |
-| Cache Side-channel | Attacker monitors cache hit/miss patterns | HIGH | - Cache partitioning<br>- Cache line padding<br>- Constant-time operations |
-| Memory Bus | Attacker observes memory bus traffic patterns | HIGH | - Memory access randomization<br>- Dummy accesses<br>- Access batching |
-| Execution Timing | Attacker measures operation timing differences | MEDIUM | - Operation batching<br>- Random delays<br>- Constant-time algorithms |
+| Cache Side-channel | - Model architecture leakage<br>- Training pattern exposure<br>- Potential key extraction | CRITICAL | - Cache partitioning<br>- Cache line padding<br>- Constant-time operations |
+| Memory Bus | - Data size leakage<br>- Workload pattern exposure<br>- Memory access timing | HIGH | - Memory access randomization<br>- Dummy accesses<br>- Access batching |
+| Execution Timing | - Algorithm behavior leakage<br>- Control flow exposure<br>- Operation complexity | HIGH | - Operation batching<br>- Random delays<br>- Constant-time algorithms |
 | Cross-VM | Cross-VM memory attacks | HIGH | IOMMU<br>- Memory isolation<br>- VM pinning |
 | Speculative | Speculative execution attacks | HIGH | CPU mitigations |
 | **I/O Operations** |
-| Application | Parsing vulnerabilities | MEDIUM | Input validation |
-| Data Format | Malicious input attacks | MEDIUM | Format verification |
+| Application | - Code execution<br>- Memory corruption<br>- System compromise | CRITICAL | Input validation |
+| Data Format | - Buffer overflows<br>- Data corruption<br>- System crashes | HIGH | Format verification |
 | Exfiltration | Covert channel data leaks | HIGH | I/O monitoring |
 | **Network Protocol** |
-| Attestation | Malformed attestation messages | HIGH | Message validation |
-| Protocol | Protocol-level replay attacks | HIGH | Nonce + timestamps |
+| Attestation | - False attestation<br>- TEE compromise<br>- Security bypass | CRITICAL | Message validation |
+| Protocol | - Session hijacking<br>- Data manipulation<br>- Service disruption | HIGH | Nonce + timestamps |
 | ML Protocol | Custom ML protocol vulnerabilities | HIGH | Protocol hardening |
 | **Build Process** |
-| Image | Image tampering before measurement | HIGH | Secure boot chain |
-| Configuration | Configuration injection | MEDIUM | Config encryption |
+| Image | - Malicious code injection<br>- Backdoor insertion<br>- Security bypass | CRITICAL | Secure boot chain |
+| Configuration | - Security misconfiguration<br>- Policy bypass<br>- Access control failure | HIGH | Config encryption |
 | Supply Chain | Supply chain attacks | HIGH | Build verification |
 
 These risks are addressed through:
@@ -670,29 +670,30 @@ sudo ./setup_network_rules.sh
 - Configuration injection during build
 - Supply chain attacks
 
-| Risk Category | Risk | Attack Vector | Mitigation Strategy |
-|--------------|------|---------------|-------------------|
+| Risk Category | Risk | Impact | Risk Level | Mitigation Strategy |
+|--------------|------|---------------|-------------------|-------------------|
 | **Memory & TEE** |
-| Cache Side-channel | Attacker monitors cache hit/miss patterns | HIGH | - Cache partitioning<br>- Cache line padding<br>- Constant-time operations |
-| Memory Bus | Attacker observes memory bus traffic patterns | HIGH | - Memory access randomization<br>- Dummy accesses<br>- Access batching |
-| Execution Timing | Attacker measures operation timing differences | MEDIUM | - Operation batching<br>- Random delays<br>- Constant-time algorithms |
+| Cache Side-channel | - Model architecture leakage<br>- Training pattern exposure<br>- Potential key extraction | CRITICAL | - Cache partitioning<br>- Cache line padding<br>- Constant-time operations |
+| Memory Bus | - Data size leakage<br>- Workload pattern exposure<br>- Memory access timing | HIGH | - Memory access randomization<br>- Dummy accesses<br>- Access batching |
+| Execution Timing | - Algorithm behavior leakage<br>- Control flow exposure<br>- Operation complexity | HIGH | - Operation batching<br>- Random delays<br>- Constant-time algorithms |
 | Cross-VM | Cross-VM memory attacks | HIGH | IOMMU<br>- Memory isolation<br>- VM pinning |
 | Speculative | Speculative execution attacks | HIGH | CPU mitigations |
 | **I/O Operations** |
-| Application | Parsing vulnerabilities | MEDIUM | Input validation |
-| Data Format | Malicious input attacks | MEDIUM | Format verification |
+| Application | - Code execution<br>- Memory corruption<br>- System compromise | CRITICAL | Input validation |
+| Data Format | - Buffer overflows<br>- Data corruption<br>- System crashes | HIGH | Format verification |
 | Exfiltration | Covert channel data leaks | HIGH | I/O monitoring |
 | **Network Protocol** |
-| Attestation | Malformed attestation messages | HIGH | Message validation |
-| Protocol | Replay attacks | HIGH | Nonce + timestamps |
+| Attestation | - False attestation<br>- TEE compromise<br>- Security bypass | CRITICAL | Message validation |
+| Protocol | - Session hijacking<br>- Data manipulation<br>- Service disruption | HIGH | Nonce + timestamps |
 | ML Protocol | Custom ML protocol vulnerabilities | HIGH | Protocol hardening |
 | **Build Process** |
-| Image | Image tampering before measurement | HIGH | Secure boot chain |
-| Configuration | Configuration injection | MEDIUM | Config encryption |
+| Image | - Malicious code injection<br>- Backdoor insertion<br>- Security bypass | CRITICAL | Secure boot chain |
+| Configuration | - Security misconfiguration<br>- Policy bypass<br>- Access control failure | HIGH | Config encryption |
 | Supply Chain | Supply chain attacks | HIGH | Build verification |
 
-Status Legend:
-- Future: Not currently covered, future roadmap item
-- Planned: Implementation in progress or planned
-- Current: Partially addressed by current implementation
+Risk Level Legend:
+- CRITICAL: Immediate business impact, requires urgent mitigation
+- HIGH: Significant impact, requires planned mitigation
+- MEDIUM: Moderate impact, should be addressed
+- LOW: Minor impact, can be accepted with monitoring
  
