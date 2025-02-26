@@ -143,7 +143,7 @@ A system-level IO protection mechanism designed to complement VM-based Trusted E
 |----------|------|-------|------------|
 | **Memory & TEE** |
 | Cache Side-channel | - Model architecture leakage<br>- Training pattern exposure | CRITICAL | Requires CPU/hardware support |
-| Memory Bus | - Data size leakage<br>- Memory access timing | HIGH | Requires hardware support |
+| Memory Bus | ~~Removed - Memory bus traffic is protected by TEE encryption~~ |
 | Execution Timing | - Algorithm behavior leakage<br>- Control flow exposure<br>- Operation complexity | HIGH | - Operation batching<br>- Random delays<br>- Constant-time algorithms |
 | Cross-VM | Cross-VM memory attacks | HIGH | IOMMU<br>- Memory isolation<br>- VM pinning |
 | Speculative | Speculative execution attacks | HIGH | CPU mitigations |
@@ -660,7 +660,7 @@ Our implementation provides:
 |--------------|------|---------------|-------------------|-------------------|
 | **Memory & TEE** |
 | Cache Side-channel | - Model architecture leakage<br>- Training pattern exposure | CRITICAL | Requires CPU/hardware support |
-| Memory Bus | - Data size leakage<br>- Memory access timing | HIGH | Requires hardware support |
+| Memory Bus | ~~Removed - Memory bus traffic is protected by TEE encryption~~ |
 | **I/O Operations** |
 | I/O Pattern | **Access Patterns:**<br>- File size patterns<br>- Access timing patterns | MEDIUM | - Random padding<br>- Access batching |
 | **Network Protocol** |
