@@ -668,18 +668,21 @@ Note: These risks are outside the scope of the I/O interceptor because:
 - Application logic must be secured separately
 
 Note on side-channel attack
+
 - Attack Prerequisites in TEE:
-    Attacker needs to be co-located in same physical machine
-    Must bypass TEE isolation
-    Must have precise timing measurements
-    Must know what to look for in patterns
+* Attacker needs to be co-located in same physical machine
+* Must bypass TEE isolation
+* Must have precise timing measurements
+* Must know what to look for in patterns
+
 - TEE Protection:
-    Memory is encrypted
-    Cache lines are isolated
-    Memory bus is protected
-    Hardware-level isolation
+* Memory is encrypted
+* Cache lines are isolated
+* Memory bus is protected
+* Hardware-level isolation
+
 - Realistic Attack Difficulty:
-    Very sophisticated attack
-    Requires hardware expertise
-    Needs physical access
-    Hard to extract meaningful data
+* Very sophisticated attack
+* Requires hardware expertise
+* Needs physical access
+* Hard to extract meaningful data
