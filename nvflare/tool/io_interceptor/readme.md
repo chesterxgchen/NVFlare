@@ -75,11 +75,28 @@ A system-level IO protection mechanism designed to complement VM-based Trusted E
 
 ### Risk Categories and Mitigations
 
+#### TEE Protection Analysis
+
+| Protection Type | TEE Coverage | Remaining Risk |
+|----------------|--------------|----------------|
+| Memory Content | ✓ Protected | None - Encrypted memory |
+| Memory Integrity | ✓ Protected | None - Integrity checks |
+| Memory Isolation | ✓ Protected | None - Hardware isolation |
+| Cache Timing | ✗ Limited | Timing side-channels |
+| Power Analysis | ✗ Limited | Power side-channels |
+| Resource Sharing | ✗ Limited | Contention channels |
+
+**Why Side-Channels Matter**:
+- TEE protects memory content but not access patterns
+- Shared hardware resources remain observable
+- Timing differences can leak information
+- Power consumption can be monitored
+
 | Category | Risk | Level | Mitigation |
 |----------|------|-------|------------|
 | **Memory & TEE** |
-| Side-channel | Side-channel attacks within TEE | HIGH | TEE memory isolation |
-| Cross-VM | Cross-VM memory attacks | HIGH | Memory encryption |
+| Side-channel | Resource contention patterns | MEDIUM | - Resource isolation<br>- Workload scheduling<br>- Load balancing |
+| Cross-VM | Cross-VM memory attacks | HIGH | IOMMU<br>- Memory isolation<br>- VM pinning |
 | Speculative | Speculative execution attacks | HIGH | CPU mitigations |
 | **I/O Operations** |
 | Application | Parsing vulnerabilities | MEDIUM | Input validation |
@@ -585,7 +602,7 @@ sudo ./setup_network_rules.sh
 ## 7. Risk Areas Not Covered
 
 ### Memory & TEE Risks
-- Side-channel attacks within TEE
+- Microarchitectural side-channels
 - Cross-VM memory attacks
 - Speculative execution attacks
 
@@ -607,9 +624,9 @@ sudo ./setup_network_rules.sh
 | Risk Category | Risk | Potential Tools/Strategies | Status |
 |--------------|------|---------------------------|---------|
 | **Memory & TEE** |
-| Side-channel | Side-channel attacks within TEE | - Intel TME<br>- AMD SME<br>- Cache partitioning | Future |
-| Cross-VM | Cross-VM memory attacks | - IOMMU<br>- Memory isolation<br>- VM pinning | Future |
-| Speculative | Speculative execution attacks | - Microcode updates<br>- Kernel patches<br>- Hardware fixes | Future |
+| Side-channel | Resource contention patterns | MEDIUM | - Resource isolation<br>- Workload scheduling<br>- Load balancing |
+| Cross-VM | Cross-VM memory attacks | HIGH | IOMMU<br>- Memory isolation<br>- VM pinning |
+| Speculative | Speculative execution attacks | HIGH | Microcode updates<br>- Kernel patches<br>- Hardware fixes |
 | **I/O Operations** |
 | Application | Parsing vulnerabilities | - Fuzzing tools<br>- Static analysis<br>- Input sanitization | Planned |
 | Data Format | Malicious input attacks | - Schema validation<br>- Format checkers<br>- Safe parsers | Planned |
