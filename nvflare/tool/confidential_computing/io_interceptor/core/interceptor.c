@@ -43,6 +43,27 @@ static char audit_path[PATH_MAX] = "/var/log/nvflare/io_interceptor.log";
 #define MONITOR_LEVEL_PUBLIC  1  // Can be exposed outside TEE
 #define MONITOR_LEVEL_PRIVATE 2  // Must stay in TEE
 
+// Monitoring configuration
+struct monitoring_config {
+    int enabled;
+    int sock_fd;
+    char host[64];
+    int port;
+    char auth_token[256];
+} monitor_cfg = {
+    .enabled = 0,
+    .sock_fd = -1,
+    .host = "127.0.0.1",
+    .port = 8125,
+    .auth_token = ""
+};
+
+static void log_monitoring_event(const char* path, const char* operation, const char* reason) {
+    // Just log to syslog/audit file - monitoring handled by external tools
+    syslog(LOG_INFO, "Operation: %s, Path: %s, Result: %s", 
+           operation, path, reason);
+}
+
 const char* get_timestamp(void) {
     static char timestamp[32];
     time_t now = time(NULL);
@@ -115,11 +136,43 @@ void log_security_event(const char* path, const char* operation, const char* rea
     }
 }
 
+// Path sanitization for logs
+static void sanitize_path_for_logs(const char* path, char* safe_path) {
+    if (!path || !safe_path) {
+        return;
+    }
+
+    // Check if path contains sensitive directories
+    const char* sensitive_dirs[] = {
+        "/etc/nvflare/security",
+        "/etc/ssl/private",
+        "/etc/keys",
+        "/root",
+        NULL
+    };
+
+    // Check if path should be redacted
+    for (const char** dir = sensitive_dirs; *dir; dir++) {
+        if (strncmp(path, *dir, strlen(*dir)) == 0) {
+            snprintf(safe_path, PATH_MAX, "<REDACTED>%s", 
+                    path + strlen(*dir));  // Show only non-sensitive part
+            return;
+        }
+    }
+
+    // If not sensitive, copy as-is
+    strncpy(safe_path, path, PATH_MAX - 1);
+    safe_path[PATH_MAX - 1] = '\0';  // Ensure null termination
+}
+
 // Initialize interceptor
 __attribute__((constructor))
 static void init_interceptor(void) {
     // Initialize audit logging first
     init_audit_logging();
+
+    // Initialize default system and tmpfs paths
+    init_default_paths();
 
     // Load original functions
     original_fopen = dlsym(RTLD_NEXT, "fopen");
@@ -244,15 +297,47 @@ bool register_whitelist_path(const char* path) {
 }
 
 bool register_system_path(const char* path) {
-    if (num_system >= MAX_PATHS) return false;
-    system_paths[num_system++] = strdup(path);
+    if (num_system >= MAX_PATHS) {
+        return false;
+    }
+    system_paths[num_system] = strdup(path);
+    if (system_paths[num_system] == NULL) {
+        return false;
+    }
+    num_system++;
     return true;
 }
 
 bool register_tmpfs_path(const char* path) {
-    if (num_tmpfs >= MAX_PATHS) return false;
-    tmpfs_paths[num_tmpfs++] = strdup(path);
+    if (num_tmpfs >= MAX_PATHS) {
+        return false;
+    }
+    tmpfs_paths[num_tmpfs] = strdup(path);
+    if (tmpfs_paths[num_tmpfs] == NULL) {
+        return false;
+    }
+    num_tmpfs++;
     return true;
+}
+
+// Initialize default paths
+static void init_default_paths(void) {
+    // System paths - common read-only system directories
+    register_system_path("/bin");
+    register_system_path("/sbin");
+    register_system_path("/lib");
+    register_system_path("/lib64");
+    register_system_path("/usr/bin");
+    register_system_path("/usr/sbin");
+    register_system_path("/usr/lib");
+    register_system_path("/usr/lib64");
+    register_system_path("/etc");  // System configuration files
+
+    // Tmpfs paths - temporary file systems
+    register_tmpfs_path("/tmp");
+    register_tmpfs_path("/dev/shm");  // Shared memory
+    register_tmpfs_path("/run");      // Runtime data
+    register_tmpfs_path("/sys/fs/cgroup");
 }
 
 // Cleanup on unload

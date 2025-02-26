@@ -89,4 +89,22 @@ setup_network_security() {
             iptables -A INPUT -p tcp --dport "$port" -m state --state ESTABLISHED,RELATED -j ACCEPT
         done
     }
+
+    # Configure path permissions
+    configure_paths() {
+        # Set up system paths
+        IFS=',' read -ra SYS_PATHS <<< "$SYSTEM_PATHS"
+        for path in "${SYS_PATHS[@]}"; do
+            chmod 644 "$path"
+            register_system_path "$path"
+        done
+
+        # Set up tmpfs paths
+        IFS=',' read -ra TMP_PATHS <<< "$TMPFS_PATHS"
+        for path in "${TMP_PATHS[@]}"; do
+            mkdir -p "$path"
+            chmod 700 "$path"
+            register_tmpfs_path "$path"
+        done
+    }
 } 

@@ -1,62 +1,5 @@
 # NVFlare IO Interceptor
 
-## Quick Start
-
-### 1. Security Configuration
-```bash
-# Edit security configuration
-sudo vi /etc/nvflare/security.conf
-
-# Configure required settings:
-FL_PORTS="8002,8003"                    # FL communication ports
-
-# Attestation configuration
-ATTESTATION_PORTS="9000:tcp:intel,      # Intel ITA
-                   9001:tcp:amd,        # AMD SNP Guest
-                   9002:tcp:azure"       # Azure Attestation
-ATTESTATION_NETWORKS="10.0.0.0/8"       # Attestation service network
-
-# Monitoring configuration
-MONITOR_PORTS="9090:tcp,9102:tcp,8125:udp"  # Prometheus, statsd
-MONITOR_NETWORK="10.0.1.0/24"              # Monitoring network
-
-# System security
-DISABLE_SSH=true                        # Disable SSH access
-SSH_BACKUP=true                         # Backup SSH keys
-```
-
-### 2. Apply Security Settings
-```bash
-# Apply security configuration
-sudo ./secure_build.sh
-
-# Verify configuration
-sudo ./validate_security.sh
-```
-
-### 3. Monitoring Setup
-```bash
-# Configure Prometheus
-cat > /etc/prometheus/prometheus.yml << EOF
-scrape_configs:
-  - job_name: 'nvflare'
-    static_configs:
-      - targets: ['localhost:9090']
-
-- job_name: 'statsd'
-  static_configs:
-    - targets: ['localhost:9102']
-EOF
-
-# Configure statsd exporter
-cat > /etc/statsd/statsd.conf << EOF
-mappings:
-- match: "nvflare.*"
-  name: "nvflare_metric"
-  labels:
-    type: "${1}"
-EOF
-```
 
 ## Table of Contents
 
@@ -643,6 +586,18 @@ sudo ./validate_security.sh
 nc -zv localhost 8002  # Should succeed
 nc -zv localhost 22    # Should fail
 ```
+
+
+<!-- ## Quick Start
+
+### Apply Security Settings
+```bash
+# Apply security configuration
+sudo ./secure_build.sh
+
+# Verify configuration
+sudo ./validate_security.sh
+``` -->
 
 ### Troubleshooting Guide
 
