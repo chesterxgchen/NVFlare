@@ -148,11 +148,11 @@ A system-level IO protection mechanism designed to complement VM-based Trusted E
 | Cross-VM | Cross-VM memory attacks | HIGH | IOMMU<br>- Memory isolation<br>- VM pinning |
 | Speculative | Speculative execution attacks | HIGH | CPU mitigations |
 | **I/O Operations** |
-| Application | - Higher level app vulnerabilities<br>- Framework-specific issues | MEDIUM | Requires application-level fixes |
+| Application | **Framework Memory Management:**<br>- Memory leaks in ML frameworks<br>- Resource cleanup issues | LOW | - Framework updates<br>- Resource monitoring |
 | Data Format | - Buffer overflows<br>- Data corruption<br>- System crashes | HIGH | Format verification |
 | Exfiltration | Covert channel data leaks | HIGH | I/O monitoring |
 | **Network Protocol** |
-| Attestation | - Protocol-level vulnerabilities | MEDIUM | Requires TEE vendor fixes |
+| Attestation | - TEE remote attestation protocol flaws<br>- Quote verification issues<br>- Key exchange vulnerabilities | MEDIUM | Must be fixed by TEE vendor |
 | Protocol | - Session hijacking<br>- Data manipulation<br>- Service disruption | HIGH | Nonce + timestamps |
 | ML Protocol | Custom ML protocol vulnerabilities | HIGH | Protocol hardening |
 | **Build Process** |
@@ -664,15 +664,30 @@ Our implementation provides:
 | Cache Side-channel | - Model architecture leakage<br>- Training pattern exposure<br>- Potential key extraction | CRITICAL | Requires CPU/hardware support |
 | Memory Bus | - Data size leakage<br>- Workload pattern exposure<br>- Memory access timing | HIGH | Requires hardware support |
 | **I/O Operations** |
-| Application | - Higher level app vulnerabilities<br>- Framework-specific issues | MEDIUM | Requires application-level fixes |
+| Application | **Framework Memory Management:**<br>- Memory leaks in ML frameworks<br>- Resource cleanup issues | LOW | - Framework updates<br>- Resource monitoring |
+| Data Format | - Buffer overflows<br>- Data corruption<br>- System crashes | HIGH | Format verification |
+| Exfiltration | Covert channel data leaks | HIGH | I/O monitoring |
 | **Network Protocol** |
-| Attestation | - Protocol-level vulnerabilities | MEDIUM | Requires TEE vendor fixes |
+| Attestation | - TEE remote attestation protocol flaws<br>- Quote verification issues<br>- Key exchange vulnerabilities | MEDIUM | Must be fixed by TEE vendor |
 
-Note: These risks are outside the scope of the I/O interceptor and require:
-- Hardware vendor support
-- Application-level security
-- TEE vendor implementation
-- Framework-specific fixes
+Note: These risks are outside the scope of the I/O interceptor because:
+- Our interceptor works at system call level
+- Can't protect against bugs in ML frameworks
+- Can't fix flaws in TEE vendor code
+- Application logic must be secured separately
+- Our interceptor can't prevent:
+  - Unsafe model loading (e.g., pickle exploits)
+  - Memory leaks from framework bugs
+  - Logic flaws in training code
+  - Insecure data preprocessing
+- These must be addressed at application level
+- Our interceptor handles:
+  - All file path access control
+  - I/O encryption
+  - Path whitelisting
+- Remaining risks are limited to:
+  - Internal framework memory management
+  - Resource cleanup efficiency
 
 Risk Level Legend:
 - CRITICAL: Immediate business impact, requires urgent mitigation
