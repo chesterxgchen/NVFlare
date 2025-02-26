@@ -142,7 +142,7 @@ VM-based TEEs provide:
 
 2. **tmp-fs (Temporary Filesystem)**:
 | Characteristic | Status | Protection Needed |
-|---------------|--------|------------------|
+|---------------|--------|-------------------|
 | Volatility | In-memory | ✓ Memory wiping |
 | Encryption | Not by default | ✓ IO interception |
 | Access Pattern | Dynamic | ✓ Pattern hiding |
@@ -283,19 +283,6 @@ Configuration Leak  | MEDIUM     | Config Scan   | Encryption
 │ I/O Buffers   │ Intercept  │
 │ Temp Files    │ Secure Wipe│
 └────────────────────────────┘
-
-Page File Security:
-┌────────────────────────────────────────────────┐
-│               Memory Management                │
-│                                               │
-│  TEE Memory           Page Files              │
-│  ┌──────────┐        ┌──────────────┐        │
-│  │Protected │───┐    │Swap Space    │        │
-│  │Memory    │   └───>│(Unprotected) │        │
-│  └──────────┘        └──────────────┘        │
-│       ✓                     ✗                 │
-│    Encrypted          Outside TEE             │
-│       └──────────────────────────────────────┘
 ```
 
 2. **I/O Protection**
