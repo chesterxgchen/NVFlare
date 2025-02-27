@@ -1,0 +1,20 @@
+#!/bin/bash
+# Mock veritysetup
+case "$1" in
+    "--hash-algorithm")
+        case "$2" in
+            "sha256") exit 0 ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    "format")
+        echo "Root hash: 0123456789abcdef"
+        exit 0
+        ;;
+    "verify")
+        exit 0
+        ;;
+    *)
+        exit 0
+        ;;
+esac 

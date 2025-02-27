@@ -1,0 +1,13 @@
+[Unit]
+Description=NVFLARE Secure Partitions
+DefaultDependencies=no
+Before=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/setup_partitions.sh
+ExecStop=/usr/local/bin/cleanup_partitions.sh
+
+[Install]
+WantedBy=local-fs.target 
