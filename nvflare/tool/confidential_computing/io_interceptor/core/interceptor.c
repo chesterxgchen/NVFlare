@@ -238,6 +238,9 @@ typedef struct {
     char* wo_patterns;  // Write-only encryption patterns
 } interceptor_config_t;
 
+// Global config state
+static interceptor_config_t config = {0};
+
 // Initialize with config file
 bool init_interceptor_config(const char* config_path) {
     FILE* fp = fopen(config_path, "r");
@@ -249,7 +252,7 @@ bool init_interceptor_config(const char* config_path) {
     char line[1024];
     while (fgets(line, sizeof(line), fp)) {
         // Skip comments and empty lines
-        if (line[0] == '#' || line[0] == '\n') continue;
+        if (line[0] == '#' || line[0] == '\n' || line[0] == ' ') continue;
 
         char* key = strtok(line, "=");
         char* value = strtok(NULL, "\n");
@@ -257,11 +260,29 @@ bool init_interceptor_config(const char* config_path) {
 
         // Trim whitespace
         while (*value == ' ') value++;
+        // Trim trailing whitespace
+        char* end = value + strlen(value) - 1;
+        while (end > value && (*end == ' ' || *end == '\n')) {
+            *end = '\0';
+            end--;
+        }
 
         if (strcmp(key, "ENCRYPT_RW_PATHS") == 0) {
             config.rw_patterns = strdup(value);
+            // Parse and add each pattern
+            char* pattern = strtok(value, ",");
+            while (pattern) {
+                add_encryption_pattern(pattern, ENCRYPT_READ_WRITE);
+                pattern = strtok(NULL, ",");
+            }
         } else if (strcmp(key, "ENCRYPT_WO_PATHS") == 0) {
             config.wo_patterns = strdup(value);
+            // Parse and add each pattern  
+            char* pattern = strtok(value, ",");
+            while (pattern) {
+                add_encryption_pattern(pattern, ENCRYPT_WRITE_ONLY);
+                pattern = strtok(NULL, ",");
+            }
         }
     }
 
