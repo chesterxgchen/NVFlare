@@ -5,9 +5,61 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+# Exit on error
+set -e
+
+# Helper functions
+log() {
+    echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] $1${NC}"
+}
+
+error() {
+    echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1${NC}" >&2
+    exit 1
+}
+
+# Validate port configuration
+validate_ports() {
+    log "Validating port configuration..."
+    
+    # Validate ALLOWED_PORTS format
+    for port_config in "${ALLOWED_PORTS[@]}"; do
+        IFS=':' read -r name port protocol desc <<< "$port_config"
+        
+        # Check port number
+        if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
+            error "Invalid port number in config: $port_config"
+        fi
+        
+        # Check protocol
+        if [[ ! "$protocol" =~ ^(tcp|udp)$ ]]; then
+            error "Invalid protocol in config: $port_config"
+        fi
+    done
+    
+    # Validate ALLOWED_PORT_RANGES format
+    for range_config in "${ALLOWED_PORT_RANGES[@]}"; do
+        IFS=':' read -r name start end protocol desc <<< "$range_config"
+        
+        # Check port range
+        if ! [[ "$start" =~ ^[0-9]+$ ]] || ! [[ "$end" =~ ^[0-9]+$ ]] || 
+           [ "$start" -lt 1024 ] || [ "$end" -gt 65535 ] || [ "$start" -ge "$end" ]; then
+            error "Invalid port range in config: $range_config"
+        fi
+        
+        # Check protocol
+        if [[ ! "$protocol" =~ ^(tcp|udp)$ ]]; then
+            error "Invalid protocol in config: $range_config"
+        fi
+    done
+}
+
 check_ports() {
     echo "Checking port configuration..."
     
+    # Validate port configurations first
+    validate_ports
+
     # Check configured ports
     for port_config in "${ALLOWED_PORTS[@]}"; do
         IFS=':' read -r name port protocol description <<< "$port_config"
@@ -56,52 +108,6 @@ check_logging() {
     
     # Check log files
     [ -f "/var/log/iptables.log" ] && echo -e "${GREEN}✓ IPTables logging enabled${NC}" || echo -e "${RED}✗ Missing IPTables logs${NC}"
-}
-
-# Validate port configurations
-validate_ports() {
-    log "Validating port configurations..."
-
-    # Check individual ports
-    for port_config in "${ALLOWED_PORTS[@]}"; do
-        IFS=':' read -r name port protocol description <<< "$port_config"
-        
-        # Validate port number
-        if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
-            error "Invalid port number for $name: $port"
-        fi
-        
-        # Validate protocol
-        if [[ ! "$protocol" =~ ^(tcp|udp)$ ]]; then
-            error "Invalid protocol for $name: $protocol"
-        fi
-        
-        # Check if port is properly restricted in firewall
-        if ! check_port_firewall "$port" "$protocol"; then
-            error "Port $port ($protocol) is not properly restricted in firewall"
-        fi
-    done
-
-    # Check port ranges
-    for range_config in "${ALLOWED_PORT_RANGES[@]}"; do
-        IFS=':' read -r name start end protocol description <<< "$range_config"
-        
-        # Validate range numbers
-        if ! [[ "$start" =~ ^[0-9]+$ ]] || ! [[ "$end" =~ ^[0-9]+$ ]] || 
-           [ "$start" -lt 1024 ] || [ "$end" -gt 65535 ] || [ "$start" -ge "$end" ]; then
-            error "Invalid port range for $name: $start-$end"
-        fi
-        
-        # Validate protocol
-        if [[ ! "$protocol" =~ ^(tcp|udp)$ ]]; then
-            error "Invalid protocol for $name: $protocol"
-        fi
-        
-        # Check if port range is properly restricted in firewall
-        if ! check_port_range_firewall "$start" "$end" "$protocol"; then
-            error "Port range $start-$end ($protocol) is not properly restricted in firewall"
-        fi
-    done
 }
 
 # Check if port is properly configured in firewall
