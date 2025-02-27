@@ -40,7 +40,7 @@ declare -A MIN_VERSIONS=(
     ["cryptsetup"]="2.3.0"
     ["systemd"]="245"
     ["e2fsprogs"]="1.45"
-    ["lvm2"]="2.03"
+    ["lvm2"]="1.02.175"
     ["util-linux"]="2.34"
 )
 
@@ -94,7 +94,7 @@ verify_package_versions() {
                 current_version=$(mkfs.ext4 -V 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
                 ;;
             "lvm2")
-                current_version=$(dmsetup --version | awk '{print $3}' | cut -d'-' -f1)
+                current_version=$(dmsetup --version | awk '{print $3}' | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
                 ;;
             "util-linux")
                 current_version=$(mount --version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
@@ -188,6 +188,10 @@ source "${SCRIPT_DIR}/config/partition_config.sh"
 install() {
     log "Starting NVFLARE partition installation..."
     
+    # Check hardware and kernel capabilities first
+    check_hardware_capabilities
+    check_kernel_modules
+
     # Install dependencies and verify commands
     install_dependencies
     verify_commands

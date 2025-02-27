@@ -4,6 +4,40 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/partition.conf"
 
+# Validate configuration
+validate_config() {
+    # Check required variables
+    [ -z "$ROOT_MOUNT" ] && error "ROOT_MOUNT must be set"
+    [ -z "$DEVICE" ] && error "DEVICE must be set"
+    
+    # Validate paths
+    [[ "$ROOT_MOUNT" =~ ^/ ]] || error "ROOT_MOUNT must be absolute path"
+    [[ "$DEVICE" =~ ^/dev/ ]] || error "DEVICE must be a device path"
+    
+    # Validate sizes
+    [[ "$ROOT_FS_SIZE" =~ ^[0-9]+[MG]$ ]] || error "Invalid ROOT_FS_SIZE format"
+    [[ "$WORKSPACE_SIZE" =~ ^[0-9]+[MG]$ ]] || error "Invalid WORKSPACE_SIZE format"
+    [[ "$JOBSTORE_SIZE" =~ ^[0-9]+[MG]$ ]] || error "Invalid JOBSTORE_SIZE format"
+    [[ "$TMPFS_SIZE" =~ ^[0-9]+[MG]$ ]] || error "Invalid TMPFS_SIZE format"
+    
+    # Validate types
+    local valid_types=("verity" "crypt" "tmpfs")
+    [[ " ${valid_types[@]} " =~ " $ROOT_FS_TYPE " ]] || error "Invalid ROOT_FS_TYPE"
+    [[ " ${valid_types[@]} " =~ " $WORKSPACE_TYPE " ]] || error "Invalid WORKSPACE_TYPE"
+    [[ " ${valid_types[@]} " =~ " $JOBSTORE_TYPE " ]] || error "Invalid JOBSTORE_TYPE"
+    [[ " ${valid_types[@]} " =~ " $TMPFS_TYPE " ]] || error "Invalid TMPFS_TYPE"
+    
+    # Validate encryption modes
+    local valid_modes=("required" "optional" "none")
+    [[ " ${valid_modes[@]} " =~ " $ROOT_FS_ENCRYPTION " ]] || error "Invalid ROOT_FS_ENCRYPTION"
+    [[ " ${valid_modes[@]} " =~ " $WORKSPACE_ENCRYPTION " ]] || error "Invalid WORKSPACE_ENCRYPTION"
+    [[ " ${valid_modes[@]} " =~ " $JOBSTORE_ENCRYPTION " ]] || error "Invalid JOBSTORE_ENCRYPTION"
+    [[ " ${valid_modes[@]} " =~ " $TMPFS_ENCRYPTION " ]] || error "Invalid TMPFS_ENCRYPTION"
+}
+
+# Validate configuration
+validate_config
+
 # Allow environment overrides
 ROOT_MOUNT="${NVFLARE_ROOT:-$ROOT_MOUNT}"
 DEVICE="${NVFLARE_DEVICE:-$DEVICE}"
@@ -31,62 +65,6 @@ log() {
 error() {
     log "ERROR: $1" >&2
     exit 1
-}
-
-# Validate configuration values
-validate_config() {
-    log "Validating configuration..."
-
-    # Validate base paths
-    [[ -n "$ROOT_MOUNT" ]] || error "ROOT_MOUNT must be set"
-    [[ -n "$DEVICE" ]] || error "DEVICE must be set"
-
-    # Validate partition sizes (must end with G/M/K)
-    local size_pattern="^[0-9]+[GMK]$"
-    for var in ROOT_FS_SIZE LAUNCHER_SIZE CONFIG_SIZE WORKSPACE_SIZE JOBSTORE_SIZE TMPFS_SIZE; do
-        [[ "${!var}" =~ $size_pattern ]] || error "$var must be a number followed by G, M, or K"
-    done
-
-    # Validate partition types
-    for var in ROOT_FS_TYPE LAUNCHER_TYPE CONFIG_TYPE WORKSPACE_TYPE JOBSTORE_TYPE TMPFS_TYPE; do
-        case "${!var}" in
-            verity|crypt|tmpfs) ;;
-            *) error "$var must be one of: verity, crypt, tmpfs" ;;
-        esac
-    done
-
-    # Validate mount points
-    for var in ROOT_FS_MOUNT LAUNCHER_MOUNT CONFIG_MOUNT WORKSPACE_MOUNT JOBSTORE_MOUNT TMPFS_MOUNT; do
-        [[ "${!var}" == /* ]] || error "$var must be an absolute path"
-    done
-
-    # Validate encryption settings
-    for var in ROOT_FS_ENCRYPTION LAUNCHER_ENCRYPTION CONFIG_ENCRYPTION WORKSPACE_ENCRYPTION JOBSTORE_ENCRYPTION TMPFS_ENCRYPTION; do
-        case "${!var}" in
-            none|required|optional) ;;
-            *) error "$var must be one of: none, required, optional" ;;
-        esac
-    done
-
-    # Validate crypto settings
-    [[ -n "$CRYPT_CIPHER" ]] || error "CRYPT_CIPHER must be set"
-    [[ "$CRYPT_KEYSIZE" =~ ^[0-9]+$ ]] || error "CRYPT_KEYSIZE must be a number"
-    [[ -n "$CRYPT_HASH" ]] || error "CRYPT_HASH must be set"
-
-    # Validate verity settings
-    [[ -n "$VERITY_HASH" ]] || error "VERITY_HASH must be set"
-    [[ "$VERITY_DATABLOCK" =~ ^[0-9]+$ ]] || error "VERITY_DATABLOCK must be a number"
-    [[ "$VERITY_HASHBLOCK" =~ ^[0-9]+$ ]] || error "VERITY_HASHBLOCK must be a number"
-
-    # Validate tmpfs settings
-    [[ "$TMPFS_MODE" =~ ^[0-7]{4}$ ]] || error "TMPFS_MODE must be a 4-digit octal number"
-    [[ "$TMPFS_UID" =~ ^[0-9]+$ ]] || error "TMPFS_UID must be a number"
-    [[ "$TMPFS_GID" =~ ^[0-9]+$ ]] || error "TMPFS_GID must be a number"
-
-    # Validate system settings
-    [[ "$SWAP_ENABLED" =~ ^(true|false)$ ]] || error "SWAP_ENABLED must be true or false"
-
-    log "Configuration validation passed"
 }
 
 # Run validation

@@ -16,6 +16,68 @@ error() {
     exit 1
 }
 
+# Required package versions
+declare -A MIN_VERSIONS=(
+    ["cryptsetup"]="2.3.0"
+    ["systemd"]="245"
+    ["e2fsprogs"]="1.45"
+    ["lvm2"]="1.02.175"
+    ["util-linux"]="2.34"
+)
+
+# Version comparison helper
+verify_version() {
+    local current="$1"
+    local required="$2"
+    
+    # Convert versions to arrays
+    IFS='.' read -ra current_arr <<< "$current"
+    IFS='.' read -ra required_arr <<< "$required"
+    
+    # Compare each component
+    for i in "${!required_arr[@]}"; do
+        if [ "${current_arr[i]:-0}" -lt "${required_arr[i]}" ]; then
+            return 1
+        elif [ "${current_arr[i]:-0}" -gt "${required_arr[i]}" ]; then
+            return 0
+        fi
+    done
+    return 0
+}
+
+# Verify package versions
+verify_package_versions() {
+    log "Verifying package versions..."
+
+    for pkg in "${!MIN_VERSIONS[@]}"; do
+        local min_version="${MIN_VERSIONS[$pkg]}"
+        local current_version
+
+        case "$pkg" in
+            "cryptsetup")
+                current_version=$(cryptsetup --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+                ;;
+            "systemd")
+                current_version=$(systemctl --version | head -1 | grep -oE '[0-9]+')
+                ;;
+            "e2fsprogs")
+                current_version=$(mkfs.ext4 -V 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+                ;;
+            "lvm2")
+                current_version=$(dmsetup --version | awk '{print $3}' | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
+                ;;
+            "util-linux")
+                current_version=$(mount --version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+                ;;
+        esac
+
+        log "Checking $pkg version: current=$current_version, required=$min_version"
+        if ! verify_version "$current_version" "$min_version"; then
+            error "Package $pkg version $current_version is lower than required $min_version"
+        fi
+    done
+}
+
 # Check hardware capabilities
 check_hardware_capabilities() {
     log "Checking hardware capabilities..."
@@ -64,11 +126,12 @@ check_kernel_modules() {
 check_requirements() {
     log "Checking system requirements..."
 
-    # Check hardware capabilities
+    # Check hardware and kernel capabilities
     check_hardware_capabilities
-
-    # Check kernel modules
     check_kernel_modules
+
+    # Verify package versions
+    verify_package_versions
 
     # Check required commands
     for cmd in parted cryptsetup veritysetup mkfs.ext4; do
@@ -94,42 +157,7 @@ check_requirements() {
         error "Device ${DEVICE} is already mounted"
     fi
 
-    # Check package versions
-    verify_package_versions
-
     log "System requirements check passed"
-}
-
-# Verify package versions
-verify_package_versions() {
-    log "Verifying package versions..."
-
-    for pkg in "${!MIN_VERSIONS[@]}"; do
-        local min_version="${MIN_VERSIONS[$pkg]}"
-        local current_version
-
-        case "$pkg" in
-            "cryptsetup")
-                current_version=$(cryptsetup --version | awk '{print $2}')
-                ;;
-            "systemd")
-                current_version=$(systemctl --version | awk 'NR==1{print $2}')
-                ;;
-            "e2fsprogs")
-                current_version=$(mkfs.ext4 -V 2>&1 | awk 'NR==1{print $2}')
-                ;;
-            "lvm2")
-                current_version=$(dmsetup --version | awk '{print $3}')
-                ;;
-            "util-linux")
-                current_version=$(mount --version | awk 'NR==1{print $3}')
-                ;;
-        esac
-
-        if ! verify_version "$current_version" "$min_version"; then
-            error "Package $pkg version $current_version is lower than required $min_version"
-        fi
-    done
 }
 
 # Setup verity partition

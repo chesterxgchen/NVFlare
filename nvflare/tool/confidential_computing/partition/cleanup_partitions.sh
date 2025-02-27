@@ -16,6 +16,40 @@ error() {
     exit 1
 }
 
+# Check required kernel modules
+check_kernel_modules() {
+    log "Checking required kernel modules..."
+    
+    local required_modules=(
+        "dm_crypt"
+        "dm_verity"
+        "aes"
+        "sha256"
+        "xts"
+    )
+    
+    for module in "${required_modules[@]}"; do
+        if ! lsmod | grep -q "^${module}"; then
+            error "Required kernel module not loaded: $module"
+        fi
+    done
+}
+
+# Check requirements
+check_requirements() {
+    log "Checking system requirements..."
+
+    # Check kernel modules are still loaded
+    check_kernel_modules
+
+    # Check required commands
+    for cmd in cryptsetup dmsetup umount; do
+        command -v $cmd >/dev/null 2>&1 || error "$cmd is required but not installed."
+    done
+
+    log "System requirements check passed"
+}
+
 # Function to cleanup mounts
 cleanup_mounts() {
     log "Starting cleanup..."
@@ -50,26 +84,5 @@ cleanup_mounts() {
 }
 
 # Run cleanup
+check_requirements
 cleanup_mounts 
-
-# Check requirements
-check_requirements() {
-    log "Checking system requirements..."
-
-    # Check required commands
-    for cmd in cryptsetup dmsetup umount; do
-        command -v $cmd >/dev/null 2>&1 || error "$cmd is required but not installed."
-    done
-
-    # Check kernel modules are still loaded
-    local required_modules=(
-        "dm_crypt"
-        "dm_verity"
-    )
-    
-    for module in "${required_modules[@]}"; do
-        if ! lsmod | grep -q "^${module}"; then
-            error "Required kernel module not loaded: $module"
-        fi
-    done
-} 
