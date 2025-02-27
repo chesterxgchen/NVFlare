@@ -16,9 +16,59 @@ error() {
     exit 1
 }
 
+# Check hardware capabilities
+check_hardware_capabilities() {
+    log "Checking hardware capabilities..."
+
+    # Check CPU AES support
+    if ! grep -q '^flags.*aes' /proc/cpuinfo; then
+        error "CPU does not support AES instructions"
+    fi
+
+    # Check available memory
+    local mem_available=$(free -m | awk '/^Mem:/ {print $7}')
+    if [ "$mem_available" -lt 1024 ]; then
+        error "Insufficient memory available: ${mem_available}M (need at least 1024M)"
+    fi
+
+    # Check disk space
+    local disk_space=$(df -m "$PWD" | awk 'NR==2 {print $4}')
+    if [ "$disk_space" -lt 2048 ]; then
+        error "Insufficient disk space: ${disk_space}M (need at least 2048M)"
+    fi
+}
+
+# Check kernel modules
+check_kernel_modules() {
+    log "Checking required kernel modules..."
+    
+    local required_modules=(
+        "dm_crypt"
+        "dm_verity"
+        "aes"
+        "sha256"
+        "xts"
+        "ecb"
+        "cbc"
+        "hmac"
+    )
+    
+    for module in "${required_modules[@]}"; do
+        if ! lsmod | grep -q "^${module}" && ! modprobe -n "$module" 2>/dev/null; then
+            error "Required kernel module not available: $module"
+        fi
+    done
+}
+
 # Check requirements
 check_requirements() {
     log "Checking system requirements..."
+
+    # Check hardware capabilities
+    check_hardware_capabilities
+
+    # Check kernel modules
+    check_kernel_modules
 
     # Check required commands
     for cmd in parted cryptsetup veritysetup mkfs.ext4; do
@@ -40,11 +90,46 @@ check_requirements() {
     fi
 
     # Check if device is already in use
-    if mount | grep -q "^${DEVICE}"; then
+    if mount | grep -v swap | grep -q "^${DEVICE}"; then
         error "Device ${DEVICE} is already mounted"
     fi
 
+    # Check package versions
+    verify_package_versions
+
     log "System requirements check passed"
+}
+
+# Verify package versions
+verify_package_versions() {
+    log "Verifying package versions..."
+
+    for pkg in "${!MIN_VERSIONS[@]}"; do
+        local min_version="${MIN_VERSIONS[$pkg]}"
+        local current_version
+
+        case "$pkg" in
+            "cryptsetup")
+                current_version=$(cryptsetup --version | awk '{print $2}')
+                ;;
+            "systemd")
+                current_version=$(systemctl --version | awk 'NR==1{print $2}')
+                ;;
+            "e2fsprogs")
+                current_version=$(mkfs.ext4 -V 2>&1 | awk 'NR==1{print $2}')
+                ;;
+            "lvm2")
+                current_version=$(dmsetup --version | awk '{print $3}')
+                ;;
+            "util-linux")
+                current_version=$(mount --version | awk 'NR==1{print $3}')
+                ;;
+        esac
+
+        if ! verify_version "$current_version" "$min_version"; then
+            error "Package $pkg version $current_version is lower than required $min_version"
+        fi
+    done
 }
 
 # Setup verity partition

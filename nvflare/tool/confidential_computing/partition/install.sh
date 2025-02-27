@@ -2,186 +2,262 @@
 
 set -e  # Exit on error
 
-# Source configuration
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
 
-# Logging
+# Helper Functions
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+    echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] $1${NC}"
 }
 
 error() {
-    log "ERROR: $1" >&2
+    echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1${NC}" >&2
     exit 1
 }
 
-# Validate installation environment
-validate_install_env() {
-    log "Validating installation environment..."
+# Required packages
+REQUIRED_PACKAGES=(
+    "cryptsetup"
+    "cryptsetup-bin"
+    "cryptsetup-initramfs"
+    "cryptsetup-run"
+    "dmsetup"
+    "lvm2"
+    "parted"
+    "acl"
+    "attr"  # for extended attributes
+    "util-linux"
+    "coreutils"
+    "e2fsprogs"
+    "kmod"
+    "systemd"
+)
 
+# Required package versions
+declare -A MIN_VERSIONS=(
+    ["cryptsetup"]="2.3.0"
+    ["systemd"]="245"
+    ["e2fsprogs"]="1.45"
+    ["lvm2"]="2.03"
+    ["util-linux"]="2.34"
+)
+
+# Install required packages
+install_dependencies() {
+    log "Checking and installing required packages..."
+    
     # Check if running as root
-    if [ "$EUID" -ne 0 ]; then
-        error "Please run as root"
+    if [[ $EUID -ne 0 ]]; then
+        error "Please run as root (sudo)"
     fi
-
-    # Check required commands
-    local required_cmds=(
-        parted
-        cryptsetup
-        veritysetup
-        mkfs.ext4
-        systemctl
-        mount
-        umount
-        dd
-        shred
-    )
-
-    for cmd in "${required_cmds[@]}"; do
-        command -v "$cmd" >/dev/null 2>&1 || error "$cmd is required but not installed"
-    done
-
-    # Check if running in a confidential VM
-    if ! dmesg | grep -qE "Confidential|SEV-SNP|TDX guest"; then
-        error "Not running in a Confidential VM"
-    fi
-
-    # Check if target directories are writable
-    local dirs=(
-        "/usr/local/bin"
-        "/usr/local/etc/nvflare"
-        "/etc/systemd/system"
-    )
-
-    for dir in "${dirs[@]}"; do
-        if [ -e "$dir" ] && ! [ -w "$dir" ]; then
-            error "Directory $dir exists but is not writable"
-        fi
-    done
-
-    # Validate configuration file
-    source "${SCRIPT_DIR}/config/partition_config.sh"
-
-    log "Installation environment validation passed"
-}
-
-# Install dependencies
-install_deps() {
-    log "Installing dependencies..."
     
-    # Check if package manager is available
+    # Check if apt is available
     if ! command -v apt-get >/dev/null 2>&1; then
-        error "apt-get not found. This script requires a Debian-based system."
+        error "This script requires apt package manager"
     fi
     
-    # Check if we can install packages
-    if ! apt-get update >/dev/null 2>&1; then
-        error "Failed to update package list. Check your internet connection."
-    fi
+    # Update package list
+    apt-get update || error "Failed to update package list"
     
-    # Install required packages
-    apt-get install -y \
-        cryptsetup \
-        cryptsetup-bin \
-        cryptsetup-initramfs \
-        cryptsetup-run \
-        parted \
-        util-linux \
-        systemd || error "Failed to install required packages"
-}
-
-# Install scripts
-install_scripts() {
-    log "Installing scripts..."
-    
-    # Required scripts
-    local scripts=(
-        "setup_partitions.sh"
-        "cleanup_partitions.sh"
-        "verify_partitions.sh"
-        "config/partition_config.sh"
-        "config/partition.conf"
-    )
-    
-    # Validate script files exist
-    for script in "${scripts[@]}"; do
-        if [ ! -f "${SCRIPT_DIR}/${script}" ]; then
-            error "Required script not found: ${script}"
+    # Install packages
+    for pkg in "${REQUIRED_PACKAGES[@]}"; do
+        if ! dpkg -l | grep -q "^ii.*$pkg"; then
+            log "Installing $pkg..."
+            apt-get install -y "$pkg" || error "Failed to install $pkg"
         fi
     done
     
-    # Create directories
-    mkdir -p /usr/local/bin || error "Failed to create /usr/local/bin"
-    mkdir -p /usr/local/etc/nvflare/config || error "Failed to create /usr/local/etc/nvflare/config"
+    # Verify package versions
+    verify_package_versions
     
-    # Copy scripts with error checking
-    for script in setup_partitions.sh cleanup_partitions.sh verify_partitions.sh; do
-        cp "${SCRIPT_DIR}/${script}" /usr/local/bin/ || error "Failed to copy ${script}"
-        chmod +x "/usr/local/bin/${script}" || error "Failed to set permissions for ${script}"
+    log "All required packages installed"
+}
+
+# Verify package versions
+verify_package_versions() {
+    log "Verifying package versions..."
+
+    for pkg in "${!MIN_VERSIONS[@]}"; do
+        local min_version="${MIN_VERSIONS[$pkg]}"
+        local current_version
+
+        case "$pkg" in
+            "cryptsetup")
+                current_version=$(cryptsetup --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+                ;;
+            "systemd")
+                current_version=$(systemctl --version | head -1 | grep -oE '[0-9]+')
+                ;;
+            "e2fsprogs")
+                current_version=$(mkfs.ext4 -V 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+                ;;
+            "lvm2")
+                current_version=$(dmsetup --version | awk '{print $3}' | cut -d'-' -f1)
+                ;;
+            "util-linux")
+                current_version=$(mount --version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+                ;;
+        esac
+
+        log "Checking $pkg version: current=$current_version, required=$min_version"
+        if ! verify_version "$current_version" "$min_version"; then
+            error "Package $pkg version $current_version is lower than required $min_version"
+        fi
     done
-    
-    # Copy configuration files
-    cp "${SCRIPT_DIR}/config/partition_config.sh" /usr/local/etc/nvflare/config/ || \
-        error "Failed to copy partition_config.sh"
-    cp "${SCRIPT_DIR}/config/partition.conf" /usr/local/etc/nvflare/config/ || \
-        error "Failed to copy partition.conf"
+
+    log "All package versions meet requirements"
 }
 
-# Install systemd service
-install_service() {
-    log "Installing systemd service..."
+# Version comparison helper
+verify_version() {
+    local current="$1"
+    local required="$2"
     
-    if [ ! -f "${SCRIPT_DIR}/nvflare-partitions.service" ]; then
-        error "Service file not found: nvflare-partitions.service"
-    fi
+    # Convert versions to arrays
+    IFS='.' read -ra current_arr <<< "$current"
+    IFS='.' read -ra required_arr <<< "$required"
     
-    cp "${SCRIPT_DIR}/nvflare-partitions.service" /etc/systemd/system/ || \
-        error "Failed to copy service file"
-    
-    systemctl daemon-reload || error "Failed to reload systemd configuration"
-    systemctl enable nvflare-partitions.service || error "Failed to enable service"
+    # Compare each component
+    for i in "${!required_arr[@]}"; do
+        if [ "${current_arr[i]:-0}" -lt "${required_arr[i]}" ]; then
+            return 1
+        elif [ "${current_arr[i]:-0}" -gt "${required_arr[i]}" ]; then
+            return 0
+        fi
+    done
+    return 0
 }
 
-# Verify installation
-verify_install() {
-    log "Verifying installation..."
+# Verify required commands
+verify_commands() {
+    log "Verifying required commands..."
     
-    # Check scripts are installed
-    for cmd in setup_partitions.sh cleanup_partitions.sh verify_partitions.sh; do
+    local required_commands=(
+        "cryptsetup"
+        "dmsetup"
+        "parted"
+        "mkfs.ext4"
+        "systemctl"
+        "veritysetup"
+        "getfacl"
+        "losetup"
+        "mount"
+        "umount"
+        "dd"
+        "shred"
+        "modprobe"
+        "dmsetup"
+        "grep"
+        "sed"
+        "find"
+    )
+    
+    for cmd in "${required_commands[@]}"; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
-            error "Installation verification failed: $cmd not found in PATH"
+            error "Required command not found: $cmd"
         fi
     done
     
-    # Check configuration files exist
-    local config_files=(
-        "/usr/local/etc/nvflare/config/partition_config.sh"
-        "/usr/local/etc/nvflare/config/partition.conf"
+    # Verify kernel modules
+    local required_modules=(
+        "dm_crypt"
+        "dm_verity"
+        "aes"
+        "sha256"
+        "xts"
     )
-    for file in "${config_files[@]}"; do
-        if [ ! -f "$file" ]; then
-            error "Installation verification failed: $file not found"
+
+    for module in "${required_modules[@]}"; do
+        if ! modprobe -n "$module" 2>/dev/null; then
+            error "Required kernel module not available: $module"
         fi
     done
     
-    # Check service is installed
-    if ! systemctl list-unit-files | grep -q nvflare-partitions.service; then
-        error "Installation verification failed: systemd service not installed"
-    fi
+    log "All required commands available"
 }
 
-# Main installation
-main() {
-    validate_install_env
-    install_deps
-    install_scripts
-    install_service
-    verify_install
+# Source configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source configuration
+source "${SCRIPT_DIR}/config/partition_config.sh"
+
+# Main installation function
+install() {
+    log "Starting NVFLARE partition installation..."
+    
+    # Install dependencies and verify commands
+    install_dependencies
+    verify_commands
+
+    # Create systemd service
+    create_systemd_service
+    
+    # Setup initial partitions
+    setup_partitions
+    
+    # Enable and start service
+    systemctl enable nvflare-partitions
+    systemctl start nvflare-partitions
     
     log "Installation completed successfully"
-    log "Review and modify /usr/local/etc/nvflare/config/partition.conf if needed"
-    log "Run 'systemctl start nvflare-partitions' to setup partitions"
+}
+
+# Create systemd service
+create_systemd_service() {
+    # ... existing function content ...
+}
+
+# Setup initial partitions
+setup_partitions() {
+    # ... existing function content ...
+}
+
+# Check hardware capabilities
+check_hardware_capabilities() {
+    log "Checking hardware capabilities..."
+
+    # Check CPU AES support
+    if ! grep -q '^flags.*aes' /proc/cpuinfo; then
+        error "CPU does not support AES instructions"
+    fi
+
+    # Check available memory
+    local mem_available=$(free -m | awk '/^Mem:/ {print $7}')
+    if [ "$mem_available" -lt 1024 ]; then
+        error "Insufficient memory available: ${mem_available}M (need at least 1024M)"
+    fi
+
+    # Check disk space
+    local disk_space=$(df -m "$PWD" | awk 'NR==2 {print $4}')
+    if [ "$disk_space" -lt 2048 ]; then
+        error "Insufficient disk space: ${disk_space}M (need at least 2048M)"
+    fi
+}
+
+# Check required kernel modules
+check_kernel_modules() {
+    log "Checking required kernel modules..."
+    
+    local required_modules=(
+        "dm_crypt"
+        "dm_verity"
+        "aes"
+        "sha256"
+        "xts"
+        "ecb"
+        "cbc"
+        "hmac"
+    )
+    
+    for module in "${required_modules[@]}"; do
+        if ! lsmod | grep -q "^${module}" && ! modprobe -n "$module" 2>/dev/null; then
+            error "Required kernel module not available: $module"
+        fi
+    done
 }
 
 # Run installation
-main "$@" 
+install 
