@@ -17,17 +17,18 @@ export NVFLARE_ENCRYPT_WO_PATHS="$ENCRYPT_WO_PATHS"
 configure_services() {
     echo "Configuring system services..."
     
-    # Disable SSH access
-    systemctl disable ssh
-    systemctl disable sshd
-    systemctl stop ssh
-    systemctl stop sshd
-    
-    # Backup and remove SSH keys
-    if [ -d "/etc/ssh" ]; then
-        timestamp=$(date +%Y%m%d_%H%M%S)
-        tar czf "/root/ssh_backup_${timestamp}.tar.gz" /etc/ssh/
-        rm -f /etc/ssh/ssh_host_*
+    # Disable SSH if configured
+    if [ "$DISABLE_SSH" = true ]; then
+        log "Disabling SSH..."
+        # Stop and disable SSH
+        systemctl stop ssh sshd
+        systemctl disable ssh sshd
+        # Remove SSH completely
+        apt-get remove -y openssh-server openssh-client
+        rm -rf /etc/ssh
+        # Block SSH port in firewall
+        iptables -A INPUT -p tcp --dport 22 -j DROP
+        iptables -A OUTPUT -p tcp --dport 22 -j DROP
     fi
 }
 
