@@ -12,6 +12,19 @@ TEST_BIN=run_tests
 TEST_DIR = tests
 TEST_SRC = $(TEST_DIR)/example.c
 
+# Get OpenSSL flags from pkg-config
+OPENSSL_CFLAGS := $(shell pkg-config --cflags openssl)
+OPENSSL_LIBS := $(shell pkg-config --libs openssl)
+
+CFLAGS += -Wall -Werror $(OPENSSL_CFLAGS)
+LDFLAGS += $(OPENSSL_LIBS)
+
+ifeq ($(shell uname),Darwin)
+    SRC = handlers/encryption_darwin.c
+else
+    SRC = handlers/encryption_linux.c
+endif
+
 all: $(LIB) $(TEST_BIN)
 
 $(LIB): $(OBJS)
