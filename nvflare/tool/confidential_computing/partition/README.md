@@ -321,8 +321,8 @@ The partition tool creates and manages the following partitions:
   - Cleared on reboot
   - Size: 8G (configurable)
 
-- `swapfile`: disabled
-  
+- swap is disabled in the kernel
+
 
 
 ## Installation
