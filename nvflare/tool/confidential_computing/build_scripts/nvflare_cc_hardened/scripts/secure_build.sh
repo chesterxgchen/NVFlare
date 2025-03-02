@@ -450,10 +450,250 @@ setup_fl_process_limits() {
     done
 }
 
+# Validate attestation endpoints
+validate_attestation_endpoints() {
+    local failed=0
+    
+    # Validate each endpoint
+    for service in "${ATTESTATION_SERVICES[@]}"; do
+        IFS=':' read -r svc port protocol endpoint desc <<< "$service"
+        
+        # Try to resolve endpoint
+        if ! host "$endpoint" >/dev/null 2>&1; then
+            error "Failed to resolve attestation endpoint: $endpoint ($desc)"
+            failed=1
+            continue
+        fi
+        
+        # Get IP addresses for endpoint
+        ip_addresses=$(host "$endpoint" | grep "has address" | cut -d " " -f 4)
+        
+        if [ -z "$ip_addresses" ]; then
+            error "No IP addresses found for endpoint: $endpoint ($desc)"
+            failed=1
+            continue
+        fi
+        
+        # Add resolved IPs to allowed list
+        for ip in $ip_addresses; do
+            echo "$svc:$port:$protocol:$ip" >> "/etc/nvflare/attestation_ips"
+        done
+    done
+    
+    return $failed
+}
+
+# Validate monitoring configuration
+validate_monitoring_config() {
+    local failed=0
+    local ml_metrics_count=0
+    local system_metrics_count=0
+    local enabled_monitoring=""
+    
+    # Check enabled ports in MONITORING_PORTS
+    for port_config in "${MONITORING_PORTS[@]}"; do
+        # Skip commented lines
+        [[ "$port_config" =~ ^[[:space:]]*# ]] && continue
+        
+        IFS=':' read -r name port protocol direction desc <<< "$port_config"
+        
+        # Validate protocol and direction
+        if [ "$protocol" != "tcp" ] || [ "$direction" != "outbound" ]; then
+            error "Invalid monitoring configuration for $name: must be tcp/outbound"
+            failed=1
+            continue
+        }
+        
+        case "$name" in
+            "statsd")
+                system_metrics_count=$((system_metrics_count + 1))
+                enabled_monitoring="$enabled_monitoring\nSystem monitoring: StatsD exporter (port $port)"
+                ;;
+            "tensorboard"|"mlflow"|"wandb")
+                ml_metrics_count=$((ml_metrics_count + 1))
+                enabled_monitoring="$enabled_monitoring\nML metrics: $name (port $port)"
+                ;;
+            *)
+                error "Unknown monitoring service: $name"
+                failed=1
+                ;;
+        esac
+    done
+    
+    # Validate only one ML metrics service is enabled
+    if [ $ml_metrics_count -gt 1 ]; then
+        error "Multiple ML metrics services enabled. Please enable only one."
+        failed=1
+    fi
+    
+    # Validate system metrics
+    if [ $system_metrics_count -gt 1 ]; then
+        error "Multiple system metrics services enabled."
+        failed=1
+    fi
+    
+    # Log enabled monitoring
+    if [ -n "$enabled_monitoring" ]; then
+        log "Enabled monitoring services:$enabled_monitoring"
+    fi
+    
+    return $failed
+}
+
+setup_fl_network() {
+    # Validate monitoring configuration first
+    if ! validate_monitoring_config; then
+        error "Monitoring configuration validation failed"
+        exit 1
+    fi
+    
+    # Validate endpoints - fail if any attestation endpoint is unreachable
+    if ! validate_attestation_endpoints; then
+        error "Attestation endpoint validation failed - cannot establish secure environment"
+        exit 1
+    fi
+    
+    # Default deny all traffic
+    iptables -P INPUT DROP
+    iptables -P OUTPUT DROP
+    iptables -P FORWARD DROP
+    
+    # Allow established connections and loopback
+    iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+    iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+    iptables -A INPUT -i lo -j ACCEPT
+    iptables -A OUTPUT -o lo -j ACCEPT
+
+    # Configure FL ports
+    for port_config in "${ALLOWED_PORTS[@]}"; do
+        # Skip commented lines
+        [[ "$port_config" =~ ^[[:space:]]*# ]] && continue
+        
+        IFS=':' read -r port protocol direction desc <<< "$port_config"
+        case "$direction" in
+            "bidirectional")
+                iptables -A INPUT -p "$protocol" --dport "$port" -m state --state NEW -j ACCEPT
+                iptables -A OUTPUT -p "$protocol" --dport "$port" -m state --state NEW -j ACCEPT
+                ;;
+            "inbound")
+                iptables -A INPUT -p "$protocol" --dport "$port" -m state --state NEW -j ACCEPT
+                ;;
+            "outbound")
+                iptables -A OUTPUT -p "$protocol" --dport "$port" -m state --state NEW -j ACCEPT
+                ;;
+        esac
+    done
+    
+    # Configure monitoring ports
+    for port_config in "${MONITORING_PORTS[@]}"; do
+        # Skip commented lines
+        [[ "$port_config" =~ ^[[:space:]]*# ]] && continue
+        
+        IFS=':' read -r name port protocol direction desc <<< "$port_config"
+        # All monitoring ports are outbound only
+        iptables -A OUTPUT -p "$protocol" --dport "$port" -m state --state NEW -j ACCEPT
+    done
+
+    # Configure attestation traffic using resolved IPs
+    while IFS=':' read -r svc port protocol ip <<< "$(cat /etc/nvflare/attestation_ips)"; do
+        # Allow only outbound attestation traffic to specific IPs
+        iptables -A OUTPUT -p "$protocol" -d "$ip" --dport "$port" -m state --state NEW -j ACCEPT
+        iptables -A OUTPUT -p "$protocol" -d "$ip" --dport "$port" -m conntrack --ctstate NEW -m limit --limit 10/min -j ACCEPT
+        iptables -A OUTPUT -p "$protocol" -d "$ip" --dport "$port" -j LOG --log-prefix "BLOCKED-ATTESTATION: "
+    done
+
+    # Log all dropped traffic
+    iptables -A INPUT -j LOG --log-prefix "DROP-INPUT: "
+    iptables -A OUTPUT -j LOG --log-prefix "DROP-OUTPUT: "
+    
+    # Apply network hardening parameters
+    for param in "${NETWORK_HARDENING[@]}"; do
+        sysctl -w "$param"
+    done
+}
+
+# Helper to get attestation network from config
+get_attestation_network() {
+    local service="$1"
+    for network in "${ATTESTATION_NETWORKS[@]}"; do
+        IFS=':' read -r svc net <<< "$network"
+        if [ "$svc" = "$service" ]; then
+            echo "$net"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Periodic endpoint validation (runs every hour by default)
+setup_endpoint_validation() {
+    local validation_script="/usr/local/bin/validate_attestation_endpoints.sh"
+    
+    cat > "$validation_script" << 'EOF'
+#!/bin/bash
+
+ATTESTATION_IPS_FILE="/etc/nvflare/attestation_ips"
+ATTESTATION_IPS_NEW="${ATTESTATION_IPS_FILE}.new"
+ATTESTATION_IPS_OLD="${ATTESTATION_IPS_FILE}.old"
+
+# Source configuration
+source /etc/nvflare/hardening.conf
+
+validate_endpoints() {
+    local failed=0
+    > "$ATTESTATION_IPS_NEW"
+
+    for service in "${ATTESTATION_SERVICES[@]}"; do
+        IFS=':' read -r svc port protocol endpoint desc <<< "$service"
+        
+        # Try to resolve endpoint
+        if ! host "$endpoint" >/dev/null 2>&1; then
+            logger -t attestation-validation "Failed to resolve endpoint: $endpoint ($desc)"
+            failed=1
+            continue
+        fi
+        
+        # Get current IPs
+        ip_addresses=$(host "$endpoint" | grep "has address" | cut -d " " -f 4)
+        
+        if [ -z "$ip_addresses" ]; then
+            logger -t attestation-validation "No IP addresses found for endpoint: $endpoint ($desc)"
+            failed=1
+            continue
+        fi
+        
+        # Add resolved IPs to new list
+        for ip in $ip_addresses; do
+            echo "$svc:$port:$protocol:$ip" >> "$ATTESTATION_IPS_NEW"
+        done
+    done
+
+    if [ $failed -eq 0 ]; then
+        if ! diff -q "$ATTESTATION_IPS_FILE" "$ATTESTATION_IPS_NEW" >/dev/null 2>&1; then
+            cp "$ATTESTATION_IPS_FILE" "$ATTESTATION_IPS_OLD"
+            mv "$ATTESTATION_IPS_NEW" "$ATTESTATION_IPS_FILE"
+            /usr/local/bin/update_attestation_rules.sh
+            logger -t attestation-validation "Updated attestation endpoints"
+        fi
+    else
+        rm -f "$ATTESTATION_IPS_NEW"
+    fi
+}
+
+validate_endpoints
+EOF
+
+    chmod +x "$validation_script"
+    echo "0 * * * * root $validation_script" > "/etc/cron.d/attestation-validation"
+    chmod 644 "/etc/cron.d/attestation-validation"
+}
+
 main() {
+    setup_fl_network
     setup_fl_rate_limits
     setup_fl_audit
     setup_fl_process_limits
+    setup_endpoint_validation
     log "FL-specific security hardening completed"
 }
 
