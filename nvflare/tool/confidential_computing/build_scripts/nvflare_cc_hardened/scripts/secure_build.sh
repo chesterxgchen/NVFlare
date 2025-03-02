@@ -425,4 +425,36 @@ setup_network_security() {
             register_tmpfs_path "$path"
         done
     }
-} 
+}
+
+# Configure FL-specific rate limiting
+setup_fl_rate_limits() {
+    for rule in "${RATE_LIMIT_RULES[@]}"; do
+        IFS=':' read -r port limit desc <<< "$rule"
+        iptables -A INPUT -p tcp --dport "$port" -m limit --limit "$limit" -j ACCEPT
+        iptables -A INPUT -p tcp --dport "$port" -j DROP
+    done
+}
+
+# Configure FL-specific audit rules
+setup_fl_audit() {
+    for rule in "${AUDIT_RULES[@]}"; do
+        auditctl "$rule"
+    done
+}
+
+# Set FL process limits
+setup_fl_process_limits() {
+    for limit in "${PROCESS_LIMITS[@]}"; do
+        echo "$limit" >> /etc/security/limits.d/nvflare.conf
+    done
+}
+
+main() {
+    setup_fl_rate_limits
+    setup_fl_audit
+    setup_fl_process_limits
+    log "FL-specific security hardening completed"
+}
+
+main "$@" 

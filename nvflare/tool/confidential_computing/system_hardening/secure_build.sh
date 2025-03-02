@@ -39,6 +39,34 @@ MIN_KERNEL_VERSION="5.4"
 BACKUP_ROOT="/var/backups/nvflare"
 BACKUP_RETENTION_DAYS=30
 
+# Source configurations
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../config/hardening.conf"
+
+# Additional security packages with minimum versions
+SECURITY_PACKAGES=(
+    # Core security
+    "apparmor:3.0"
+    "selinux-utils:3.1"
+    "auditd:3.0"
+    "fail2ban:0.11"
+    "rkhunter:1.4"
+    "aide:0.17"
+    "firejail:0.9"
+    
+    # Monitoring and logging
+    "sysstat:12.0"
+    "prometheus-node-exporter:1.0"
+    "auditbeat:7.0"
+    "osquery:5.0"
+    
+    # Network security
+    "ufw:0.36"
+    "iptables:1.8"
+    "nftables:0.9"
+    "strongswan:5.8"
+)
+
 # Helper Functions
 log() {
     echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] $1${NC}"
@@ -425,4 +453,166 @@ setup_network_security() {
             register_tmpfs_path "$path"
         done
     }
-} 
+}
+
+# System hardening functions
+harden_system() {
+    log "Starting system hardening..."
+
+    # 1. Kernel hardening
+    configure_kernel_parameters
+    
+    # 2. Network hardening
+    configure_network_security
+    
+    # 3. Service hardening
+    disable_unnecessary_services
+    
+    # 4. File system hardening
+    harden_file_system
+    
+    # 5. Access control
+    configure_access_control
+    
+    # 6. Audit and logging
+    setup_audit_logging
+}
+
+# Configure kernel security parameters
+configure_kernel_parameters() {
+    cat > /etc/sysctl.d/99-security.conf << EOF
+# Kernel hardening
+kernel.randomize_va_space = 2
+kernel.kptr_restrict = 2
+kernel.dmesg_restrict = 1
+kernel.yama.ptrace_scope = 2
+kernel.kexec_load_disabled = 1
+kernel.sysrq = 0
+kernel.unprivileged_bpf_disabled = 1
+kernel.core_uses_pid = 1
+
+# Network security
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv4.conf.all.secure_redirects = 0
+net.ipv4.conf.default.secure_redirects = 0
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+net.ipv4.icmp_echo_ignore_all = 1
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+EOF
+    sysctl -p /etc/sysctl.d/99-security.conf
+}
+
+# Configure network security
+configure_network_security() {
+    # Setup firewall rules
+    for port in "${ALLOWED_PORTS[@]}"; do
+        IFS=':' read -r name port protocol desc <<< "$port"
+        ufw allow "$port/$protocol" comment "$desc"
+    done
+    
+    # Rate limiting
+    for port in "${FL_PORTS//,/ }"; do
+        iptables -A INPUT -p tcp --dport "$port" -m state --state NEW \
+            -m recent --set --name FL_LIMIT
+        iptables -A INPUT -p tcp --dport "$port" -m state --state NEW \
+            -m recent --update --seconds 60 --hitcount 10 --name FL_LIMIT -j DROP
+    done
+    
+    # Enable firewall
+    ufw --force enable
+}
+
+# Disable unnecessary services
+disable_unnecessary_services() {
+    for service in "${DISABLE_SERVICES[@]}"; do
+        if systemctl is-enabled "$service" &>/dev/null; then
+            systemctl disable "$service"
+            systemctl stop "$service"
+        fi
+    done
+}
+
+# Harden file system
+harden_file_system() {
+    # Mount points with security options
+    cat >> /etc/fstab << EOF
+tmpfs     /tmp        tmpfs  defaults,noexec,nosuid,nodev  0 0
+tmpfs     /dev/shm    tmpfs  defaults,noexec,nosuid,nodev  0 0
+EOF
+
+    # Set secure permissions
+    chmod 700 /boot /etc/grub.d
+    chmod 600 /etc/shadow /etc/gshadow
+    chmod 644 /etc/passwd /etc/group
+    
+    # Setup AIDE
+    aide --init
+    mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db
+}
+
+# Configure access control
+configure_access_control() {
+    # AppArmor profiles
+    aa-enforce /etc/apparmor.d/*
+    
+    # SELinux if enabled
+    if command -v setenforce >/dev/null; then
+        setenforce 1
+        sed -i 's/SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
+    fi
+    
+    # PAM configuration
+    cat > /etc/security/limits.d/99-limits.conf << EOF
+*       hard    core            0
+*       hard    nproc           1024
+*       hard    nofile          1024
+root    hard    core            0
+root    hard    nproc           1024
+root    hard    nofile          1024
+EOF
+}
+
+# Setup audit logging
+setup_audit_logging() {
+    # Configure auditd
+    cat > /etc/audit/rules.d/99-fl-security.rules << EOF
+# FL Security Rules
+-w ${AUDIT_RULES} -p wa -k fl_config_changes
+-w /etc/nvflare/keys -p wa -k fl_key_access
+-w /var/log/nvflare -p wa -k fl_log_changes
+
+# System call auditing
+-a exit,always -F arch=b64 -S execve -k fl_exec
+-a exit,always -F arch=b64 -S open,openat,creat -F exit=-EACCES -k fl_access_denied
+EOF
+
+    # Restart audit daemon
+    systemctl restart auditd
+}
+
+# Main execution
+main() {
+    # Check if running as root
+    if [ "$(id -u)" -ne 0 ]; then
+        error "This script must be run as root"
+        exit 1
+    }
+
+    # Install security packages
+    install_security_packages
+    
+    # Run system hardening
+    harden_system
+    
+    # Verify hardening
+    verify_security_configuration
+    
+    log "System hardening completed successfully"
+}
+
+main "$@" 
