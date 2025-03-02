@@ -1,0 +1,8 @@
+torch
+torchvision
+pandas
+scipy
+scikit-learn
+tensorboard
+--index-url https://dummy.org/whl/job_wheel.whl
+

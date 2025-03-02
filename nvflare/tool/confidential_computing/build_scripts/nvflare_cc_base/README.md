@@ -27,121 +27,27 @@ NVFLARE_HOME="/opt/nvflare"
 NVFLARE_VERSION="2.6.0"
 NVFLARE_USER="nvflare"
 NVFLARE_GROUP="nvflare"
+
+### Project Configuration
+
+Add NVFLARE project configuration in `config/project.yml`:
+```yaml
+# Example project.yml
+name: example_project
+description: Example FL project
+
+participants:
+  - name: server1
+    type: server
+    org: nvidia
+  - name: client1
+    type: client
+    org: org1
+  - name: client2
+    type: client
+    org: org2
 ```
 
-## Usage
+### Application Requirements
 
-```bash
-# Basic usage
-./build_nvflare.sh [OPTIONS]
-
-Options:
-  -h, --help            Show this help message
-  -s, --size SIZE       Output image size (default: 10G)
-  -r, --role ROLE       Build role: ALL, CLIENT, or SERVER (default: ALL)
-  -v, --verbose         Show detailed output
-  -t, --skip-tests      Skip running tests
-
-Examples:
-  # Build default image (ALL components, 10GB)
-  ./build_nvflare.sh
-
-  # Build 20GB client-only image
-  ./build_nvflare.sh -s 20G -r CLIENT
-
-  # Build server image with verbose output
-  ./build_nvflare.sh -r SERVER -v
-
-  # Build without running tests
-  ./build_nvflare.sh -t
-```
-
-## Image Structure
-
-The built image contains multiple partitions:
-
-1. Root Partition (LUKS encrypted):
-   ```
-   /opt/nvflare/
-   └── venv/           # Python virtual environment
-   ```
-
-2. Config Partition (dm-verity):
-   ```
-   /opt/nvflare/config/
-   ├── startup/        # Read-only startup files
-   ├── site_conf/      # Site configuration
-   └── job_store_key/  # Job store keys (server only)
-   ```
-
-3. Dynamic Partition (LUKS encrypted):
-   ```
-   /opt/nvflare/dynamic/
-   ├── workspace/      # Runtime workspace
-   ├── logs/          # Log files
-   └── job_store/     # Job storage (server only)
-   ```
-
-4. Data Partition (unencrypted, client only):
-   ```
-   /opt/nvflare/data/  # Client data access
-   ```
-
-## Role-Specific Components
-
-### Server (Aggregator)
-- Job store for FL training jobs
-- Job store keys for encryption
-- Workspace for aggregation
-
-### Client (Trainer)
-- Data directory for model training
-- Workspace for local training
-
-### Common Components
-- Python environment
-- NVFLARE installation
-- Logs directory
-- Configuration files
-
-## Testing
-
-The build process includes several tests:
-
-1. Partition Tests:
-   - Verifies partition labels
-   - Checks partition structure
-   - Validates role-specific partitions
-
-2. NVFLARE Tests:
-   - Validates installation
-   - Checks Python environment
-   - Tests import functionality
-
-3. Permission Tests:
-   - Verifies file ownership
-   - Checks directory permissions
-   - Validates security settings
-
-Run specific tests:
-```bash
-# Run all tests
-./tests/test_*.sh
-
-# Run specific test
-./tests/test_01_partitions.sh
-```
-
-## Security Features
-
-- LUKS encryption for sensitive partitions
-- dm-verity for read-only integrity
-- Role-based access control
-- Secure mount options
-- Encrypted workspace
-
-## Known Issues
-
-- Python 3.12 may have compatibility issues with some dependencies
-- Certain NVFLARE versions may require specific dependency versions
-- See version compatibility matrix in script documentation 
+Add application-specific Python packages to `
