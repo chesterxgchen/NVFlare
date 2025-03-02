@@ -5,6 +5,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common/common.sh"
 source "${SCRIPT_DIR}/../config/qemu.conf"
+source "${SCRIPT_DIR}/../config/tee.conf"
 
 log "Setting up QEMU/virtualization..."
 
@@ -17,16 +18,6 @@ apt-get install -y \
     virt-manager
 
 # Configure QEMU for confidential computing
-mkdir -p "${VM_TEMPLATE_DIR}"
-cp "${SCRIPT_DIR}/qemu/templates/"*.xml "${VM_TEMPLATE_DIR}/"
-
-# Detect hardware settings
-"${SCRIPT_DIR}/qemu/detect_hardware.sh"
-
-# Source detected settings
-source "$GPU_SETTINGS_FILE"
-source "$NETWORK_SETTINGS_FILE"
-
 cat > "/etc/libvirt/qemu.conf" << EOF
 # QEMU configuration
 security_driver = "selinux"
@@ -49,6 +40,7 @@ set -e
 
 # Source configuration
 source /etc/cc/qemu/qemu.conf
+source /etc/cc/qemu/tee.conf
 
 # Detect TEE type if auto
 if [ "$TEE_TYPE" = "auto" ]; then
@@ -62,17 +54,47 @@ if [ "$TEE_TYPE" = "auto" ]; then
     fi
 fi
 
-# Select template
-template="${VM_TEMPLATE_DIR}/${TEE_TYPE}.xml"
-if [ ! -f "$template" ]; then
-    echo "Template not found: $template"
-    exit 1
-fi
+# Create VM configuration
+VM_XML=$(cat << END
+<domain type='kvm'>
+  <name>${VM_NAME}</name>
+  <memory unit='KiB'>${VM_MEMORY_SIZE}</memory>
+  <vcpu placement='static'>${VM_CPUS}</vcpu>
+  <os>
+    <type arch='x86_64' machine='q35'>hvm</type>
+    <loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE.fd</loader>
+  </os>
+  <features>
+    <acpi/>
+    <apic/>
+  </features>
+  <cpu mode='host-passthrough'/>
+  $(if [ "$TEE_TYPE" = "sev-snp" ]; then
+    echo "<launchSecurity type='sev'>
+      <policy>${TEE_POLICY}</policy>
+      <cbitpos>47</cbitpos>
+      <reducedPhysBits>1</reducedPhysBits>
+      <dhCert>auto</dhCert>
+      <session>auto</session>
+    </launchSecurity>"
+  elif [ "$TEE_TYPE" = "tdx" ]; then
+    echo "<launchSecurity type='tdx'>
+      <policy>${TEE_POLICY}</policy>
+    </launchSecurity>"
+  fi)
+  <devices>
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2'/>
+      <source file='${VM_DISK_PATH}'/>
+      <target dev='vda' bus='virtio'/>
+    </disk>
+  </devices>
+</domain>
+END
+)
 
-# Create VM
-envsubst < "$template" > "/tmp/vm.xml"
-virsh define "/tmp/vm.xml"
-rm "/tmp/vm.xml"
+# Define VM
+echo "$VM_XML" | virsh define /dev/stdin
 
 echo "VM configured successfully"
 EOF
