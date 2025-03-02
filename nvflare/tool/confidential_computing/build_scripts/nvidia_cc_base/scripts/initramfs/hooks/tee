@@ -1,0 +1,32 @@
+#!/bin/sh
+
+PREREQ=""
+
+prereqs()
+{
+    echo "$PREREQ"
+}
+
+case $1 in
+    prereqs)
+        prereqs
+        exit 0
+        ;;
+esac
+
+. /usr/share/initramfs-tools/hook-functions
+. /etc/cc/key_settings.conf
+
+# Copy TEE binaries and libraries
+copy_exec "${AMD_SEV_GUEST_REPORT}"
+copy_exec "${AMD_SEV_GUEST_PARSE}"
+copy_exec "${INTEL_TDX_GUEST_QUOTE}"
+copy_exec "${INTEL_TDX_GUEST_PARSE}"
+
+# Copy key management scripts
+mkdir -p $DESTDIR/scripts/keys
+cp -a /usr/local/cc/scripts/keys/* $DESTDIR/scripts/keys/
+
+# Copy configurations
+mkdir -p $DESTDIR/etc/cc
+cp -a /etc/cc/key_settings.conf $DESTDIR/etc/cc/ 

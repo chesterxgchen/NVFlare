@@ -1,0 +1,93 @@
+
+Step 1 . generate scripts to create NVIDIA confidential_computing image on bare metal machine
+
+Based the risk analysis performed and recored in nvflare/tool/confidential_computing/readme.md,   I like to generate the scripts to do the following tasks. 
+
+1.   Install ubuntu 22.04 or 24.04  ( assuming we have the iso file) 
+2.   patch the ubuntu for special amd drivers and patches ( assuming we have the patches) 
+3.   partition the drive into following partiitons (beside partition for os) 
+4.   partition 1  will be later user for application and nvflare outputs   the mount points will eventually encrypted using LUKS
+5.   Partition 2:  will be used for read only purpose so it will be using dm-verity to check the file tempering
+6.   partition 3:   will be final output that later we dynamicall decide to encrypt or not.
+7.   we will start to install NVIDIA cuda drivers 
+8.   we will confidential computinig drivers for AMC CPU and NVIDIA GPU confidential_computing drivers to create an confidential_computing image
+9.   the output will be NVIDIA confidential_computing image and the installation script for the image. 
+10.  We will call this script as cc_image_installer.sh the resulting image name will be confidential_computing_image.qcow2
+11.  In addition, we will instatll both AMD Attestation and NVIDIA Attestation SDKs: AMD snpguest, and NVIDIA Remote Attestation (NRAS) to the image.
+12.  The attestation token can be provied via environment variable
+13.  The NVIDIA CC Image is not hardended for the security as this is the based image. 
+14.  The scripts will default ubuntu 22.04 language to english and timezone to UTC
+15.  The scripts must be automated without human intervention and take all default options. 
+17.  add dependency for LUKS (dm-crypt) and dm-verity and encrypt the partition 1 and partition 2 using the LUS with key generated in TEE memory 
+18   The partion configurations reflect that how partiton1,2,3 are to be encrypted or dm-verity to check for tempering. 
+18.  format partitions to ext4 and setup parttions based on the partition configures
+19.  don't put all scripts into one single scripts, split them into multiple scripts and put into the scripts directory. 
+20   Each script should have its own purpose and be able to run independently.
+21.  Don't hard-code any values, all values should be passed as parameters to the scripts. 
+22.  Use the absolute path for all the files and directories. 
+24.  Don't hard-code the user, group name etc. use configuration file to pass the values, so we can change later. 
+25.  Don't hard-code the version of the software, use the configuration file to pass the values. 
+26   system os files such as root-fs will be encrypted using LUKs
+27.  swam will be disabled 
+28   tmp-fs will be map to TEE memory 
+26.  create a test script to test the nvcc_image.qcow2
+27.  create usage guide for the scripts 
+
+
+Step 2.  generate scripts to install NVIDIA FLARE confidential_computing image on bare metal machine
+
+Use NVIDIA FLARE Confidential Computing (CC) Image to install NVIDIA FLARE on the target machine and build the base FLARE CC image. 
+
+1. Use the nvcc_image.qcow2 to install NVIDIA FLARE
+2. install python3 and other dependencies
+3. install NVIDIA FLARE and required dependencies
+5. create a function to resize the image to a larger size specified via argument if no argument, use the default size 10G
+6. create base FLARE CC image nvflare_cc_image.qcow2
+7. create test script to test the nvflare_cc_image.qcow2 and verify the installation is working 
+8. create test script to test the qcow2 image resizing function
+9. create usage guide for the scripts 
+
+
+Step 3.  Create Scripts for FLARE Admin Provision image builder 
+
+create a script final provision FLARE CC Job image using the nvflare_cc_image.qcow2 which can be used in the FLARE Provision CC Job image builder. 
+
+Assumption: 
+1. The application trainig code etc. are already packaged in the python wheel file. The wheel file is available in local file system or remote file system or reportory 
+in such that one can use pip install to install the code such 
+
+    pip install xyz --extra-index-url https://pypi.org/simple
+    pip install file:///path/to/wheel/file
+    
+2. all dependencies and wheel file can be experessed in the requirements.txt file. 
+
+
+Instructions: 
+
+1.locate the requirements.txt file missing the requirements file will failed the build 
+2 install application code and dependencies using pip install -r requirements.txt
+3 once the iinstallation is complete, we will begining system hardening by using the following scripts. These scripts are generated based on the risk analysis performed and recored in nvflare/tool/confidential_computing/readme.md
+in nvflare/tool/confidential_computing/readme.md. 
+
+3.1 install the system hardening in /opt/flare/scripts/system_hardening.sh
+3.2 create a scripts to start services that will encrypt or dm-verity the partitions. These scripts will be called by the systemd service. 
+3.3 with these scripts, once system starts, there is no access to the system, no ssd, non-white listed ports
+3.4. user allow to mount data file to the the predefined mount point to /mnt/data/nvflare/input 
+     3.4.1 the input data is only allowed for the NVFLARE Client site ( i.e. not server site)
+     3.4.2 the output data is only allowed for the NVFLARE Server site ( i.e. not client site)
+3.5. both input and output are optional encrypted using the LUKS  
+     3.5.1 there will be an optional key file path where the key file will be used to encrypt the file at begning of the system if key file is provided. 
+     
+3.6  All other mount points are disabled. 
+3.7 create the scripts called nvflare_cc_hardening_builder.sh with defualt image name as nvflare_cc_image_hardened.qcow2
+3.8 create the test script to test the nvflare_cc_image_hardened.qcow2
+3.9 create the usage guide for the scripts 
+
+
+
+
+
+
+
+
+

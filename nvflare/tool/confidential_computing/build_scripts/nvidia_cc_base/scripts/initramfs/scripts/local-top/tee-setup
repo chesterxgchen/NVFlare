@@ -1,0 +1,33 @@
+#!/bin/sh
+
+PREREQ="tee-init"
+
+prereqs()
+{
+    echo "$PREREQ"
+}
+
+case $1 in
+    prereqs)
+        prereqs
+        exit 0
+        ;;
+esac
+
+# Source key management
+. /scripts/keys/key_management.sh
+
+# Setup TEE keys early in boot
+setup_tee_keys
+
+# If using encrypted root, handle it
+if [ -f /scripts/local-top/cryptroot ]; then
+    # Get hardware-bound key
+    hw_key=$(get_tee_key "hw_key")
+    
+    # Export for cryptroot script
+    export CRYPTKEY="$hw_key"
+    
+    # Run standard cryptroot script
+    . /scripts/local-top/cryptroot
+fi 

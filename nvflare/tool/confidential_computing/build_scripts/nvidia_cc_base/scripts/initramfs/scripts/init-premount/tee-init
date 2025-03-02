@@ -1,0 +1,22 @@
+#!/bin/sh
+
+PREREQ=""
+
+prereqs()
+{
+    echo "$PREREQ"
+}
+
+case $1 in
+    prereqs)
+        prereqs
+        exit 0
+        ;;
+esac
+
+# Source key service
+. /scripts/keys/key_service.sh
+
+# Initialize TEE and key service
+setup_tee_environment
+init_key_service 
