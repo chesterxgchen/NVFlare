@@ -26,6 +26,85 @@ The base image provides:
 
 ## Build and Installation Process
 
+### Image Management
+
+### Base Image Resizing
+
+The base image is distributed in a compact size for easy distribution. Before building additional layers or deploying, you may need to resize the image to accommodate your needs.
+
+### Resizing QCOW2 Images
+
+The `scripts/resize_qcow2.sh` script allows you to safely resize QCOW2 images and their partitions:
+
+```bash
+# View current partition layout
+qemu-img info cc-base.qcow2
+
+# Common resize workflows:
+
+# 1. Prepare for layer building (increase root partition)
+./scripts/resize_qcow2.sh -i 50G -s +20G cc-base.qcow2 3  # Extend root for package installation
+
+# 2. Add storage for datasets/models
+./scripts/resize_qcow2.sh -i +100G cc-base.qcow2 5        # Add 100G to dynamic partition
+
+# 3. Minimal resize for testing
+./scripts/resize_qcow2.sh -i 30G -s +5G cc-base.qcow2 3   # Small increase for testing
+```
+
+Partition Usage:
+- `/boot` (p2): Boot files and kernels
+- `root` (p3): OS, packages, and applications
+- `dynamic` (p5): Data storage, datasets, models
+
+Recommended Sizes:
+```bash
+# For development/testing
+./scripts/resize_qcow2.sh -i 50G cc-base.qcow2 3   # Root: 30G, Dynamic: 15G
+
+# For production/training
+./scripts/resize_qcow2.sh -i 100G cc-base.qcow2 3  # Root: 40G
+./scripts/resize_qcow2.sh -s +50G cc-base.qcow2 5  # Dynamic: 50G+
+```
+
+Detailed Examples:
+
+1. Extend image and root partition
+./scripts/resize_qcow2.sh -i 50G -s +10G cc-base.qcow2 3  # Resize to 50G, add 10G to root
+
+2. Extend dynamic storage partition
+./scripts/resize_qcow2.sh -i +20G cc-base.qcow2 5         # Add 20G to image and dynamic partition
+
+3. Safe resize with backup and verification
+./scripts/resize_qcow2.sh -b --verify -i 50G cc-base.qcow2 5
+
+4. Preview changes without modifying
+./scripts/resize_qcow2.sh -d -i +20G cc-base.qcow2 5      # Dry run
+```
+
+Options:
+- `-i, --image-size SIZE`: New size for QCOW2 image (e.g., '50G' or '+20G')
+- `-s, --size SIZE`: New size for partition (e.g., '+10G')
+- `-b, --backup`: Create backup before resizing
+- `-d, --dry-run`: Show what would be done without making changes
+- `-v, --verbose`: Show detailed progress
+- `-f, --force`: Skip safety checks
+- `--verify`: Verify image after resize
+
+Supported Partitions:
+- `2`: /boot partition
+- `3`: root partition (encrypted)
+- `5`: dynamic partition (encrypted)
+
+Notes:
+- Always backup important data before resizing
+- Use `-v` for detailed progress information
+- Partitions 1 (EFI) and 4 (config) cannot be resized
+- Root and dynamic partitions are LUKS encrypted
+- Resize before building additional layers
+- Consider future storage needs when resizing
+- Dynamic partition can be resized again later
+
 ### 1. Build Configuration
 
 These settings must be configured before building the image:
@@ -219,4 +298,4 @@ lsblk
 
 ## License
 
-Copyright (c) 2024, NVIDIA Corporation. All rights reserved. 
+Copyright (c) 2025, NVIDIA Corporation. All rights reserved. 
