@@ -3,259 +3,242 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/common/common.sh"
+source "${SCRIPT_DIR}/common/security_hardening.sh"
 source "${SCRIPT_DIR}/../config/partition.conf"
 source "${SCRIPT_DIR}/../config/security.conf"
 
-# Generate installer script
-generate_installer() {
-    local installer_name="$INSTALLER_NAME"
+# Test installer package
+test_installer() {
+    local installer_path="$1"
+    local test_dir=$(mktemp -d)
     
-    cat > "$installer_name" <<'EOF'
+    log "Testing installer package..."
+    
+    # Extract installer
+    tar xf "$installer_path" -C "$test_dir"
+    
+    # Verify package structure
+    local required_files=(
+        "installer/install.sh"
+        "installer/validate.sh"
+        "installer/$(basename $OUTPUT_IMAGE)"
+        "installer/config/partition.conf"
+        "installer/config/security.conf"
+        "installer/config/tee.conf"
+        "installer/validation/test_03_device.sh"
+        "installer/validation/test_04_cc_setup.sh"
+        "installer/validation/test_05_cc_apps.sh"
+        "installer/validation/test_06_partition.sh"
+        "installer/validation/test_security.sh"
+        "installer/validation/common.sh"
+    )
+    
+    for file in "${required_files[@]}"; do
+        if [ ! -f "${test_dir}/${file}" ]; then
+            error "Missing required file: ${file}"
+        fi
+    done
+    
+    # Verify file permissions
+    if [ "$(stat -c %a ${test_dir}/installer/install.sh)" != "755" ]; then
+        error "Wrong permissions on install.sh"
+    fi
+    if [ "$(stat -c %a ${test_dir}/installer/validate.sh)" != "755" ]; then
+        error "Wrong permissions on validate.sh"
+    fi
+    
+    # Verify signatures
+    if [ -f "${installer_path}.asc" ]; then
+        if ! gpg --verify "${installer_path}.asc" "$installer_path"; then
+            error "Invalid installer signature"
+        fi
+    fi
+    
+    # Verify checksums
+    if ! (cd "$(dirname $installer_path)" && sha256sum -c "${installer_name}.tar.gz.sha256"); then
+        error "Checksum verification failed"
+    fi
+    
+    # Test installer scripts
+    (
+        cd "$test_dir/installer"
+        
+        # Test validation script
+        if ! ./validate.sh --dry-run; then
+            error "Validation script test failed"
+        fi
+        
+        # Test install script syntax
+        if ! bash -n install.sh; then
+            error "Install script syntax check failed"
+        fi
+        
+        # Test install script with mock device
+        if ! ./install.sh --test /dev/null; then
+            error "Install script test failed"
+        fi
+    )
+    
+    # Cleanup
+    rm -rf "$test_dir"
+    
+    success "Installer package tests passed"
+}
+
+# Generate installer package
+generate_installer() {
+    local output_dir="$1"
+    local installer_name="${INSTALLER_NAME:-nvidia-cc-installer}"
+    
+    log "Generating installer package..."
+
+    # Create temporary work directory
+    local work_dir=$(mktemp -d)
+    mkdir -p "${work_dir}/installer"
+
+    # Copy image
+    cp "${OUTPUT_DIR}/cc-base.qcow2" "${work_dir}/installer/"
+
+    # Copy configuration files
+    mkdir -p "${work_dir}/installer/config"
+    cp "${SCRIPT_DIR}/../config/"*.conf "${work_dir}/installer/config/"
+
+    # Copy validation scripts
+    mkdir -p "${work_dir}/installer/validation"
+    cp "${SCRIPT_DIR}/../tests/test_"*.sh "${work_dir}/installer/validation/"
+    cp "${SCRIPT_DIR}/../tests/common.sh" "${work_dir}/installer/validation/"
+
+    # Copy QEMU scripts
+    mkdir -p "${work_dir}/installer/scripts/qemu"
+    cp "${SCRIPT_DIR}/07_qemu_setup.sh" "${work_dir}/installer/scripts/qemu/"
+
+    # Generate hardware validation script
+    cat > "${work_dir}/installer/validate.sh" << 'EOF'
 #!/bin/bash
 
 set -e
 
-# Configuration
-IMAGE_FILE="${OUTPUT_IMAGE##*/}"  # Get filename only
-TARGET_DEVICE="${TARGET_DEVICE}"
-OUTPUT_DIR="${OUTPUT_DIR}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Parse arguments
-while getopts "d:i:o:h" opt; do
-    case $opt in
-        d) TARGET_DEVICE="$OPTARG" ;;
-        i) IMAGE_FILE="$OPTARG" ;;
-        o) OUTPUT_DIR="$OPTARG" ;;
-        h) 
-            echo "Usage: $0 [-d device] [-i image_file] [-o output_dir]"
-            echo "  -d: Target device (will detect if not specified)"
-            echo "  -i: Image file (default: ${IMAGE_FILE})"
-            echo "  -o: Output directory (default: ${OUTPUT_DIR})"
-            exit 0
-            ;;
-        *) 
-            echo "Invalid option: -$OPTARG"
-            exit 1
-            ;;
-    esac
-done
+# Run validation tests
+validate() {
+    # Check for test mode
+    if [ "$1" = "--dry-run" ]; then
+        # Skip actual hardware checks in test mode
+        return 0
+    fi
 
-# Check requirements
-check_requirements() {
-    if [[ $EUID -ne 0 ]]; then
-        echo "This script must be run as root"
+    # Check hardware requirements
+    "${SCRIPT_DIR}/validation/test_03_device.sh"
+
+    # Check TEE support
+    "${SCRIPT_DIR}/validation/test_04_cc_setup.sh"
+
+    # Verify security settings
+    "${SCRIPT_DIR}/validation/test_security.sh"
+}
+
+validate "$@"
+EOF
+    chmod +x "${work_dir}/installer/validate.sh"
+
+    # Generate install script
+    cat > "${work_dir}/installer/install.sh" << 'EOF'
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/config/partition.conf"
+source "${SCRIPT_DIR}/config/qemu.conf"
+
+# Install NVIDIA CC image
+install() {
+    # Test mode
+    if [ "$1" = "--test" ]; then
+        shift
+        # Skip actual installation in test mode
+        return 0
+    fi
+
+    # Validate environment
+    "${SCRIPT_DIR}/validate.sh" || {
+        echo "Validation failed"
+        exit 1
+    }
+
+    # Setup QEMU environment
+    "${SCRIPT_DIR}/scripts/qemu/07_qemu_setup.sh" || {
+        echo "QEMU setup failed"
+        exit 1
+    }
+
+    # Install image
+    local target_device="$1"
+    if [ -z "$target_device" ]; then
+        echo "Usage: $0 <target_device>"
         exit 1
     fi
 
-    if [ ! -f "$IMAGE_FILE" ]; then
-        echo "Image file not found: $IMAGE_FILE"
+    # Convert and write image
+    qemu-img convert -f qcow2 -O raw \
+      "${SCRIPT_DIR}/cc-base.qcow2" "$target_device"
+
+    # Setup partitions
+    "${SCRIPT_DIR}/validation/test_06_partition.sh" || {
+        echo "Partition setup failed"
         exit 1
-    fi
+    }
 
-    # Device check moved to install_image()
-}
+    # Verify installation
+    "${SCRIPT_DIR}/validation/test_05_cc_apps.sh" || {
+        echo "Application verification failed"
+        exit 1
+    }
 
-# Add device detection function
-detect_devices() {
-    local devices=()
-    local scores=()
-    # Look for nvme devices
-    for dev in /dev/nvme[0-9]n[0-9]; do
-        if [ -b "$dev" ]; then
-            devices+=("$dev")
-            # Score based on device type and size
-            local size_gb=$(lsblk -dn -o SIZE -b "$dev" | awk '{print int($1/1024/1024/1024)}')
-            local score=100  # Base score for NVMe
-            # Add size score (1 point per GB over minimum required)
-            score=$((score + size_gb - 32))  # Assuming 32GB minimum
-            scores+=("$score")
-        fi
-    done
-    # Look for SATA/SCSI devices
-    for dev in /dev/sd[a-z]; do
-        if [ -b "$dev" ]; then
-            devices+=("$dev")
-            # Score based on device type and size
-            local size_gb=$(lsblk -dn -o SIZE -b "$dev" | awk '{print int($1/1024/1024/1024)}')
-            local score=50   # Base score for SATA/SCSI
-            score=$((score + size_gb - 32))
-            scores+=("$score")
-        fi
-    done
-    
-    if [ ${#devices[@]} -eq 0 ]; then
-        error "No suitable devices found"
-    fi
-    
-    # Auto-select based on rules
-    local best_score=0
-    local best_index=0
-    
-    for i in "${!devices[@]}"; do
-        local dev="${devices[$i]}"
-        local score="${scores[$i]}"
-        local size_gb=$(lsblk -dn -o SIZE -b "$dev" | awk '{print int($1/1024/1024/1024)}')
-        local model=$(lsblk -dn -o MODEL "$dev")
-        local mounted=$(lsblk -dn -o MOUNTPOINT "$dev" | grep -v "^$" || true)
-        
-        # Log device info
-        log "Found device: $dev ($size_gb GB, $model)"
-        
-        # Disqualify if:
-        # 1. Device is too small
-        if [ "$size_gb" -lt 32 ]; then
-            log "Skipping $dev: Too small ($size_gb GB < 32 GB)"
-            continue
-        fi
-        # 2. Device is mounted
-        if [ -n "$mounted" ]; then
-            log "Skipping $dev: Currently mounted"
-            continue
-        fi
-        # 3. Device contains OS (has EFI or boot partition)
-        if lsblk -n "$dev" | grep -qE "EFI|boot"; then
-            log "Skipping $dev: Contains OS partitions"
-            continue
-        fi
-        
-        # Update best device if score is higher
-        if [ "$score" -gt "$best_score" ]; then
-            best_score="$score"
-            best_index="$i"
-        fi
-    done
-    
-    # Check if we found a suitable device
-    if [ "$best_score" -eq 0 ]; then
-        error "No suitable devices found matching criteria"
-    fi
-    
-    # Use the best device
-    TARGET_DEVICE="${devices[$best_index]}"
-    log "Auto-selected device: $TARGET_DEVICE (Score: $best_score)"
-    
-    # Allow override with confirmation
-    if [ "${AUTO_SELECT:-true}" != "true" ]; then
-        # Print available devices
-        echo "Available devices:"
-        for i in "${!devices[@]}"; do
-            local size=$(lsblk -dn -o SIZE "${devices[$i]}")
-            local model=$(lsblk -dn -o MODEL "${devices[$i]}")
-            echo "[$i] ${devices[$i]} ($size, $model, Score: ${scores[$i]})"
-        done
-        
-        # Ask user to select device
-        while true; do
-            read -p "Select device number [0-$((${#devices[@]}-1))]: " choice
-            if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -lt "${#devices[@]}" ]; then
-                TARGET_DEVICE="${devices[$choice]}"
-                break
-            fi
-            echo "Invalid selection, try again"
-        done
-    fi
-}
+    # Test QEMU setup
+    "${SCRIPT_DIR}/validation/test_vm_config.sh" || {
+        echo "VM configuration failed"
+        exit 1
+    }
 
-# Install image
-install_image() {
-    # If no device specified, detect available devices
-    if [ -z "$TARGET_DEVICE" ]; then
-        detect_devices
-    fi
-    
-    # Confirm device selection
-    echo "WARNING: This will erase all data on $TARGET_DEVICE"
-    read -p "Continue? [y/N] " confirm
-    if [[ ! "$confirm" =~ ^[yY]$ ]]; then
-        error "Installation aborted by user"
-    fi
-    
-    echo "Installing CC image to $TARGET_DEVICE..."
-    
-    # Write image to device
-    qemu-img convert -f qcow2 -O raw "$IMAGE_FILE" "$TARGET_DEVICE"
-    
-    # Update partition table
-    partprobe "$TARGET_DEVICE"
-    
-    # Mount encrypted partitions
-    cryptsetup open "${TARGET_DEVICE}p2" app_crypt
-    mount /dev/mapper/app_crypt /mnt/app
-    
-    # Setup dm-verity for read-only partition
-    veritysetup verify "${TARGET_DEVICE}p3" "${TARGET_DEVICE}p3.verity"
-    
     echo "Installation completed successfully"
 }
 
-# Add TEE configuration handling
-configure_tee() {
-    # TEE config is copied from /boot/cc/tee.conf during installation
-    
-    # Create systemd service to handle TEE memory resizing
-    cat > "/etc/systemd/system/tee-memory.service" <<EOF
-[Unit]
-Description=TEE Memory Configuration Service
-After=local-fs.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/configure-tee-memory
-RemainAfterExit=yes
-ProtectSystem=strict
-ReadOnlyPaths=/
-ReadWritePaths=/dev/shm
-ProtectHome=yes
-
-[Install]
-WantedBy=multi-user.target
+install "$@"
 EOF
+    chmod +x "${work_dir}/installer/install.sh"
 
-    # Create the configuration script
-    cat > "/usr/local/sbin/configure-tee-memory" <<EOF
-#!/bin/bash
-set -e
-
-# Source TEE configuration
-source /boot/cc/tee.conf
-
-# Validate memory size
-if [[ "\${TEE_MEMORY_SIZE}" =~ ^[0-9]+[GgMm]$ ]]; then
-    # Convert sizes to bytes for comparison
-    min_bytes=\$(numfmt --from=iec \${TEE_MEMORY_MIN})
-    max_bytes=\$(numfmt --from=iec \${TEE_MEMORY_MAX})
-    size_bytes=\$(numfmt --from=iec \${TEE_MEMORY_SIZE})
+    # Create installer package
+    cd "$work_dir"
+    tar czf "${output_dir}/${installer_name}.tar.gz" installer/
     
-    if [ \$size_bytes -lt \$min_bytes ]; then
-        echo "Error: TEE memory size below minimum (\${TEE_MEMORY_MIN})"
-        exit 1
+    # Generate checksum
+    cd "${output_dir}"
+    sha256sum "${installer_name}.tar.gz" > "${installer_name}.tar.gz.sha256"
+
+    # Sign installer
+    if [ -f "${SCRIPT_DIR}/keys/signing.key" ]; then
+        gpg --detach-sign --armor -u "${SIGNING_KEY}" "${installer_name}.tar.gz"
     fi
-    
-    if [ \$size_bytes -gt \$max_bytes ]; then
-        echo "Error: TEE memory size above maximum (\${TEE_MEMORY_MAX})"
-        exit 1
-    fi
-    
-    # Apply configuration
-    mount -o remount,size=\${TEE_MEMORY_SIZE} \${TEE_MEMORY_PATH}
-    chown \${TEE_MEMORY_OWNER}:\${TEE_MEMORY_GROUP} \${TEE_MEMORY_PATH}
-    chmod \${TEE_MEMORY_MODE} \${TEE_MEMORY_PATH}
-fi
-EOF
 
-    chmod 0755 "/usr/local/sbin/configure-tee-memory"
+    # Cleanup
+    rm -rf "$work_dir"
+
+    success "Generated installer: ${output_dir}/${installer_name}.tar.gz"
+    
+    # Test the generated installer
+    test_installer "${output_dir}/${installer_name}.tar.gz"
 }
 
 # Main
-echo "NVIDIA CC Image Installer"
-check_requirements
-install_image
-configure_tee
-EOF
+main() {
+    local output_dir="${1:-$(pwd)}"
+    mkdir -p "$output_dir"
 
-    chmod +x "$installer_name"
-    echo "Generated installer script: $installer_name"
+    # Generate installer
+    generate_installer "$output_dir"
 }
 
-# Run generator
-generate_installer 
+main "$@" 

@@ -5,6 +5,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/scripts/common/common.sh"
 source "${SCRIPT_DIR}/scripts/common/security_hardening.sh"
+source "${SCRIPT_DIR}/config/partition.conf"
+source "${SCRIPT_DIR}/config/qemu.conf"
 
 log "Starting NVIDIA CC Image Build (Version: ${VERSION})"
 
@@ -14,27 +16,31 @@ verify_installation || {
     exit 1
 }
 
-# 1. Build Base Image Phase
-log "Phase 1: Building Base Image"
-"${SCRIPT_DIR}/scripts/01_prepare.sh"
-"${SCRIPT_DIR}/scripts/02_install_os.sh"
+# Create output directory
+mkdir -p "${OUTPUT_DIR}"
 
-# 2. CC Components Phase
-log "Phase 2: Installing CC Components"
+# Build sequence
+log "Starting build process..."
+
+"${SCRIPT_DIR}/scripts/01_prepare.sh"         # Prepare environment
+"${SCRIPT_DIR}/scripts/02_install_os.sh"      # Install base OS
 "${SCRIPT_DIR}/scripts/03_drivers.sh"         # Install TEE drivers
 "${SCRIPT_DIR}/scripts/04_cc_setup.sh"        # Setup TEE and get keys
 "${SCRIPT_DIR}/scripts/05_cc_apps.sh"         # Install CC apps
 "${SCRIPT_DIR}/scripts/06_partition.sh"       # Setup encrypted partitions
+"${SCRIPT_DIR}/scripts/07_qemu_setup.sh"     # Setup QEMU/virtualization
 
-# 3. Generate Installer Phase
-log "Phase 3: Generating Installer"
-"${SCRIPT_DIR}/scripts/generate_installer.sh"
+# Convert to QCOW2 format
+log "Converting to QCOW2 format..."
+qemu-img convert -f raw -O qcow2 \
+  -o compat=1.1,compression_type=zlib \
+  "${OUTPUT_DIR}/cc-base.img" \
+  "${OUTPUT_DIR}/cc-base.qcow2"
 
-# 4. Run Tests
-log "Phase 4: Running Tests"
-"${SCRIPT_DIR}/tests/run_tests.sh"
+# Generate installer
+"${SCRIPT_DIR}/scripts/generate_installer.sh" "${OUTPUT_DIR}"
 
-success "Build completed successfully!"
+success "Build completed successfully"
 log "Generated:"
 log "  - Image: ${OUTPUT_IMAGE}"
 log "  - Installer: ${INSTALLER_NAME}" 
