@@ -7,6 +7,7 @@ source "${SCRIPT_DIR}/../scripts/common.sh"
 source "${SCRIPT_DIR}/../config/partition.conf"
 source "${SCRIPT_DIR}/../config/security.conf"
 source "${SCRIPT_DIR}/../config/tee.conf"
+source "${SCRIPT_DIR}/scripts/common/security_hardening.sh"
 
 test_preparation() {
     # Test required tools
@@ -15,6 +16,7 @@ test_preparation() {
         "parted"
         "cryptsetup"
         "veritysetup"
+        "tpm2_tools"
         "qemu-img"
         "curl"
         "wget"
@@ -23,6 +25,19 @@ test_preparation() {
     for tool in "${required_tools[@]}"; do
         if ! command -v "$tool" &> /dev/null; then
             error "Required tool '$tool' not found"
+        fi
+    done
+    
+    # Test config files exist
+    local required_configs=(
+        "partition.conf"
+        "security.conf"
+        "tee.conf"
+    )
+    
+    for config in "${required_configs[@]}"; do
+        if [ ! -f "${SCRIPT_DIR}/config/${config}" ]; then
+            error "Required config '${config}' not found"
         fi
     done
     
@@ -49,6 +64,9 @@ test_preparation() {
     if [ ! -f "${ROOT_MOUNT}/log/build.log" ]; then
         error "Build log not created"
     fi
+    
+    # Test security hardening
+    verify_build_deps || error "Build dependencies verification failed"
 }
 
 test_preparation 

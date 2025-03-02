@@ -5,10 +5,34 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../config/partition.conf"
 source "${SCRIPT_DIR}/../config/security.conf"
+source "${SCRIPT_DIR}/common/security_hardening.sh"
+
+# Security settings
+readonly SECURE_MOUNT_OPTS="nodev,nosuid,noexec,ro"
+readonly WORKSPACE_MOUNT_OPTS="nodev,nosuid"
+readonly MEMORY_PROTECTION="noexec,nosuid,nodev,private"
 
 # Create working directory
 WORK_DIR=$(mktemp -d)
-trap 'rm -rf "$WORK_DIR"' EXIT
+trap 'cleanup_install "$WORK_DIR"' EXIT
+
+# Verify installation environment
+verify_secure_environment() {
+    # Check secure boot status
+    if ! mokutil --sb-state | grep -q "SecureBoot enabled"; then
+        error "Secure Boot must be enabled"
+    }
+    
+    # Verify TPM is available and enabled
+    if ! tpm2_getcap properties-fixed | grep -q "TPM2_PT_FIXED"; then
+        error "TPM 2.0 is required"
+    }
+    
+    # Check CPU security features
+    if ! grep -q "sev" /proc/cpuinfo && ! grep -q "tdx" /proc/cpuinfo; then
+        error "CPU must support SEV or TDX"
+    }
+}
 
 # Pre-configure debconf to avoid prompts
 cat > "$WORK_DIR/debconf.conf" <<EOF
@@ -29,11 +53,11 @@ mount -o loop "$ISO_FILE" "$WORK_DIR"
 # Install base system with non-interactive mode
 DEBIAN_FRONTEND=noninteractive debootstrap \
     --arch=amd64 \
-    --include="linux-image-amd64,grub2,sudo,curl,wget,gnupg,cryptsetup,cryptsetup-bin,cryptsetup-initramfs,dmsetup,veritysetup" \
-    --no-check-gpg \
+    --include="linux-image-amd64,grub2,sudo,curl,wget,gnupg,cryptsetup,cryptsetup-bin,\
+    cryptsetup-initramfs,dmsetup,veritysetup,tpm2-tools,sev-guest-utils,tdx-guest-tools" \
+    --keyring=/usr/share/keyrings/ubuntu-archive-keyring.gpg \
     "$OS_CODENAME" \
-    "$ROOT_MOUNT" \
-    "$WORK_DIR/ubuntu"
+    "$ROOT_MOUNT"
 
 # Configure system non-interactively
 chroot "$ROOT_MOUNT" /bin/bash -c "
@@ -89,12 +113,54 @@ chroot "$ROOT_MOUNT" /bin/bash -c "
 
     # Configure kernel parameters for CC
     cat > /etc/sysctl.d/99-cc-secure.conf <<EOF
-kernel.modules_disabled = 1
-kernel.randomize_va_space = 2
-kernel.kptr_restrict = 2
-kernel.dmesg_restrict = 1
+# TEE-specific settings
+memory_encryption = on
+cc.tee.enabled = 1
+cc.tee.measurement_enforce = 1
 EOF
 "
 
 # Unmount ISO
-umount "$WORK_DIR" 
+umount "$WORK_DIR"
+
+# Setup secure boot keys
+setup_secure_boot() {
+    local efi_dir="${ROOT_MOUNT}/boot/efi/EFI/ubuntu"
+    
+    # Generate secure boot keys
+    openssl req -new -x509 -newkey rsa:2048 -keyout PK.key -out PK.crt -days 3650 -subj "/CN=Platform Key"
+    openssl req -new -x509 -newkey rsa:2048 -keyout KEK.key -out KEK.crt -days 3650 -subj "/CN=Key Exchange Key"
+    openssl req -new -x509 -newkey rsa:2048 -keyout db.key -out db.crt -days 3650 -subj "/CN=Signature Database"
+    
+    # Sign GRUB and kernel
+    sbsign --key db.key --cert db.crt "${efi_dir}/grubx64.efi"
+    sbsign --key db.key --cert db.crt "${ROOT_MOUNT}/boot/vmlinuz-*"
+}
+
+# Integrate with partition security
+integrate_security() {
+    # Add mount options to fstab
+    sed -i "s|^\(/dev/mapper/root_crypt.*\)|\1,${SECURE_MOUNT_OPTS}|" "${ROOT_MOUNT}/etc/fstab"
+    sed -i "s|^\(/dev/mapper/workspace_crypt.*\)|\1,${WORKSPACE_MOUNT_OPTS}|" "${ROOT_MOUNT}/etc/fstab"
+    
+    # Configure tmpfs security
+    echo "tmpfs ${TEE_MEMORY_PATH} tmpfs ${MEMORY_PROTECTION},size=${TEE_MEMORY_SIZE} 0 0" >> "${ROOT_MOUNT}/etc/fstab"
+    
+    # Setup SELinux contexts for partitions
+    chroot "$ROOT_MOUNT" /bin/bash -c "
+        semanage fcontext -a -t cc_exec_t '/opt/cc(/.*)?'
+        semanage fcontext -a -t tee_memory_t '${TEE_MEMORY_PATH}(/.*)?'
+        restorecon -R /opt/cc ${TEE_MEMORY_PATH}
+    "
+}
+
+# Main installation flow
+main() {
+    verify_secure_environment
+    setup_secure_boot
+    integrate_security
+    verify_installation
+}
+
+# Run installation
+main 

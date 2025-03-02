@@ -8,6 +8,7 @@ source "${SCRIPT_DIR}/../config/partition.conf"
 source "${SCRIPT_DIR}/../config/security.conf"
 source "${SCRIPT_DIR}/common.sh"
 source "${SCRIPT_DIR}/keys/key_service.sh"
+source "${SCRIPT_DIR}/common/security_hardening.sh"
 
 # Install AMD SEV driver
 chroot "$ROOT_MOUNT" /bin/bash -c "
@@ -124,4 +125,17 @@ install_drivers() {
                 /lib/modules/$(uname -r)/updates/dkms/$module.ko
         done
     "
+}
+
+# Verify driver requirements
+verify_tee_drivers() {
+    local tee_type="$1"
+    case "$tee_type" in
+        sev)
+            lsmod | grep -q "^sev" || error "SEV driver not loaded"
+            ;;
+        tdx)
+            lsmod | grep -q "^tdx" || error "TDX driver not loaded"
+            ;;
+    esac
 } 

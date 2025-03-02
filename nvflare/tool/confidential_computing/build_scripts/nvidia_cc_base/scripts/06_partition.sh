@@ -6,9 +6,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../config/partition.conf"
 source "${SCRIPT_DIR}/../config/security.conf"
-source "${SCRIPT_DIR}/common.sh"
-source "${SCRIPT_DIR}/lib/key_management.sh"
-source "${SCRIPT_DIR}/lib/key_service.sh"
+source "${SCRIPT_DIR}/common/security_hardening.sh"
+source "${SCRIPT_DIR}/keys/key_management.sh"
+source "${SCRIPT_DIR}/keys/key_service.sh"
 
 # Setup boot partition first
 mkfs.ext4 "${DEVICE}p1"
@@ -216,7 +216,7 @@ setup_partitions() {
             "p2")  # Host-CC partition (unencrypted)
                 mkfs.${fs} "${device}${name}"
             "p3"|"p4")  # Root and CC-Apps partitions (encrypted)
-                setup_encrypted_partition "${device}${name}" "${name%p*}_crypt"
+                setup_crypt_partition "${name%p*}" "${part_size}" "${ROOT_MOUNT}${mount}" "${encryption}" "${name#p*}"
                 ;;
             "p5")       # Dynamic partition (configurable encryption)
                 if [ -f "${DYNAMIC_PARTITION[keyfile]}" ]; then
@@ -240,26 +240,76 @@ setup_partitions() {
     success "Partition setup complete"
 }
 
-# Setup encrypted partition
-setup_encrypted_partition() {
+# Error handling
+handle_error() {
+    local func="$1"
+    local cmd="$2"
+    local ret="$3"
+    error "Failed in ${func} executing '${cmd}': exit code ${ret}"
+    cleanup_partitions
+    exit 1
+}
+
+# Verification helpers
+verify_luks_device() {
     local device="$1"
-    local mapper_name="$2"
-    local partition="$3"
+    local name="$2"
     
-    # Get partition key from key service
-    local part_key=$(get_key "${partition}_key")
-    if [ -z "$part_key" ]; then
-        generate_key "${partition}_key" "partition"
-        part_key=$(get_key "${partition}_key")
+    # Verify LUKS header
+    if ! cryptsetup isLuks "$device"; then
+        handle_error "verify_luks_device" "cryptsetup isLuks" 1
     fi
     
-    # Setup LUKS with partition key
-    cryptsetup luksFormat \
-        --type luks2 \
+    # Verify cipher and key size
+    local header_info=$(cryptsetup luksDump "$device")
+    if ! echo "$header_info" | grep -q "cipher: ${LUKS_CIPHER}"; then
+        handle_error "verify_luks_device" "cipher verification" 1
+    fi
+}
+
+verify_verity_device() {
+    local device="$1"
+    local hash_dev="$2"
+    local root_hash="$3"
+    
+    # Verify verity setup
+    if ! veritysetup verify "$device" "$hash_dev" "$root_hash"; then
+        handle_error "verify_verity_device" "veritysetup verify" 1
+    fi
+}
+
+# Setup LUKS encrypted partition
+setup_crypt_partition() {
+    local name="$1"
+    local size="$2"
+    local mount_point="$3"
+    local encryption="$4"
+    local part_num="$5"
+
+    # Get hardware-bound key
+    local hw_key=$(get_tee_key "hw_key")
+    [ -z "$hw_key" ] && handle_error "setup_crypt_partition" "get_tee_key" 1
+    
+    # Create and format LUKS partition
+    cryptsetup luksFormat --type luks2 \
         --cipher "${LUKS_CIPHER}" \
         --key-size "${LUKS_KEY_SIZE}" \
-        --key-file <(echo -n "$part_key") \
-        "$device"
+        --hash "${KEY_HASH}" \
+        "${DEVICE}p${part_num}" \
+        <(echo -n "$hw_key") || handle_error "setup_crypt_partition" "luksFormat" $?
+        
+    # Verify LUKS setup
+    verify_luks_device "${DEVICE}p${part_num}" "${name}_crypt"
+    
+    # Open LUKS device
+    cryptsetup open "${DEVICE}p${part_num}" "${name}_crypt" \
+        --key-file <(echo -n "$hw_key") || handle_error "setup_crypt_partition" "open" $?
+        
+    # Create filesystem
+    mkfs.ext4 "/dev/mapper/${name}_crypt" || handle_error "setup_crypt_partition" "mkfs.ext4" $?
+
+    # Verify filesystem
+    fsck.ext4 -n "/dev/mapper/${name}_crypt" || handle_error "setup_crypt_partition" "fsck.ext4" $?
 }
 
 # Mount all partitions
@@ -282,6 +332,92 @@ mount_partitions() {
         fi
     done
 }
+
+# Setup verity for boot partition (p2)
+setup_verity_partition() {
+    local name="$1"
+    local size="$2"
+    local mount_point="$3"
+    local part_num="$4"
+
+    # Create data and hash partitions
+    parted -s "$DEVICE" mkpart primary ext4 "$start" "$end"
+    mkfs.ext4 -O metadata_csum,64bit "${DEVICE}p${part_num}" || \
+        handle_error "setup_verity_partition" "mkfs.ext4" $?
+    
+    # Calculate hash
+    veritysetup format \
+        --hash="${VERITY_HASH_ALGORITHM}" \
+        --data-block-size="${VERITY_DATA_BLOCK_SIZE}" \
+        --hash-block-size="${VERITY_HASH_BLOCK_SIZE}" \
+        "${DEVICE}p${part_num}" "${DEVICE}p${part_num}_hash"
+    
+    # Store hash for boot
+    veritysetup create "${name}_verity" \
+        "${DEVICE}p${part_num}" \
+        "${DEVICE}p${part_num}_hash" \
+        "$root_hash" \
+        --options="${VERITY_OPTS}"
+
+    # Verify setup
+    verify_verity_device "${DEVICE}p${part_num}" "${DEVICE}p${part_num}_hash" "$root_hash"
+}
+
+# Setup root partition (p3) with verity
+setup_root_verity() {
+    # Similar to above but with root partition specifics
+}
+
+# Setup dynamic partition with optional encryption
+setup_dynamic_partition() {
+    local name="$1"
+    local size="$2"
+    local mount_point="$3"
+    local encryption="$4"
+    local part_num="$5"
+
+    if [ "$encryption" = "required" ] || [ "$encryption" = "optional" -a -n "$ENCRYPT_JOBS" ]; then
+        setup_crypt_partition "$name" "$size" "$mount_point" "$encryption" "$part_num"
+    else
+        # Create standard partition
+        parted -s "$DEVICE" mkpart primary ext4 "$start" "$end"
+        mkfs.ext4 "${DEVICE}p${part_num}"
+    fi
+}
+
+# Setup TEE memory
+setup_tee_memory() {
+    # Create mount point
+    mkdir -p "${ROOT_MOUNT}${TEE_MEMORY_PATH}"
+    chmod 0700 "${ROOT_MOUNT}${TEE_MEMORY_PATH}"
+    chown root:root "${ROOT_MOUNT}${TEE_MEMORY_PATH}"
+    
+    # Add to fstab
+    echo "tmpfs ${TEE_MEMORY_PATH} tmpfs defaults,size=${TEE_MEMORY_SIZE},mode=0700 0 0"
+}
+
+# Cleanup function
+cleanup_partitions() {
+    log "Cleaning up partition setup..."
+    
+    # Close all LUKS devices
+    for mapper in $(dmsetup ls --target crypt | cut -f1); do
+        cryptsetup close "$mapper" || true
+    done
+    
+    # Close all verity devices
+    for mapper in $(dmsetup ls --target verity | cut -f1); do
+        veritysetup close "$mapper" || true
+    done
+    
+    # Unmount all partitions
+    for mount in $(mount | grep "${ROOT_MOUNT}" | cut -d' ' -f3 | sort -r); do
+        umount "$mount" || true
+    done
+}
+
+# Set trap for cleanup
+trap cleanup_partitions EXIT
 
 # Run partition setup
 setup_partitions "$DEVICE" 

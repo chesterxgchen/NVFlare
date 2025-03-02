@@ -6,6 +6,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../config/partition.conf"
 source "${SCRIPT_DIR}/../config/security.conf"
 source "${SCRIPT_DIR}/keys/key_management.sh"
+source "${SCRIPT_DIR}/common/common.sh"
+source "${SCRIPT_DIR}/common/security_hardening.sh"
+
+# Verify TEE environment before setup
+verify_tee_environment || {
+    error "TEE environment verification failed"
+    exit 1
+}
 
 # Apply AMD patches (placeholder)
 apply_amd_patches() {
@@ -168,4 +176,20 @@ chroot "$ROOT_MOUNT" /bin/bash -c "
         tdx-guest-userspace=${INTEL_TDX_GUEST} \
         tdx-guest-attestation=${INTEL_TDX_GUEST} \
         nvidia-cc-nras=${NVIDIA_NRAS}
-" 
+"
+
+# Setup TEE components
+setup_tee_components() {
+    local tee_type
+    # Detect TEE type and verify support
+    if grep -q "sev" /proc/cpuinfo; then
+        tee_type="sev"
+        verify_tee_features "sev_snp" || error "SEV-SNP features not available"
+    elif grep -q "tdx" /proc/cpuinfo; then
+        tee_type="tdx"
+        verify_tee_features "tdx_guest" || error "TDX features not available"
+    else
+        error "No supported TEE found"
+        exit 1
+    fi
+} 

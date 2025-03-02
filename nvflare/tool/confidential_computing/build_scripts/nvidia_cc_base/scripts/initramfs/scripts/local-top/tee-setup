@@ -2,6 +2,9 @@
 
 PREREQ="tee-init"
 
+# Source security settings
+. /scripts/common/security_hardening.sh
+
 prereqs()
 {
     echo "$PREREQ"
@@ -17,17 +20,52 @@ esac
 # Source key management
 . /scripts/keys/key_management.sh
 
+# Verify TEE environment
+verify_tee_environment() {
+    # Check CPU security features
+    if ! grep -q "sev" /proc/cpuinfo && ! grep -q "tdx" /proc/cpuinfo; then
+        error "CPU must support SEV or TDX"
+        exit 1
+    fi
+    
+    # Verify TPM
+    if ! verify_tpm; then
+        error "TPM verification failed"
+        exit 1
+    fi
+    
+    # Verify TEE features
+    if ! verify_tee_features; then
+        error "TEE features verification failed"
+        exit 1
+    fi
+    
+    # Verify TEE measurements
+    if ! verify_tee_measurements; then
+        error "TEE measurements verification failed"
+        exit 1
+    fi
+}
+
 # Setup TEE keys early in boot
+setup_tee_keys() {
+    # Verify environment first
+    verify_tee_environment
+
+    # Get hardware-bound key
+    hw_key=$(get_tee_key "hw_key")
+    [ -z "$hw_key" ] && error "Failed to get hardware key" && exit 1
+    
+    # Export for cryptroot script
+    export CRYPTKEY="$hw_key"
+}
+
+# Main
+verify_tee_environment
 setup_tee_keys
 
 # If using encrypted root, handle it
 if [ -f /scripts/local-top/cryptroot ]; then
-    # Get hardware-bound key
-    hw_key=$(get_tee_key "hw_key")
-    
-    # Export for cryptroot script
-    export CRYPTKEY="$hw_key"
-    
     # Run standard cryptroot script
     . /scripts/local-top/cryptroot
 fi 

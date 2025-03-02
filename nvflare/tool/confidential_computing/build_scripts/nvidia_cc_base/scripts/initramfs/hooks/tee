@@ -29,4 +29,12 @@ cp -a /usr/local/cc/scripts/keys/* $DESTDIR/scripts/keys/
 
 # Copy configurations
 mkdir -p $DESTDIR/etc/cc
-cp -a /etc/cc/key_settings.conf $DESTDIR/etc/cc/ 
+cp -a /etc/cc/key_settings.conf $DESTDIR/etc/cc/
+
+# Copy security hardening tools
+copy_exec /usr/bin/tpm2_pcrread /usr/bin
+copy_exec /usr/bin/sev-guest-get-report /usr/bin
+copy_exec /usr/bin/tdx-guest-quote /usr/bin
+
+# Copy verification scripts
+cp -a /usr/share/initramfs-tools/scripts/common/security_hardening.sh "${DESTDIR}/scripts/common/" 

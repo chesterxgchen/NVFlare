@@ -6,12 +6,28 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 source "${SCRIPT_DIR}/../config/partition.conf"
 source "${SCRIPT_DIR}/../config/security.conf"
+source "${SCRIPT_DIR}/scripts/common/security_hardening.sh"
 
 test_os_installation() {
     local test_dir=$(mktemp -d)
     
     # Mount image
     guestmount -a "$OUTPUT_IMAGE" -i "$test_dir"
+    
+    # Test required packages
+    local required_packages=(
+        "cryptsetup"
+        "cryptsetup-bin"
+        "cryptsetup-initramfs"
+        "tpm2-tools"
+        "veritysetup"
+    )
+
+    for pkg in "${required_packages[@]}"; do
+        if ! chroot "$test_dir" dpkg -l | grep -q "^ii.*$pkg"; then
+            error "Required package '$pkg' not installed"
+        fi
+    done
     
     # Test OS version
     if ! grep -q "VERSION=\"$OS_VERSION\"" "${test_dir}/etc/os-release"; then
@@ -74,6 +90,14 @@ test_os_installation() {
     # Test kernel parameters
     if ! grep -q "kernel.modules_disabled = 1" "${test_dir}/etc/sysctl.d/99-cc-secure.conf"; then
         error "Kernel hardening not configured"
+    fi
+    
+    # Test TEE memory setup
+    if [ ! -d "${test_dir}${TEE_MEMORY_PATH}" ]; then
+        error "TEE memory path not created"
+    fi
+    if [ "$(stat -c %a ${test_dir}${TEE_MEMORY_PATH})" != "700" ]; then
+        error "TEE memory path has wrong permissions"
     fi
     
     # Cleanup

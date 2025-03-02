@@ -468,4 +468,271 @@ This ensures:
    - Alert on unexpected states
    - Log key derivation events
 
-This cross-boot persistence design ensures data remains accessible across reboots while maintaining security properties and providing recovery options for legitimate platform changes. 
+This cross-boot persistence design ensures data remains accessible across reboots while maintaining security properties and providing recovery options for legitimate platform changes.
+
+### Partition Security Enhancements
+
+#### Overview
+
+```ascii
+┌──────────────────────────────────────────────────┐
+│           Security Enhancement Layers            │
+│                                                  │
+│    Mount Options    Filesystem      Device      │
+│    Protection      Hardening      Security      │
+│         │             │              │          │
+│         └─────────────┼──────────────┘          │
+│                       │                         │
+│              Verification Steps                 │
+│                       │                         │
+│         ┌────────────┴────────────┐            │
+│     Runtime         Storage     Cleanup         │
+│   Protection      Protection    Handlers        │
+└──────────────────────────────────────────────────┘
+```
+
+#### Mount Options Security
+
+1. Partition Mount Protections
+   - `nodev`: Prevent device file creation
+   - `nosuid`: Disable setuid/setgid bits
+   - `noexec`: Prevent code execution
+
+2. Verity Mount Options
+   - `restart_on_corruption`: Automatic reboot on integrity failure
+   - `ignore_corruption`: Continue boot with warnings
+
+3. LUKS Device Options
+   - `allow-discards`: Enable secure TRIM
+   - `no-read-workqueue`: Reduce DMA attack surface
+   - `no-write-workqueue`: Direct I/O for better security
+
+#### Filesystem Hardening
+
+1. Extended Attributes
+   ```ascii
+   Filesystem Features:
+   ├── metadata_csum: Checksum protection
+   ├── 64bit: Extended inode support
+   └── journal_checksum: Journal integrity
+   ```
+
+2. TEE Memory Protection
+   - Mode 0700 permissions
+   - Root-only ownership
+   - Memory-only storage (tmpfs)
+   - Secure mount options
+
+#### Verification Mechanisms
+
+1. LUKS Verification
+   ```ascii
+   LUKS Header Check ──► Cipher Verification ──► Key Size Validation
+          │                      │                      │
+          └──────────────────────┴──────────────────────┘
+                         Continuous Monitoring
+   ```
+
+2. Verity Verification
+   - Hash algorithm validation
+   - Block size verification
+   - Root hash confirmation
+   - Runtime integrity checks
+
+#### Security Cleanup Handlers
+
+1. Device Cleanup
+   - LUKS device closure
+   - Verity device cleanup
+   - Secure unmounting
+
+2. Error Handling
+   - Graceful cleanup on errors
+   - Secure state reset
+   - Resource deallocation
+
+#### Implementation Benefits
+
+1. Security Properties
+   - Defense in depth approach
+   - Multiple protection layers
+   - Continuous verification
+
+2. Operational Security
+   - Clean failure handling
+   - Secure resource cleanup
+   - State verification
+
+3. Attack Surface Reduction
+   - Limited device access
+   - Controlled execution paths
+   - Protected memory spaces
+
+#### Integration Points
+
+```ascii
+┌────────────────────────────────────────────────┐
+│              Security Integration              │
+│                                               │
+│ Boot Process ──► Partition Setup ──► Runtime  │
+│      │               │              │         │
+│      └───────────────┴──────────────┘         │
+│            Continuous Verification             │
+└────────────────────────────────────────────────┘
+```
+
+1. Boot Time Integration
+   - Early security initialization
+   - Verified boot chain
+   - Secure state establishment
+
+2. Runtime Protection
+   - Continuous integrity checking
+   - Access control enforcement
+   - Resource isolation
+
+These security enhancements provide a comprehensive approach to protecting sensitive data and operations throughout the system lifecycle, from boot to runtime to shutdown.
+
+### System Security Hardening
+
+#### Overview
+
+```ascii
+┌──────────────────────────────────────────────────┐
+│           TEE Security Verification              │
+│                                                  │
+│    Hardware      Memory        Runtime           │
+│    Features    Encryption    Measurements        │
+│      │            │             │         │      │
+│      └────────────┴─────────────┴─────────┘      │
+│                     │                            │
+│             TEE Attestation                      │
+│                     │                            │
+│    ┌────────────────┴────────────────┐          │
+│    │               │                 │          │
+│   TEE          Runtime           System         │
+│  Checks        Controls          Audit          │
+└──────────────────────────────────────────────────┘
+```
+
+#### TEE Security Features
+
+1. Required Parameters
+   ```bash
+   memory_encryption=on      # TEE memory encryption
+   cc.tee.enabled=1         # TEE mode enabled
+   cc.tee.measurement_enforce=1 # Enforce measurements
+   ```
+
+2. Hardware Requirements
+   ```bash
+   CPU Features:
+   ├── AMD SEV-SNP: Secure Encrypted Virtualization
+   └── Intel TDX: Trust Domain Extensions
+   
+   TPM Requirements:
+   └── TPM 2.0: Trusted Platform Module
+   ```
+
+#### Memory Protection
+
+1. Mount Options
+   ```ascii
+   TEE Memory:
+   ├── Encrypted: Hardware-level encryption
+   ├── Isolated: Protected from host
+   └── Measured: Runtime attestation
+   ```
+
+2. Memory Security
+   - Hardware-enforced isolation
+   - Encrypted memory pages
+   - Secure key storage
+
+#### Runtime Security
+
+1. TEE Runtime
+   ```ascii
+   Runtime Protection:
+   ├── Measured Launch: Verified boot
+   ├── Runtime Attestation: Continuous verification
+   └── Secure Storage: Protected data
+   ```
+
+2. Security Features
+   - Hardware-based isolation
+   - Runtime measurements
+   - Secure key handling
+
+#### Verification Mechanisms
+
+1. Hardware Verification
+   ```ascii
+   Verification Chain:
+   ├── CPU Features: SEV/TDX support
+   ├── TPM Status: PCR measurements
+   └── Memory Encryption: Hardware support
+   ```
+
+#### TEE Environment Verification
+
+1. Hardware Checks
+   ```ascii
+   Required Features:
+   ├── CPU: SEV or TDX support
+   ├── TPM: Version 2.0
+   └── Memory: Encryption enabled
+   ```
+
+2. Runtime Verification
+   - Driver status checks
+   - Memory permissions
+   - Encryption verification
+
+#### Implementation Benefits
+
+1. Security Depth
+   - Hardware-based security
+   - TEE isolation
+   - Runtime attestation
+
+2. Attack Surface Reduction
+   - Hardware-enforced boundaries
+   - Encrypted memory
+   - Measured execution
+
+3. Runtime Protection
+   - Continuous measurement
+   - Hardware isolation
+   - Secure key operations
+
+#### Integration Points
+
+```ascii
+┌────────────────────────────────────────────────┐
+│           Security Integration Flow            │
+│                                               │
+│ Installation ──► Boot Process ──► Runtime     │
+│      │              │             │          │
+│ Verification    Measurements   Monitoring     │
+│      │              │             │          │
+│      └──────────────┴─────────────┘          │
+└────────────────────────────────────────────────┘
+```
+
+1. Installation Phase
+   - Parameter configuration
+   - System hardening
+   - Initial verification
+
+2. Boot Process
+   - Parameter validation
+   - TEE verification
+   - Security measurements
+
+3. Runtime Monitoring
+   - Continuous verification
+   - Resource monitoring
+   - Security auditing
+
+These hardening measures provide comprehensive system protection while maintaining the security properties required for confidential computing environments. 

@@ -3,7 +3,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/common.sh"
+source "${SCRIPT_DIR}/common/common.sh"
+source "${SCRIPT_DIR}/common/security_hardening.sh"
 source "${SCRIPT_DIR}/../config/partition.conf"
 source "${SCRIPT_DIR}/../config/security.conf"
 source "${SCRIPT_DIR}/lib/key_service.sh"
@@ -63,8 +64,15 @@ install_attestation_sdks() {
     local install_dir="$1"
     local cpu_vendor=$(detect_cpu_vendor)
     
+    # Verify key management is initialized
+    if ! verify_key_service_status; then
+        error "Key management not initialized"
+        return 1
+    }
+    
     # Create attestation directory
     mkdir -p "$install_dir"
+    chmod 0700 "$install_dir"
     
     # Always install NVIDIA NRAS since this is NVIDIA CC
     install_nvidia_nras_sdk "$install_dir"
@@ -72,9 +80,11 @@ install_attestation_sdks() {
     # Install CPU-specific SDK
     case "$cpu_vendor" in
         "amd")
+            verify_partition_encryption || return 1
             install_amd_snp_sdk "$install_dir"
             ;;
         "intel")
+            verify_partition_encryption || return 1
             install_intel_ita_sdk "$install_dir"
             ;;
     esac
@@ -84,42 +94,23 @@ install_attestation_sdks() {
 install_cc_apps() {
     local root_mount="$1"
     
-    # Verify hardware binding before installing apps
-    if ! verify_binding; then
-        error "Hardware binding verification failed"
-        return 1
-    fi
+    # Create app directories with secure permissions
+    mkdir -p "${root_mount}/opt/cc/apps"
+    chown root:root "${root_mount}/opt/cc/apps"
+    chmod 0755 "${root_mount}/opt/cc/apps"
     
-    # Create CC application directories
-    for dir_spec in "${CC_APP_DIRS[@]}"; do
-        IFS=':' read -r dir owner perms <<< "$dir_spec"
-        mkdir -p "${root_mount}${dir}"
-        chown "$owner" "${root_mount}${dir}"
-        chmod "$perms" "${root_mount}${dir}"
+    # Verify app signatures before installation
+    for app in "${CC_APPS[@]}"; do
+        if ! verify_app_signature "$app"; then
+            error "App signature verification failed: $app"
+            return 1
+        fi
     done
     
-    # Initialize CC app keys
-    init_cc_app_keys
-    
-    # Create application directories
-    local cc_mount="${root_mount}/etc/cc"
-    mkdir -p "${cc_mount}/apps"
-    mkdir -p "${cc_mount}/attestation"
-    
-    # Install attestation SDKs
-    install_attestation_sdks "${cc_mount}/attestation"
-    
-    # Configure secure boot for attestation
-    chroot "$root_mount" /bin/bash -c "
-        # Update grub config for secure boot
-        echo 'GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT mem_encrypt=on kvm_amd.sev=1\"' >> /etc/default/grub
-        update-grub
-    "
-    
-    # Install other CC applications here
-    # TODO: Add other CC application installations
-    
-    success "CC applications installation complete"
+    # Install apps
+    for app in "${CC_APPS[@]}"; do
+        install_app "$app" "$root_mount"
+    done
 }
 
 # Run installation

@@ -3,7 +3,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/common.sh"
+source "${SCRIPT_DIR}/common/common.sh"
+source "${SCRIPT_DIR}/common/security_hardening.sh"
 
 # Check required tools
 check_prerequisites() {
@@ -56,10 +57,30 @@ setup_build_env() {
     exec 2>&1
 }
 
+# Verify build dependencies
+verify_build_deps() {
+    local required_tools=(
+        "debootstrap"
+        "parted"
+        "cryptsetup"
+        "veritysetup"
+        "tpm2_tools"
+    )
+    
+    for tool in "${required_tools[@]}"; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            error "Required tool not found: $tool"
+            return 1
+        fi
+    done
+    return 0
+}
+
 # Main
 log "Preparing build environment..."
 check_root
 check_prerequisites
 validate_configs
 setup_build_env
+verify_build_deps || exit 1
 success "Preparation complete" 

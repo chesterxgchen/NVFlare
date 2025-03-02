@@ -4,80 +4,78 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
-source "${SCRIPT_DIR}/../config/partition.conf"
 source "${SCRIPT_DIR}/../config/security.conf"
+source "${SCRIPT_DIR}/scripts/common/security_hardening.sh"
 
-# Test security configuration
 test_security() {
     local test_dir=$(mktemp -d)
-    
-    # Mount image
     guestmount -a "$OUTPUT_IMAGE" -i "$test_dir"
-    
-    # Test kernel modules
-    for module in "${KERNEL_MODULES_DISABLE[@]}"; do
-        if ! grep -q "blacklist $module" "${test_dir}/etc/modprobe.d/blacklist-cc.conf"; then
-            error "Kernel module $module not blacklisted"
+
+    # Test system hardening
+    test_system_hardening() {
+        # Test kernel modules
+        for module in "${KERNEL_MODULES_DISABLE[@]}"; do
+            if ! grep -q "blacklist $module" "${test_dir}/etc/modprobe.d/blacklist-cc.conf"; then
+                error "Kernel module $module not blacklisted"
+            fi
+        done
+
+        # Test system services
+        for service in "${SYSTEM_SERVICES_DISABLE[@]}"; do
+            if [ -f "${test_dir}/etc/systemd/system/$service.service" ]; then
+                error "Service $service not disabled"
+            fi
+        done
+
+        # Test kernel parameters
+        local required_params=(
+            "kernel.modules_disabled=1"
+            "kernel.dmesg_restrict=1"
+            "kernel.kexec_load_disabled=1"
+            "kernel.yama.ptrace_scope=2"
+        )
+        for param in "${required_params[@]}"; do
+            if ! grep -q "^$param" "${test_dir}/etc/sysctl.d/99-cc-secure.conf"; then
+                error "Kernel parameter $param not set"
+            fi
+        done
+    }
+
+    # Test secure boot configuration
+    test_secure_boot() {
+        # Test UEFI secure boot
+        if [ ! -d "${test_dir}/etc/secureboot" ]; then
+            error "Secure boot not configured"
         fi
-    done
-    
-    # Test services
-    for service in "${SYSTEM_SERVICES_DISABLE[@]}"; do
-        if [ -f "${test_dir}/etc/systemd/system/$service.service" ]; then
-            error "Service $service not disabled"
+
+        # Test MOK enrollment
+        if [ ! -f "${test_dir}/etc/secureboot/MOK.der" ]; then
+            error "Machine Owner Key not found"
         fi
-    done
-    
-    # Test secure directories
-    for dir_config in "${SECURE_DIRS[@]}"; do
-        IFS=':' read -r dir owner group mode <<< "$dir_config"
-        if [ ! -d "${test_dir}${dir}" ]; then
-            error "Secure directory $dir not found"
+    }
+
+    # Test audit configuration
+    test_audit() {
+        # Test audit rules
+        if [ ! -f "${test_dir}/etc/audit/rules.d/cc.rules" ]; then
+            error "CC audit rules not found"
         fi
-        if [ "$(stat -c %a ${test_dir}${dir})" != "$mode" ]; then
-            error "Directory $dir has wrong permissions"
+
+        # Test audit service
+        if ! chroot "$test_dir" systemctl is-enabled auditd | grep -q "enabled"; then
+            error "Audit service not enabled"
         fi
-    done
-    
-    # Test kernel parameters
-    if ! grep -q "kernel.modules_disabled = 1" "${test_dir}/etc/sysctl.d/99-cc-secure.conf"; then
-        error "Kernel hardening not configured"
-    fi
-    
+    }
+
+    # Run all tests
+    test_system_hardening
+    test_secure_boot
+    test_audit
+
     # Cleanup
     guestunmount "$test_dir"
     rm -rf "$test_dir"
 }
 
-# Test TEE configuration
-test_tee_config() {
-    local test_dir=$(mktemp -d)
-    
-    # Mount image
-    guestmount -a "$OUTPUT_IMAGE" -i "$test_dir"
-    
-    # Check TEE config exists
-    if [ ! -f "${test_dir}/boot/cc/tee.conf" ]; then
-        error "TEE configuration not found"
-    fi
-    
-    # Source TEE config
-    source "${test_dir}/boot/cc/tee.conf"
-    
-    # Check TEE memory settings
-    if [ ! -d "${test_dir}${TEE_MEMORY_PATH}" ]; then
-        error "TEE memory path not created"
-    fi
-    
-    # Check permissions
-    if [ "$(stat -c %a ${test_dir}${TEE_MEMORY_PATH})" != "$TEE_MEMORY_MODE" ]; then
-        error "TEE memory has wrong permissions"
-    fi
-    
-    # Cleanup
-    guestunmount "$test_dir"
-    rm -rf "$test_dir"
-}
-
-test_security
-test_tee_config 
+# Run tests
+test_security 

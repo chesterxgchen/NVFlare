@@ -4,51 +4,70 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
-source "${SCRIPT_DIR}/../config/partition.conf"
 source "${SCRIPT_DIR}/../config/tee.conf"
+source "${SCRIPT_DIR}/scripts/common/security_hardening.sh"
 
-test_tee_setup() {
+test_tee_config() {
     local test_dir=$(mktemp -d)
-    
-    # Mount image
     guestmount -a "$OUTPUT_IMAGE" -i "$test_dir"
-    
-    # Test TEE config file
-    if [ ! -f "${test_dir}/boot/cc/tee.conf" ]; then
-        error "TEE configuration not found"
-    fi
-    
-    # Source TEE config
-    source "${test_dir}/boot/cc/tee.conf"
-    
-    # Test TEE memory settings
-    if [ ! -d "${test_dir}${TEE_MEMORY_PATH}" ]; then
-        error "TEE memory path not created"
-    fi
-    
-    # Test TEE service
-    if [ ! -f "${test_dir}/etc/systemd/system/tee-memory.service" ]; then
-        error "TEE memory service not configured"
-    fi
-    
-    # Test TEE script
-    if [ ! -x "${test_dir}/usr/local/sbin/configure-tee-memory" ]; then
-        error "TEE configuration script not installed"
-    fi
-    
-    # Test permissions
-    if [ "$(stat -c %a ${test_dir}${TEE_MEMORY_PATH})" != "$TEE_MEMORY_MODE" ]; then
-        error "TEE memory has wrong permissions"
-    fi
-    
-    # Test fstab entry
-    if ! grep -q "tmpfs.*${TEE_MEMORY_PATH}" "${test_dir}/etc/fstab"; then
-        error "TEE memory not configured in fstab"
-    fi
-    
+
+    # Test TEE boot configuration
+    test_tee_boot() {
+        # Test GRUB configuration
+        if ! grep -q "tee_enable=1" "${test_dir}/etc/default/grub"; then
+            error "TEE not enabled in GRUB"
+        fi
+
+        # Test kernel command line
+        case "$(detect_cpu_vendor)" in
+            "amd")
+                if ! grep -q "mem_encrypt=on" "${test_dir}/etc/default/grub"; then
+                    error "AMD memory encryption not enabled"
+                fi
+                ;;
+            "intel")
+                if ! grep -q "tdx_guest=on" "${test_dir}/etc/default/grub"; then
+                    error "Intel TDX guest not enabled"
+                fi
+                ;;
+        esac
+    }
+
+    # Test TEE memory configuration
+    test_tee_memory() {
+        # Test memory limits
+        if [ ! -f "${test_dir}/etc/security/limits.d/cc-memory.conf" ]; then
+            error "TEE memory limits not configured"
+        fi
+
+        # Test memory isolation
+        if ! grep -q "isolcpus=" "${test_dir}/etc/default/grub"; then
+            error "CPU isolation not configured"
+        fi
+    }
+
+    # Test TEE launch policy
+    test_tee_policy() {
+        # Test policy file
+        if [ ! -f "${test_dir}/etc/cc/tee/launch_policy.json" ]; then
+            error "TEE launch policy not found"
+        fi
+
+        # Test policy signature
+        if [ ! -f "${test_dir}/etc/cc/tee/launch_policy.sig" ]; then
+            error "TEE launch policy not signed"
+        fi
+    }
+
+    # Run all tests
+    test_tee_boot
+    test_tee_memory
+    test_tee_policy
+
     # Cleanup
     guestunmount "$test_dir"
     rm -rf "$test_dir"
 }
 
-test_tee_setup 
+# Run tests
+test_tee_config 

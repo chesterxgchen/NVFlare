@@ -5,38 +5,38 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
-# Run all tests
+# Run all tests in sequence
 run_tests() {
-    local tests=(
-        "test_01_prepare.sh"         # Test preparation
-        "test_02_install_os.sh"      # Test OS installation
-        "test_03_cc_setup.sh"        # Test CC setup
-        "test_04_drivers.sh"         # Test drivers
-        "test_05_attestation.sh"     # Test attestation
-        "test_06_partition.sh"       # Test partition setup
-        "test_device_selection.sh"   # Test device auto-selection
-        "test_device_validation.sh"  # Test device validation
-        "test_tee_config.sh"         # Test TEE configuration
-        "test_security.sh"           # Test security settings
-    )
+    log "Starting tests..."
 
-    local failed=0
-    for test in "${tests[@]}"; do
-        log "Running $test..."
-        if ! "${SCRIPT_DIR}/$test"; then
-            log "${RED}$test failed${NC}"
-            failed=$((failed + 1))
-        else
-            success "$test passed"
-        fi
-    done
+    # Phase 1: Base Image Tests
+    log "Phase 1: Testing Base Image"
+    "${SCRIPT_DIR}/test_01_prepare.sh"
+    "${SCRIPT_DIR}/test_02_install_os.sh"
 
-    if [ $failed -gt 0 ]; then
-        error "$failed tests failed"
-    else
-        success "All tests passed successfully"
-    fi
+    # Phase 2: Device and Driver Tests
+    log "Phase 2: Testing Device and Drivers"
+    "${SCRIPT_DIR}/test_03_device.sh"      # Consolidated device and driver tests
+    "${SCRIPT_DIR}/test_04_keys.sh"        # Consolidated key tests
+    "${SCRIPT_DIR}/test_05_cc_apps.sh"     # Test CC apps
+    "${SCRIPT_DIR}/test_06_partition.sh"    # Test partitions
+
+    # Remove old test files
+    rm -f "${SCRIPT_DIR}/test_device_selection.sh"
+    rm -f "${SCRIPT_DIR}/test_device_validation.sh"
+    rm -f "${SCRIPT_DIR}/test_driver_keys.sh"
+    rm -f "${SCRIPT_DIR}/test_key_lifecycle.sh"
+    rm -f "${SCRIPT_DIR}/test_key_management.sh"
+    rm -f "${SCRIPT_DIR}/test_tee_keys.sh"
+    rm -f "${SCRIPT_DIR}/test_attestation.sh"
+    rm -f "${SCRIPT_DIR}/test_03_drivers.sh"
+    rm -f "${SCRIPT_DIR}/test_tee_config.sh"
+
+    success "All tests completed successfully!"
 }
+
+# Run tests
+run_tests
 
 # Main
 main() {
