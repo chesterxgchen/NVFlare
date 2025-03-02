@@ -1,32 +1,11 @@
+#!/bin/bash
+
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../../../common/utils.sh"
 source "${SCRIPT_DIR}/../config/partition.conf"
 source "${SCRIPT_DIR}/../config/security.conf"
 source "${SCRIPT_DIR}/../config/tee.conf"
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-# Logging functions
-log() {
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
-}
-
-error() {
-    echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1${NC}" >&2
-    exit 1
-}
-
-warning() {
-    echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $1${NC}" >&2
-}
-
-success() {
-    echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: $1${NC}"
-}
 
 # Common validation functions
 check_root() {
@@ -37,8 +16,8 @@ check_root() {
 
 check_output_dir() {
     if [ ! -d "$OUTPUT_DIR" ]; then
-        log "Creating output directory: $OUTPUT_DIR"
-        mkdir -p "$OUTPUT_DIR" || error "Failed to create output directory"
+        log_info "Creating output directory: $OUTPUT_DIR"
+        mkdir -p "$OUTPUT_DIR" || log_error "Failed to create output directory"
     fi
 }
 

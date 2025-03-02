@@ -735,17 +735,64 @@ EOF
     chmod 644 "/etc/cron.d/attestation-validation"
 }
 
-# Main function remains the same but calls these new functions
+# Setup dm-verity for a partition
+setup_verity_partition() {
+    local device="$1"
+    local hash_device="$2"
+    local mount_point="$3"
+    local size="$4"
+
+    log_info "Setting up dm-verity for $mount_point"
+    
+    # Create hash device if it doesn't exist
+    if [[ ! -e "$hash_device" ]]; then
+        dd if=/dev/zero of="$hash_device" bs=1M count="${size%G*}"
+    fi
+    
+    # Format with dm-verity
+    veritysetup format "$device" "$hash_device"
+    
+    # Get root hash and store it
+    local root_hash
+    root_hash=$(veritysetup format --hash sha256 "$device" "$hash_device" | grep "Root hash:" | cut -d' ' -f3)
+    
+    # Store hash in TPM
+    tpm2_nvwrite "${TPM_HASH_INDEX}" -i <(echo -n "$root_hash")
+    
+    # Mount the partition
+    mount -o ro,noexec,nosuid "$device" "$mount_point"
+}
+
+# Main installation process
 main() {
-    validate_monitoring_config || exit 1
+    log "Starting secure build process"
+
+    # Validate system and dependencies
+    check_system_compatibility || exit 1
+    check_dependencies || exit 1
+    backup_configuration || exit 1
+
+    # Phase 1: Base NVFLARE installation
+    CURRENT_BUILD_PHASE="1"
+    setup_phase_packages 1 || exit 1
+
+    # Phase 2: Application code
+    CURRENT_BUILD_PHASE="2"
+    setup_phase_packages 2 || exit 1
+
+    # Phase 3: Startup kit
+    CURRENT_BUILD_PHASE="3"
+    setup_phase_packages 3 || exit 1
+
+    # Setup security after installation
     setup_fl_network
     setup_fl_rate_limits
     setup_monitoring_rules
     setup_monitoring_limits
     setup_monitoring_audit
     setup_fl_process_limits
-    setup_endpoint_validation
-    log "FL-specific security hardening completed"
+    
+    log "Secure build completed successfully"
 }
 
 # Handle package installation based on phase
