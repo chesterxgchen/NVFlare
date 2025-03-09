@@ -775,14 +775,14 @@ main() {
     # Phase 1: Base NVFLARE installation
     CURRENT_BUILD_PHASE="1"
     setup_phase_packages 1 || exit 1
-
-    # Phase 2: Application code
-    CURRENT_BUILD_PHASE="2"
-    setup_phase_packages 2 || exit 1
-
-    # Phase 3: Startup kit
-    CURRENT_BUILD_PHASE="3"
-    setup_phase_packages 3 || exit 1
+#
+#    # Phase 2: Application code
+#    CURRENT_BUILD_PHASE="2"
+#    setup_phase_packages 2 || exit 1
+#
+#    # Phase 3: Startup kit
+#    CURRENT_BUILD_PHASE="3"
+#    setup_phase_packages 3 || exit 1
 
     # Setup security after installation
     setup_fl_network
@@ -871,7 +871,7 @@ setup_phase_packages() {
 build_base_image() {
     CURRENT_BUILD_PHASE="1"
     
-    # Install NVFLARE PEX
+    # Install NVFLARE Package
     if ! setup_phase_packages 1; then
         error "Base image build failed"
         return 1
@@ -893,7 +893,7 @@ build_final_image() {
         return 1
     }
 
-    # Install app PEX (Phase 2)
+    # Install app package (Phase 2)
     CURRENT_BUILD_PHASE="2"
     if ! setup_phase_packages 2; then
         error "App installation failed"

@@ -824,7 +824,7 @@ setup_phase_packages() {
 build_base_image() {
     CURRENT_BUILD_PHASE="1"
     
-    # Install NVFLARE PEX
+    # Install NVFLARE package
     if ! setup_phase_packages 1; then
         error "Base image build failed"
         return 1
@@ -846,7 +846,7 @@ build_final_image() {
         return 1
     }
 
-    # Install app PEX (Phase 2)
+    # Install app package (Phase 2)
     CURRENT_BUILD_PHASE="2"
     if ! setup_phase_packages 2; then
         error "App installation failed"

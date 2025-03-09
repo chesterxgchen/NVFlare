@@ -10,10 +10,14 @@ source "${SCRIPT_DIR}/../../common/install_package.sh"
 # Create NVFLARE directory structure based on role
 create_nvflare_dirs() {
     local role="$1"
-    
+
     # CC Apps Partition - Core installation
     mkdir -p "/etc/cc/apps/nvflare"
     mkdir -p "/etc/cc/apps/nvflare/venv"
+
+    mkdir -p "${NVFLARE_WORKSPACE}"
+    mkdir -p "${NVFLARE_LOG_DIR}"
+
     chown -R ${NVFLARE_USER}:${NVFLARE_GROUP} "/etc/cc/apps/nvflare"
 
     # Config Partition - Read-only configs
@@ -25,9 +29,9 @@ create_nvflare_dirs() {
     fi
     chown -R ${NVFLARE_USER}:${NVFLARE_GROUP} "${NVFLARE_CONFIG_MOUNT}"
 
-    # Dynamic Partition - Writable workspace
-    mkdir -p "${NVFLARE_WORKSPACE}"
-    mkdir -p "${NVFLARE_LOG_DIR}"
+
+
+
     # For server, create job store directory
     if [ "$role" = "SERVER" ] || [ "$role" = "ALL" ]; then
         mkdir -p "${NVFLARE_JOB_STORE_DIR}"
@@ -54,60 +58,42 @@ EOF
     chown ${NVFLARE_USER}:${NVFLARE_GROUP} "/etc/cc/apps/nvflare/env.sh"
 }
 
-# Check and install NVFLARE PEX package
-install_nvflare_pex() {
-    # PEX should be in host-visible config partition for verification
-    local pex_file="/host/cc/packages/nvflare-${NVFLARE_VERSION}.pex"
-    local pex_hash_file="${pex_file}.sha512"
+# Check and install NVFLARE wheel packages
+install_nvflare_wheel_packages() {
+    # wheel packages should be in host-visible config partition for verification
+    local package_path="${NVFLARE_WHEEL_PACKAGE_PATH}"
+    local package_hash_file ="${NVFLARE_WHEEL_PACKAGE_SHA512_PATH}"
 
-    # Check if PEX file exists
-    if [[ ! -f "$pex_file" ]]; then
-        log_error "NVFLARE PEX package not found: $pex_file"
+    # Check if file exists
+    if [[ ! -f "$package_path" ]]; then
+        log_error "NVFLARE wheel package not found: $package_path"
         return 1
     fi
 
     # Check if hash file exists
-    if [[ ! -f "$pex_hash_file" ]]; then
-        log_error "NVFLARE PEX hash file not found: $pex_hash_file"
+    if [[ ! -f "$package_hash_file" ]]; then
+        log_error "NVFLARE wheel package hash file not found: $package_hash_file"
         return 1
     }
 
-    # Verify PEX hash
-    if ! sha512sum -c "$pex_hash_file"; then
-        log_error "PEX package hash verification failed"
+    # Verify hash
+    if ! sha512sum -c "$package_hash_file"; then
+        log_error "package hash verification failed"
         return 1
     }
 
-    log_info "Installing NVFLARE PEX package..."
+    log_info "Installing NVFLARE Wheel packages..."
 
-    # Create user and group
-    groupadd -r ${NVFLARE_GROUP}
-    useradd -r -g ${NVFLARE_GROUP} -d "/etc/cc/apps/nvflare" ${NVFLARE_USER}
-
-    # Create directory structure based on role
-    create_nvflare_dirs "${NVFLARE_ROLE}"
-
-    # Create Python virtual environment in CC partition
-    python3 -m venv "/etc/cc/apps/nvflare/venv"
-
-    # Copy PEX to CC partition
-    cp "$pex_file" "/etc/cc/apps/nvflare/nvflare.pex"
-    chmod 500 "/etc/cc/apps/nvflare/nvflare.pex"
-    chown "${NVFLARE_USER}:${NVFLARE_GROUP}" "/etc/cc/apps/nvflare/nvflare.pex"
-
-    # Create symlink in PATH
-    ln -sf "/etc/cc/apps/nvflare/nvflare.pex" "/usr/local/bin/nvflare"
-
-    # Setup environment
-    setup_environment
-
+    # Install wheels
+    install_wheels "$package_path"
+ 
     # Verify installation
     if ! nvflare --version | grep -q "${NVFLARE_VERSION}"; then
         log_error "NVFLARE installation verification failed"
         return 1
     }
 
-    log_info "NVFLARE PEX installation completed successfully"
+    log_info "NVFLARE Wheel packages installation completed successfully"
     return 0
 }
 
@@ -127,15 +113,8 @@ main() {
 
     log_info "Starting NVFLARE installation..."
 
-    # Install NVFLARE PEX package
-    if ! install_package "$mount_point" \
-        "/host/cc/packages/nvflare-${NVFLARE_VERSION}.pex" \
-        "/etc/cc/apps/nvflare" \
-        "nvflare" \
-        "/etc/cc/apps/nvflare/venv"; then
-        log_error "NVFLARE installation failed"
-        return 1
-    fi
+    # Install NVFLARE package
+    # TODO
 
     log_info "NVFLARE installation completed"
     return 0

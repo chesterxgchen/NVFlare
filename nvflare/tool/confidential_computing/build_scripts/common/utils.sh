@@ -96,7 +96,7 @@ get_file_size() {
 # These correspond to the handlers defined in security.conf
 
 # Executable package installation handler
-executable_install() {
+exec_wheel_packages_install() {
     local mount_point="$1"
     local package_path="$2"
     local install_path="$3"
@@ -106,15 +106,17 @@ executable_install() {
     log_info "Installing executable package from ${package_path} to ${install_path}"
 
     # Verify and install using common package installer
-    if ! install_executable_package "$mount_point" "$package_path" "$install_path"; then
-        log_error "Executable package installation failed"
+    if ! install_tar_package "$mount_point" "$package_path" "$install_path"; then
+        log_error "wheel packages installation failed"
         return 1
     fi
 
-    # Set permissions and ownership
-    chmod "$mode" "${mount_point}${install_path}/app.pex"
-    chown "$owner" "${mount_point}${install_path}/app.pex"
-
+    # Verify and install using common package installer
+    if ! install_wheels "$mount_point" "$package_path" "$install_path"; then
+        log_error "wheel packages installation failed"
+        return 1
+    fi
+ 
     return 0
 }
 
@@ -169,7 +171,7 @@ handle_package_install() {
 
     case "$handler" in
         executable_install)
-            executable_install "$mount_point" "$package_path" "$install_path" "$mode" "$owner"
+            exec_wheel_packages_install "$mount_point" "$package_path" "$install_path" "$mode" "$owner"
             ;;
         startup_kit_install)
             startup_kit_install "$mount_point" "$package_path" "$install_path" "$mode" "$owner"

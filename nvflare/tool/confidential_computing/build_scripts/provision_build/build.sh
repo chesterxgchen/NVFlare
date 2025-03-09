@@ -32,13 +32,10 @@ main() {
     # Mount base image
     mount_image "$base_image" "$mount_point"
 
-    # Phase 2: Install App PEX
+    # Phase 2: Install App packages
     export CURRENT_BUILD_PHASE="2"
-    if ! "${SCRIPT_DIR}/02_install_app_pex.sh"; then
-        log_error "App PEX installation failed"
-        guestunmount "$mount_point"
-        exit 1
-    fi
+
+    //TODO install app packages ( install wheel tar bar)
 
     # Phase 3: Install Startup Kit
     export CURRENT_BUILD_PHASE="3"

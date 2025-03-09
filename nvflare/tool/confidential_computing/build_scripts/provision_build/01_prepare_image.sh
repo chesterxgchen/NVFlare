@@ -47,11 +47,11 @@ prepare_image() {
     done
 
     # Calculate required sizes
-    local app_pex_size=$(get_file_size "${APP_PEX_PATH}") || return 1
+    local app_pkg_size=$(get_file_size "${APP_PACKAGE_PATH}") || return 1
     local startup_kit_size=$(get_file_size "${STARTUP_KIT_PATH}") || return 1
 
     # Calculate partition sizes with safety factor
-    local p4_size=$(calculate_size_gb "$app_pex_size")
+    local p4_size=$(calculate_size_gb "$app_pkg_size")
     local p2_size=$(calculate_size_gb "$startup_kit_size")
 
     # Copy base image

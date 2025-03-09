@@ -21,7 +21,7 @@ main() {
 
     log_info "Starting app executable installation..."
 
-    if ! executable_install "$mount_point" "${APP_PEX_PATH}" "${APP_INSTALL_PATH}" "0500" "root:root"; then
+    if ! executable_install "$mount_point" "${APP_PACKAGE_PATH}" "${APP_INSTALL_PATH}" "0500" "root:root"; then
         log_error "App executable installation failed"
         return 1
     fi
