@@ -173,3 +173,431 @@ p6 (Data):
 - Phase-gated builds with validation
 - Package signature verification
 - Automated testing for each phase 
+
+Security Trilemma:
+┌─────────────────┐         ┌─────────────────┐
+│ Portable Keys   │ ────────│ Secure at Rest  │
+│                 │         │                  │
+└────────┬────────┘         └────────┬────────┘
+         │                           │
+         │         ┌─────────┐       │
+         └─────────│Tamper   │───────┘
+                   │Resistant│
+                   └─────────┘
+
+
+
+
+
+We can't solve this perfectly with just technical measures. We need to consider:
+
+
+1. The trust model between companies
+
+
+2. The business process of image delivery
+
+
+3. Acceptable risk levels
+
+Here's a potential approach combining technical and process controls:
+
+# Proposed Solution
+
+
+1. Split Trust Model
+Company A (Builder)        Company B (Runner)
+┌──────────────┐          ┌──────────────┐
+│ Build Image  │──────────│ Run Image    │
+│ Part 1 Keys  │   +     │ Part 2 Keys  │
+└──────────────┘          └──────────────┘
+
+
+
+
+
+
+
+2. Key Ceremony Process
+
+  1. Company A generates Part 1 of key material
+  2. Company B generates Part 2 of key material
+  3. Both parts required for decryption
+  4. Neither company has complete key
+
+  Key Exchange Process:
+┌────────────────┐     ┌────────────────┐
+│  Company A     │     │  Company B     │
+│  Key Part 1    │     │  Key Part 2    │
+└───────┬────────┘     └───────┬────────┘
+        │                      │
+        │  Secure Exchange    │
+        └──────────┬──────────┘
+                   │
+         ┌─────────▼─────────┐
+         │  Legal Agreement  │
+         │  Defines Process  │
+         └─────────┬─────────┘
+                   │
+         ┌─────────▼─────────┐
+         │ Runtime Assembly  │
+         
+         └───────────────────┘
+
+
+
+$ Secure IP Protection Design
+1. Multi-Party Key Exchange Architecture
+
+
+Offline Process:
+┌────────────────┐                  ┌────────────────┐
+│ Model Owner    │                  │ Data Owner     │
+│ (Server)       │◄─── Offline ────►│ (Client)       │
+└───────┬────────┘    Exchange     └───────┬────────┘
+        │                                   │
+        │                                   │
+    Base Keys                           Base Keys
+        │                                   │
+        ▼                                   ▼
+┌────────────────┐                  ┌────────────────┐
+│ Server CVM     │◄─── Runtime ────►│ Client CVM    │
+│ DH Exchange    │     Exchange     │ DH Exchange    │
+└────────────────┘                  └────────────────┘
+
+
+
+2. Low-Level DH Implementation
+
+
+class SecureKeyExchange:
+    def __init__(self):
+        # Embedded during build, different for Server/Client
+        self.base_key = get_build_time_key()
+        
+        # Early boot DH components
+        self.dh_params = {
+            'generator': g,
+            'prime': p,
+            # Embedded in read-only sections
+            'validation': validation_params
+        }
+    
+    def early_boot_exchange(self):
+        """
+        Runs very early in boot process
+        Implemented in assembly/low-level code
+        """
+        # Generate DH components
+        private_key = generate_private()
+        public_key = generate_public(private_key)
+        
+        # Exchange happens through FL protocol
+        shared_secret = perform_dh_exchange(
+            private_key,
+            received_public,
+            self.dh_params
+        )
+        
+        return derive_final_key(
+            shared_secret,
+            self.base_key
+        )
+3. Anti-Tampering Measures
+
+class TamperProtection:
+    def protect_dh_exchange(self):
+        # Multiple validation layers
+        validations = [
+            # Assembly-level checks
+            verify_code_segment(),
+            verify_dh_parameters(),
+            
+            # Runtime checks
+            verify_computation_results(),
+            verify_key_derivation(),
+            
+            # Protocol checks
+            verify_exchange_sequence(),
+            verify_peer_identity()
+        ]
+        
+        # Any failure triggers shutdown
+        if not all(validations):
+            secure_shutdown()
+
+
+4. Key Derivation Chain
+
+Key Hierarchy:
+┌────────────────┐
+│ Offline Keys   │
+│ (Per Party)    │
+└───────┬────────┘
+        │
+        ▼
+┌────────────────┐
+│ DH Exchange    │
+│ Components     │
+└───────┬────────┘
+        │
+        ▼
+┌────────────────┐
+│ Runtime Keys   │
+│ (Session)      │
+└────────────────┘
+
+5. Implementation Protection
+ 
+
+
+ Low-level DH implementation example
+; Hard to modify without breaking functionality
+
+section .text
+    global dh_exchange
+    
+dh_exchange:
+    ; Integrity check on code segment
+    call verify_code_integrity
+    jnz fail_secure
+    
+    ; Load parameters from read-only segment
+    mov rdi, [dh_params]
+    call validate_params
+    jnz fail_secure
+    
+    ; Perform exchange
+    call generate_dh_components
+    call exchange_keys
+    call derive_final
+    
+    ; Validate results
+    call verify_results
+    jnz fail_secure
+    
+    ret
+
+
+### Key Security Properties:
+1. Offline Component:
+   - Pre-shared keys distributed securely
+   - Different keys for Server/Client
+   - Offline process reduces attack surface
+2. Runtime Exchange:
+   - Low-level DH implementation
+   - Hard-coded parameters in read-only sections
+   - Multiple validation layers
+3. Anti-Tampering:
+   - Even if code is modified, key derivation likely fails
+   - Multiple integrity checks
+   - Fail-secure design
+4. Limitations (Being Honest):
+   - Can't prevent all tampering
+   - Focus on making tampering very difficult
+   - Make invalid modifications fail secure
+5. Benefits:
+   - No network dependency for key exchange
+   - Reduced trust requirements
+   - Layered protection approach
+   - Practical implementation possible
+
+CVM Image Layout:
+┌───────────────────────────────┐
+│ Read-Only Area (Clear Text)   │
+│  ├── Boot Code               │
+│  ├── DH Exchange Code        │
+│  ├── FLARE Communication Code│
+│  └── Signatures              │
+├───────────────────────────────┤
+│ Encrypted Area               │
+│  ├── FL Model Code          │
+│  ├── Model Weights          │
+│  ├── Training Logic         │
+│  └── Sensitive Data         │
+└───────────────────────────────┘
+
+Security Model:
+1. FLARE communication code:
+   - Can be read (not secret)
+   - Must not be tampered
+   - Verified by signatures
+2. Critical IP:
+   - Must remain encrypted
+   - Protected by derived keys
+   - Only accessible after valid boot
+
+
+This means:
+   - 1. We're not protecting FLARE code confidentiality
+   - 2. We're protecting FLARE code integrity
+   - 3. We're protecting model/data confidentiality
+
+
+Build-time Protection:
+┌────────────────────────────┐
+│ ✓ IP Protected at Rest    │
+│ ✓ No Plain Text IP        │
+│ ✓ Tamper-Resistant Design │
+│ ✓ Clean Trust Chain       │
+└────────────────────────────┘
+
+
+
+Build Time:                          Runtime:
+┌────────────────────────┐           ┌────────────────────────┐
+│ 1. Generate           │           │ 1. Boot Clear Text    │
+│    - DH Parameters    │           │ 2. FLARE Starts       │
+│    - Public Keys      │──────────►│ 3. DH Key Exchange    │
+│ 2. Encrypt IP with    │           │ 4. Derive Final Key   │
+│    Combined Key       │           │ 5. Decrypt IP/Models  │
+└────────────────────────┘           └────────────────────────┘
+
+class BuildTimeProtection:
+    def build_secure_image(self):
+        # Generate DH components
+        dh_params = {
+            'server_pub': generate_server_public(),
+            'client_pub': generate_client_public(),
+            'params': generate_dh_params()
+        }
+        
+        # Clear text (signed)
+        clear_text = {
+            '/boot': 'boot_code',
+            '/flare': 'flare_code',
+            '/dh_params': dh_params,  # Public components only
+            '/signatures': 'code_signatures'
+        }
+        
+        # Encrypted with combined key
+        encrypted = {
+            '/model': 'model_code',
+            '/weights': 'weights',
+            '/training': 'training_logic'
+        }
+        
+        # 1. Sign clear components
+        sign_components(clear_text)
+        
+        # 2. Encrypt IP (needs both build and runtime keys)
+        encrypt_sensitive_components(encrypted)
+
+
+
+Key Points:
+- No sensitive keys in image
+- Only public DH components embedded
+- Final decryption key derived from:
+  - Build-time public components
+  - Runtime DH exchange
+- IP protection requires both parts
+
+
+
+
+
+
+Build Time:                         Runtime:
+┌────────────────────┐             ┌────────────────────┐
+│ 1. Generate       │             │ 1. Boot Clear Text │
+│    - DH Base Keys │             │    - DH Code       │
+│    - Parameters   │             │    - Public Params │
+│                   │             │                    │
+│ 2. Derive Initial │             │ 2. DH Exchange     │
+│    LUKS Key       │──────────────►   Complete Key    │
+│                   │             │    Generation      │
+│ 3. Encrypt Disk   │             │                    │
+│    with LUKS      │             │ 3. Derive LUKS Key │
+└────────────────────┘             │    Unlock Disk    │
+                                  └────────────────────┘
+
+class KeyManagement:
+    def build_time_setup(self):
+        # Generate DH components
+        dh_params = generate_dh_params()
+        server_pub = generate_server_pub()
+        client_pub = generate_client_pub()
+        
+        # Initial key derivation for LUKS
+        initial_key = derive_initial_key(
+            dh_params, 
+            server_pub, 
+            client_pub
+        )
+        
+        # Setup LUKS with derived key
+        setup_luks_encryption(initial_key)
+        
+        # Store only public components
+        store_components(dh_params, server_pub, client_pub)
+    
+    def runtime_unlock(self):
+        # Load public components
+        dh_params = load_dh_params()
+        pub_key = load_public_key()
+        
+        # Perform DH exchange
+        shared_secret = perform_dh_exchange(
+            dh_params,
+            pub_key
+        )
+        
+        # Derive final LUKS key
+        luks_key = derive_luks_key(
+            shared_secret,
+            dh_params
+        )
+        
+        # Unlock LUKS partition
+        unlock_luks_partition(luks_key)
+
+
+
+
+DH + LUKS Flow:
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│ DH Exchange  │────►│ Key          │────►│ LUKS         │
+│ Components   │     │ Derivation   │     │ Unlock       │
+└──────────────┘     └──────────────┘     └──────────────┘
+
+
+
+
+
+
+
+
+
+
+# 1. Try to read CVM disk image directly
+$ sudo dd if=/var/lib/libvirt/images/unprotected_cvm.img of=dump1.img
+# Result: Can read raw data
+
+$ sudo dd if=/var/lib/libvirt/images/protected_cvm.img of=dump2.img
+# Result: Only encrypted data visible
+
+# 2. Try to mount CVM disk
+$ sudo kpartx -av unprotected_cvm.img
+$ sudo mount /dev/mapper/loop0p1 /mnt/test
+# Result: Can see files
+
+$ sudo kpartx -av protected_cvm.img
+$ sudo mount /dev/mapper/loop0p1 /mnt/test
+# Result: Encrypted, can't mount
+
+# 3. Memory dump from host
+$ sudo virsh dump unprotected_cvm mem.dump
+# Result: Memory contents visible
+
+$ sudo virsh dump protected_cvm mem.dump
+# Result: TEE protected memory not accessible
+
+
+
+
+
+
+
+
+
