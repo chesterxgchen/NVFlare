@@ -32,6 +32,13 @@ SPECIAL_CHARACTERS = '"!@#$%^&*()+?=,<>/'
 _ADD_TO_JOB_METHOD_NAME = "add_to_fed_job"
 
 
+class AlgorithmType:
+    DL = "DL"  # deep learning
+    KMeans = "KMeans"
+    LR = "LR"  # logistic regression
+    
+
+
 class FedApp:
     def __init__(self, app_config: Union[ClientAppConfig, ServerAppConfig]):
         """FedApp handles `ClientAppConfig` and `ServerAppConfig` and allows setting task result or task data filters."""

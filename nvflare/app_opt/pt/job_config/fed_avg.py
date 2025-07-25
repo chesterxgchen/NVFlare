@@ -13,10 +13,10 @@
 # limitations under the License.
 from typing import List, Optional
 
-import torch.nn as nn
+# import torch.nn as nn
 
 from nvflare.app_common.workflows.fedavg import FedAvg
-from nvflare.app_opt.pt.job_config.base_fed_job import BaseFedJob
+from nvflare.job_config.base_fed_job import BaseFedJob
 
 
 class FedAvgJob(BaseFedJob):
@@ -47,6 +47,8 @@ class FedAvgJob(BaseFedJob):
                 if metrics are a `dict`, `key_metric` can select the metric used for global model selection.
                 Defaults to "accuracy".
         """
+
+
         if not isinstance(initial_model, nn.Module):
             raise ValueError(f"Expected initial model to be nn.Module, but got type f{type(initial_model)}.")
 

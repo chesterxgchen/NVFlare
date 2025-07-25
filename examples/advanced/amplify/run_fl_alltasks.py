@@ -24,7 +24,7 @@ from src.model import AmplifyRegressor
 
 from nvflare import FilterType
 from nvflare.app_common.workflows.fedavg import FedAvg
-from nvflare.app_opt.pt.job_config.base_fed_job import BaseFedJob
+from nvflare.job_config.base_fed_job import BaseFedJob
 from nvflare.job_config.script_runner import ScriptRunner
 
 tasks = ["aggregation", "binding", "expression", "immunogenicity", "polyreactivity", "tm"]

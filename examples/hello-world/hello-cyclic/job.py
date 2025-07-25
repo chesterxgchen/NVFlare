@@ -16,39 +16,24 @@ This script demonstrates how to run the cyclic script runner for federated learn
 """
 
 from model import Net
-
-from nvflare import FedJob
-from nvflare.app_common.workflows.cyclic import Cyclic
+from nvflare.job_config.Job_recipe import CyclicRecipe
 from nvflare.app_opt.tf.job_config.model import TFModel
-from nvflare.job_config.script_runner import FrameworkType, ScriptRunner
+from nvflare.job_config.script_runner import FrameworkType
 
 if __name__ == "__main__":
     n_clients = 2
     num_rounds = 3
     train_script = "client.py"
 
-    job = CyclicRecipe()
-
-    job = FedJob(name="hello-tf-cyclic")
-
-    # Define the controller workflow and send to server
-    controller = Cyclic(
-        num_clients=n_clients,
+    recipe = CyclicRecipe(
+        min_clients=n_clients,
         num_rounds=num_rounds,
+        model=TFModel(Net()),
+        client_script=train_script,
+        client_script_args="",
+        framework=FrameworkType.TENSORFLOW,
     )
-    job.to(controller, "server")
 
-    # Define the initial global model and send to server
-    job.to(TFModel(Net()), "server")
+    recipe.execute(clients=n_clients, gpus=0) # SimEnv default
+    
 
-    # Add clients
-    for i in range(n_clients):
-        executor = ScriptRunner(
-            script=train_script,
-            script_args="",  # f"--batch_size 32 --data_path /tmp/data/site-{i}"
-            framework=FrameworkType.TENSORFLOW,
-        )
-        job.to(executor, f"site-{i + 1}")
-
-    # job.export_job("/tmp/nvflare/jobs/job_config")
-    job.simulator_run("/tmp/nvflare/jobs/workdir", gpu="0")

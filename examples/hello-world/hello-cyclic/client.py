@@ -30,9 +30,6 @@ def main():
 
     flare.init()
 
-    sys_info = flare.system_info()
-    print(f"system info is: {sys_info}", flush=True)
-
     (train_images, train_labels), (
         test_images,
         test_labels,
@@ -43,7 +40,7 @@ def main():
     )
 
     # simulate separate datasets for each client by dividing MNIST dataset in half
-    client_name = sys_info["site_name"]
+    client_name = flare.get_site_name()
     if client_name == "site-1":
         train_images = train_images[: len(train_images) // 2]
         train_labels = train_labels[: len(train_labels) // 2]
@@ -57,10 +54,7 @@ def main():
 
     while flare.is_running():
         input_model = flare.receive()
-        print(f"current_round={input_model.current_round}")
-
-        sys_info = flare.system_info()
-        print(f"system info is: {sys_info}")
+        print(f"site = {client_name}, current_round={input_model.current_round}")
 
         for k, v in input_model.params.items():
             model.get_layer(k).set_weights(v)
@@ -72,15 +66,11 @@ def main():
 
         # training
         model.fit(train_images, train_labels, epochs=1, validation_data=(test_images, test_labels))
-
         print("Finished Training")
 
         model.save_weights(WEIGHTS_PATH)
 
-        sys_info = flare.system_info()
-        print(f"system info is: {sys_info}", flush=True)
-        print(f"finished round: {input_model.current_round}", flush=True)
-
+        print("Prepare and send the updated model to FL server")
         output_model = flare.FLModel(
             params={layer.name: layer.get_weights() for layer in model.layers},
             params_type="FULL",
