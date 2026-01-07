@@ -61,7 +61,10 @@ from nvflare.security.enrollment.cert_requestor import (
     CertRequestor,
     EnrollmentIdentity,
     EnrollmentOptions,
+    EnrollmentRejectedError,
     EnrollmentResult,
+    PendingApprovalError,
+    TokenMetadata,
 )
 
 # Environment variable for enrollment token
@@ -134,6 +137,7 @@ def enroll(
     token: str,
     identity: "EnrollmentIdentity",
     output_dir: str = ".",
+    wait_for_approval: bool = False,
 ) -> "EnrollmentResult":
     """Perform certificate enrollment via Certificate Service.
 
@@ -144,14 +148,19 @@ def enroll(
         token: JWT enrollment token
         identity: EnrollmentIdentity for the participant
         output_dir: Directory to save certificates
+        wait_for_approval: If True, wait for manual approval (polling)
 
     Returns:
         EnrollmentResult with certificate paths and in-memory data
 
     Raises:
+        PendingApprovalError: If enrollment requires manual approval
+                              (and wait_for_approval is False)
+        EnrollmentRejectedError: If enrollment is rejected by policy
+        TimeoutError: If wait_for_approval timed out
         RuntimeError: If enrollment fails
     """
-    options = EnrollmentOptions(output_dir=output_dir)
+    options = EnrollmentOptions(output_dir=output_dir, wait_for_approval=wait_for_approval)
     requestor = CertRequestor(
         cert_service_url=cert_service_url,
         enrollment_token=token,
@@ -167,6 +176,10 @@ __all__ = [
     "EnrollmentIdentity",
     "EnrollmentOptions",
     "EnrollmentResult",
+    "TokenMetadata",
+    # Exceptions
+    "PendingApprovalError",
+    "EnrollmentRejectedError",
     # Helper functions
     "get_enrollment_token",
     "get_cert_service_url",
