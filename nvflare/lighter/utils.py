@@ -37,6 +37,26 @@ class Identity:
         self.role = role
 
 
+def _make_san_entry(host: str):
+    """Create a SAN entry for the given host (IP address or DNS name).
+
+    Args:
+        host: Hostname or IP address string
+
+    Returns:
+        x509.IPAddress or x509.DNSName depending on the host format
+    """
+    import ipaddress
+
+    try:
+        # Try to parse as IP address
+        ip = ipaddress.ip_address(host)
+        return x509.IPAddress(ip)
+    except ValueError:
+        # Not an IP address, treat as DNS name
+        return x509.DNSName(host)
+
+
 def generate_cert(
     subject: Identity,
     issuer: Identity,
@@ -89,15 +109,15 @@ def generate_cert(
 
     if server_default_host:
         # This is to generate a server cert.
-        # Use SubjectAlternativeName for all host names
-        sans = [x509.DNSName(server_default_host)]
+        # Use SubjectAlternativeName for all host names/IPs
+        sans = [_make_san_entry(server_default_host)]
         if server_additional_hosts:
             for h in server_additional_hosts:
                 if h != server_default_host:
-                    sans.append(x509.DNSName(h))
+                    sans.append(_make_san_entry(h))
         builder = builder.add_extension(x509.SubjectAlternativeName(sans), critical=False)
     else:
-        builder = builder.add_extension(x509.SubjectAlternativeName([x509.DNSName(subject.name)]), critical=False)
+        builder = builder.add_extension(x509.SubjectAlternativeName([_make_san_entry(subject.name)]), critical=False)
     return builder.sign(signing_pri_key, hashes.SHA256(), default_backend())
 
 
@@ -124,6 +144,56 @@ def generate_keys():
     pri_key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
     pub_key = pri_key.public_key()
     return pri_key, pub_key
+
+
+def generate_csr(
+    subject: Identity,
+    pri_key,
+    additional_hosts: list = None,
+):
+    """Generate a Certificate Signing Request (CSR).
+
+    Args:
+        subject: Identity object with name, org, and optional role
+        pri_key: Private key to sign the CSR
+        additional_hosts: Optional list of additional hostnames for SAN
+
+    Returns:
+        x509.CertificateSigningRequest object
+
+    Example:
+        pri_key, pub_key = generate_keys()
+        csr = generate_csr(
+            subject=Identity("hospital-1", org="Hospital A"),
+            pri_key=pri_key,
+            additional_hosts=["hospital-1.example.com"],
+        )
+    """
+    # Build subject name
+    x509_subject = x509_name(subject.name, subject.org, subject.role)
+
+    # Build CSR
+    builder = x509.CertificateSigningRequestBuilder().subject_name(x509_subject)
+
+    # Add Subject Alternative Name extension
+    sans = [x509.DNSName(subject.name)]
+    if additional_hosts:
+        for host in additional_hosts:
+            if host != subject.name:
+                sans.append(x509.DNSName(host))
+
+    builder = builder.add_extension(
+        x509.SubjectAlternativeName(sans),
+        critical=False,
+    )
+
+    # Sign and return CSR
+    return builder.sign(pri_key, hashes.SHA256(), default_backend())
+
+
+def serialize_csr(csr):
+    """Serialize CSR to PEM format."""
+    return csr.public_bytes(serialization.Encoding.PEM)
 
 
 def x509_name(cn_name, org_name=None, role=None):
@@ -348,6 +418,8 @@ def load_yaml_include(root, yaml_data):
                 includes = [v]
             elif isinstance(v, list):
                 includes = v
+            else:
+                includes = []
             for item in includes:
                 new_data.update(load_yaml(os.path.join(root, item)))
         elif isinstance(v, list):
