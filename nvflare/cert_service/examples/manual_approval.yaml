@@ -3,6 +3,9 @@
 #
 # Use for high-security environments or initial onboarding
 
+policy_id: manual_approval
+description: "All enrollments require manual approval"
+
 metadata:
   project: "nvflare-secure"
   description: "All enrollments require manual approval"

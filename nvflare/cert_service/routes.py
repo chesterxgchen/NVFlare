@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from flask import Flask
 
     from nvflare.cert_service.cert_service import CertService
+    from nvflare.cert_service.policy_manager import PolicyManager
     from nvflare.cert_service.store import EnrollmentStore
     from nvflare.tool.enrollment.token_service import TokenService
 
@@ -64,6 +65,7 @@ class RoutesMixin:
     cert_service: "CertService"
     token_service: "TokenService"
     enrollment_store: "EnrollmentStore"
+    policy_manager: "PolicyManager"
     config: dict
     api_key: Optional[str]
     pending_timeout_seconds: int
@@ -76,6 +78,7 @@ class RoutesMixin:
         self._register_token_routes()
         self._register_pending_routes()
         self._register_enrolled_routes()
+        self._register_policy_routes()
         self._register_ca_routes()
         self._register_health_routes()
 
@@ -214,8 +217,11 @@ class RoutesMixin:
                 # Validate token first
                 token_payload = self.cert_service.validate_token(token, context)
 
+                # Look up policy from server-side storage using policy_id from token
+                policy = self.policy_manager.get_policy(token_payload.policy_id)
+
                 # Evaluate policy
-                result = self.cert_service.evaluate_policy(token_payload, context)
+                result = self.cert_service.evaluate_policy(token_payload, context, policy)
 
                 if result.action == ApprovalAction.REJECT:
                     return jsonify({"error": f"Rejected: {result.message}"}), 403
@@ -225,7 +231,7 @@ class RoutesMixin:
                     expires_at = datetime.now(timezone.utc) + timedelta(seconds=self.pending_timeout_seconds)
                     pending_request = PendingRequest(
                         name=name,
-                        entity_type=participant_type,
+                        participant_type=participant_type,
                         org=org,
                         csr_pem=csr if isinstance(csr, str) else csr.decode("utf-8"),
                         submitted_at=datetime.now(timezone.utc),
@@ -233,6 +239,9 @@ class RoutesMixin:
                         token_subject=token_payload.subject,
                         role=role,
                         source_ip=request.remote_addr,
+                        project=token_payload.project,
+                        policy_id=token_payload.policy_id,
+                        token_jti=token_payload.token_id,
                     )
                     self.enrollment_store.add_pending(pending_request)
 
@@ -246,21 +255,26 @@ class RoutesMixin:
                         202,
                     )
 
-                # Approved - sign the certificate
+                # Approved - sign the certificate (policy already validated)
                 signed_cert = self.cert_service.sign_csr(
                     csr_data=csr_bytes,
                     token=token,
                     context=context,
+                    policy=policy,
                 )
 
-                # Record enrollment
+                # Record enrollment with comprehensive tracking
                 self.enrollment_store.add_enrolled(
                     EnrolledEntity(
                         name=name,
-                        entity_type=participant_type,
+                        participant_type=participant_type,
                         enrolled_at=datetime.now(timezone.utc),
                         org=org,
                         role=role,
+                        project=token_payload.project,
+                        policy_id=token_payload.policy_id,
+                        token_jti=token_payload.token_id,
+                        source_ip=request.remote_addr,
                     )
                 )
 
@@ -481,14 +495,14 @@ class RoutesMixin:
         @self._require_api_key
         def list_pending():
             """List pending enrollment requests."""
-            entity_type = request.args.get("entity_type")
-            pending = self.enrollment_store.get_all_pending(entity_type)
+            participant_type = request.args.get("entity_type")  # API uses entity_type for compat
+            pending = self.enrollment_store.get_all_pending(participant_type)
 
             return jsonify(
                 [
                     {
                         "name": p.name,
-                        "entity_type": p.entity_type,
+                        "entity_type": p.participant_type,  # API returns entity_type for compat
                         "org": p.org,
                         "submitted_at": p.submitted_at.isoformat(),
                         "expires_at": p.expires_at.isoformat(),
@@ -502,18 +516,18 @@ class RoutesMixin:
         @self._require_api_key
         def get_pending_info(name: str):
             """Get details of a pending enrollment request."""
-            entity_type = request.args.get("entity_type")
-            if not entity_type:
+            participant_type = request.args.get("entity_type")  # API uses entity_type for compat
+            if not participant_type:
                 return jsonify({"error": "entity_type query parameter required"}), 400
 
-            pending = self.enrollment_store.get_pending(name, entity_type)
+            pending = self.enrollment_store.get_pending(name, participant_type)
             if not pending:
-                return jsonify({"error": f"No pending request for {entity_type}: {name}"}), 404
+                return jsonify({"error": f"No pending request for {participant_type}: {name}"}), 404
 
             return jsonify(
                 {
                     "name": pending.name,
-                    "entity_type": pending.entity_type,
+                    "entity_type": pending.participant_type,  # API returns entity_type for compat
                     "org": pending.org,
                     "status": "approved" if pending.approved else "pending",
                     "submitted_at": pending.submitted_at.isoformat(),
@@ -530,18 +544,18 @@ class RoutesMixin:
         def approve_pending(name: str):
             """Approve a pending enrollment request."""
             data = request.json or {}
-            entity_type = data.get("entity_type")
-            if not entity_type:
+            participant_type = data.get("entity_type")  # API uses entity_type for compat
+            if not participant_type:
                 return jsonify({"error": "entity_type required"}), 400
 
-            pending = self.enrollment_store.get_pending(name, entity_type)
+            pending = self.enrollment_store.get_pending(name, participant_type)
             if not pending:
-                return jsonify({"error": f"No pending request for {entity_type}: {name}"}), 404
+                return jsonify({"error": f"No pending request for {participant_type}: {name}"}), 404
 
             try:
                 context = EnrollmentContext(
                     name=pending.name,
-                    participant_type=pending.entity_type,
+                    participant_type=pending.participant_type,
                     org=pending.org,
                     role=pending.role,
                     source_ip=pending.source_ip,
@@ -555,7 +569,7 @@ class RoutesMixin:
 
                 self.enrollment_store.approve_pending(
                     name=name,
-                    entity_type=entity_type,
+                    participant_type=participant_type,
                     signed_cert=signed_cert,
                     approved_by="admin",
                 )
@@ -563,7 +577,7 @@ class RoutesMixin:
                 self.enrollment_store.add_enrolled(
                     EnrolledEntity(
                         name=name,
-                        entity_type=entity_type,
+                        participant_type=participant_type,
                         enrolled_at=datetime.now(timezone.utc),
                         org=pending.org,
                         role=pending.role,
@@ -574,7 +588,7 @@ class RoutesMixin:
                     {
                         "status": "approved",
                         "name": name,
-                        "entity_type": entity_type,
+                        "entity_type": participant_type,  # API returns entity_type for compat
                         "certificate_issued": True,
                     }
                 )
@@ -589,21 +603,21 @@ class RoutesMixin:
         def reject_pending(name: str):
             """Reject a pending enrollment request."""
             data = request.json or {}
-            entity_type = data.get("entity_type")
+            participant_type = data.get("entity_type")  # API uses entity_type for compat
             reason = data.get("reason", "Rejected by administrator")
 
-            if not entity_type:
+            if not participant_type:
                 return jsonify({"error": "entity_type required"}), 400
 
-            removed = self.enrollment_store.reject_pending(name, entity_type, reason)
+            removed = self.enrollment_store.reject_pending(name, participant_type, reason)
             if not removed:
-                return jsonify({"error": f"No pending request for {entity_type}: {name}"}), 404
+                return jsonify({"error": f"No pending request for {participant_type}: {name}"}), 404
 
             return jsonify(
                 {
                     "status": "rejected",
                     "name": name,
-                    "entity_type": entity_type,
+                    "entity_type": participant_type,  # API returns entity_type for compat
                 }
             )
 
@@ -613,14 +627,14 @@ class RoutesMixin:
             """Batch approve pending requests by pattern."""
             data = request.json or {}
             pattern = data.get("pattern")
-            entity_type = data.get("entity_type")
+            participant_type = data.get("entity_type")  # API uses entity_type for compat
 
             if not pattern:
                 return jsonify({"error": "pattern required"}), 400
-            if not entity_type:
+            if not participant_type:
                 return jsonify({"error": "entity_type required"}), 400
 
-            pending = self.enrollment_store.get_all_pending(entity_type)
+            pending = self.enrollment_store.get_all_pending(participant_type)
             approved_names = []
 
             for req in pending:
@@ -628,7 +642,7 @@ class RoutesMixin:
                     try:
                         context = EnrollmentContext(
                             name=req.name,
-                            participant_type=req.entity_type,
+                            participant_type=req.participant_type,
                             org=req.org,
                             role=req.role,
                             source_ip=req.source_ip,
@@ -642,7 +656,7 @@ class RoutesMixin:
 
                         self.enrollment_store.approve_pending(
                             name=req.name,
-                            entity_type=entity_type,
+                            participant_type=participant_type,
                             signed_cert=signed_cert,
                             approved_by="admin",
                         )
@@ -650,7 +664,7 @@ class RoutesMixin:
                         self.enrollment_store.add_enrolled(
                             EnrolledEntity(
                                 name=req.name,
-                                entity_type=entity_type,
+                                participant_type=participant_type,
                                 enrolled_at=datetime.now(timezone.utc),
                                 org=req.org,
                                 role=req.role,
@@ -675,20 +689,20 @@ class RoutesMixin:
             """Batch reject pending requests by pattern."""
             data = request.json or {}
             pattern = data.get("pattern")
-            entity_type = data.get("entity_type")
+            participant_type = data.get("entity_type")  # API uses entity_type for compat
             reason = data.get("reason", "Rejected by administrator")
 
             if not pattern:
                 return jsonify({"error": "pattern required"}), 400
-            if not entity_type:
+            if not participant_type:
                 return jsonify({"error": "entity_type required"}), 400
 
-            pending = self.enrollment_store.get_all_pending(entity_type)
+            pending = self.enrollment_store.get_all_pending(participant_type)
             rejected_names = []
 
             for req in pending:
                 if fnmatch.fnmatch(req.name, pattern):
-                    self.enrollment_store.reject_pending(req.name, entity_type, reason)
+                    self.enrollment_store.reject_pending(req.name, participant_type, reason)
                     rejected_names.append(req.name)
 
             return jsonify(
@@ -722,14 +736,14 @@ class RoutesMixin:
         @self._require_api_key
         def list_enrolled():
             """List enrolled entities."""
-            entity_type = request.args.get("entity_type")
-            enrolled = self.enrollment_store.get_enrolled(entity_type)
+            participant_type = request.args.get("entity_type")  # API uses entity_type for compat
+            enrolled = self.enrollment_store.get_enrolled(participant_type)
 
             return jsonify(
                 [
                     {
                         "name": e.name,
-                        "entity_type": e.entity_type,
+                        "entity_type": e.participant_type,  # API returns entity_type for compat
                         "org": e.org,
                         "role": e.role,
                         "enrolled_at": e.enrolled_at.isoformat(),
@@ -737,6 +751,96 @@ class RoutesMixin:
                     for e in enrolled
                 ]
             )
+
+    def _register_policy_routes(self):
+        """Register policy management endpoints for Project Admins.
+
+        These endpoints allow Project Admins to manage server-side approval policies.
+        Policies are stored as YAML files (one per policy) and loaded into memory.
+
+        Authentication:
+        - All endpoints require API key (Project Admin only)
+
+        Endpoints:
+        - GET  /api/v1/policies              - List all policies
+        - GET  /api/v1/policies/<policy_id>  - Get a specific policy
+        - POST /api/v1/policies              - Create a new policy
+        - PUT  /api/v1/policies/<policy_id>  - Update an existing policy
+        - DELETE /api/v1/policies/<policy_id> - Delete a policy
+        - POST /api/v1/policies/reload       - Reload policies from disk
+        """
+        from flask import jsonify, request
+
+        @self.flask_app.route("/api/v1/policies", methods=["GET"])
+        @self._require_api_key
+        def list_policies():
+            """List all available policies."""
+            policies = self.policy_manager.list_policies()
+            return jsonify({"policies": policies})
+
+        @self.flask_app.route("/api/v1/policies/<policy_id>", methods=["GET"])
+        @self._require_api_key
+        def get_policy(policy_id: str):
+            """Get a specific policy by ID."""
+            policy = self.policy_manager.get_policy(policy_id)
+            if not policy:
+                return jsonify({"error": f"Policy '{policy_id}' not found"}), 404
+            return jsonify(policy)
+
+        @self.flask_app.route("/api/v1/policies", methods=["POST"])
+        @self._require_api_key
+        def create_policy():
+            """Create a new policy."""
+            data = request.json
+            if not data:
+                return jsonify({"error": "Request body required"}), 400
+
+            policy_id = data.get("policy_id")
+            if not policy_id:
+                return jsonify({"error": "policy_id required"}), 400
+
+            if self.policy_manager.policy_exists(policy_id):
+                return jsonify({"error": f"Policy '{policy_id}' already exists"}), 409
+
+            success = self.policy_manager.add_policy(policy_id, data)
+            if success:
+                return jsonify({"status": "created", "policy_id": policy_id}), 201
+            else:
+                return jsonify({"error": "Failed to create policy"}), 500
+
+        @self.flask_app.route("/api/v1/policies/<policy_id>", methods=["PUT"])
+        @self._require_api_key
+        def update_policy(policy_id: str):
+            """Update an existing policy."""
+            data = request.json
+            if not data:
+                return jsonify({"error": "Request body required"}), 400
+
+            if not self.policy_manager.policy_exists(policy_id):
+                return jsonify({"error": f"Policy '{policy_id}' not found"}), 404
+
+            success = self.policy_manager.update_policy(policy_id, data)
+            if success:
+                return jsonify({"status": "updated", "policy_id": policy_id})
+            else:
+                return jsonify({"error": "Failed to update policy"}), 500
+
+        @self.flask_app.route("/api/v1/policies/<policy_id>", methods=["DELETE"])
+        @self._require_api_key
+        def delete_policy(policy_id: str):
+            """Delete a policy."""
+            success = self.policy_manager.delete_policy(policy_id)
+            if success:
+                return jsonify({"status": "deleted", "policy_id": policy_id})
+            else:
+                return jsonify({"error": f"Cannot delete policy '{policy_id}'"}), 400
+
+        @self.flask_app.route("/api/v1/policies/reload", methods=["POST"])
+        @self._require_api_key
+        def reload_policies():
+            """Reload policies from disk."""
+            count = self.policy_manager.reload()
+            return jsonify({"status": "reloaded", "policy_count": count})
 
     def _register_health_routes(self):
         """Register health check endpoint for monitoring.

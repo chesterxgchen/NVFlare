@@ -4,6 +4,9 @@
 # WARNING: This policy approves ALL enrollment requests.
 # Not recommended for production.
 
+policy_id: auto_approve
+description: "Auto-approve all enrollments (development only)"
+
 metadata:
   project: "nvflare-dev"
   description: "Auto-approve all enrollments (development only)"

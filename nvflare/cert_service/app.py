@@ -58,6 +58,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 import yaml
 
 from nvflare.cert_service.cert_service import CertService
+from nvflare.cert_service.policy_manager import PolicyManager
 from nvflare.cert_service.routes import RoutesMixin
 from nvflare.cert_service.store import EnrollmentStore, create_enrollment_store
 
@@ -72,17 +73,20 @@ class CertServiceApp(RoutesMixin):
     - Token generation (for nvflare token CLI)
     - Certificate enrollment (for CertRequestor)
     - Pending request management (for nvflare enrollment CLI)
+    - Policy management (for nvflare admin)
 
     Security:
     - rootCA.pem is only returned after token validation and approval
     - Admin endpoints require API key authentication
     - Enrollment endpoints require valid JWT enrollment token
+    - Policies are stored server-side (not embedded in tokens)
 
     Route handlers are defined in RoutesMixin (routes.py) for better organization.
     """
 
     # Type hints for instance attributes
     token_service: Optional["TokenService"]
+    policy_manager: PolicyManager
 
     def __init__(self, config_path: Optional[str] = None, **kwargs):
         """Initialize the Certificate Service HTTP application.
@@ -123,6 +127,12 @@ class CertServiceApp(RoutesMixin):
         # Initialize enrollment store
         storage_config = self.config.get("storage", {"type": "sqlite"})
         self.enrollment_store: EnrollmentStore = create_enrollment_store(storage_config)
+
+        # Initialize policy manager for server-side policy storage
+        policy_dir = self.config.get("policy", {}).get("directory")
+        if not policy_dir:
+            policy_dir = os.path.join(self.config["data_dir"], "policies")
+        self.policy_manager = PolicyManager(policy_dir)
 
         # API key for admin authentication
         # Must be configured via config file or NVFLARE_API_KEY env var

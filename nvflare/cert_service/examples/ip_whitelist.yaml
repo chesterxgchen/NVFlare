@@ -8,6 +8,9 @@
 #
 # Note: source_ips is optional - omit for dynamic IP environments (K8s, NAT)
 
+policy_id: ip_whitelist
+description: "Enrollment policy with IP-based matching"
+
 metadata:
   project: "nvflare-network"
   description: "Enrollment policy with optional IP-based matching"
