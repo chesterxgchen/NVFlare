@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Enrollment Store - Tracks enrolled entities and pending requests.
+"""Enrollment Store - Tracks enrolled participants and pending requests.
 
 This module provides storage backends for the Certificate Service to track:
-- Enrolled entities (sites and users that have completed enrollment)
+- Enrolled participants (sites and users that have completed enrollment)
 - Pending requests (enrollment requests awaiting manual approval)
 
-Entity uniqueness is determined by (name, entity_type) pair.
+Participant uniqueness is determined by (name, participant_type) pair.
+One token = one participant = one enrollment (multi-use tokens, but participant-bound).
 """
 
 import fnmatch
@@ -31,22 +32,37 @@ from typing import List, Optional
 
 
 @dataclass
-class EnrolledEntity:
-    """An enrolled site or user."""
+class EnrolledParticipant:
+    """An enrolled site or user.
 
-    name: str  # Entity name (site-1, admin@org.com)
-    entity_type: str  # client | relay | server | admin
+    Tracks comprehensive enrollment information for audit and lifecycle management.
+    """
+
+    name: str  # Participant name (site-1, admin@org.com)
+    participant_type: str  # client | relay | server | admin
     enrolled_at: datetime
     org: Optional[str] = None  # Organization
     role: Optional[str] = None  # Role (for admin tokens only)
+
+    # Extended tracking fields (per design)
+    project: Optional[str] = None  # Project name
+    policy_id: Optional[str] = None  # Policy used for approval
+    token_jti: Optional[str] = None  # Token ID used for enrollment
+    source_ip: Optional[str] = None  # Source IP of enrollment request
+    cert_fingerprint: Optional[str] = None  # SHA-256 fingerprint of issued cert
+    cert_expires_at: Optional[datetime] = None  # Certificate expiration
+
+
+# Backward compatibility alias
+EnrolledEntity = EnrolledParticipant
 
 
 @dataclass
 class PendingRequest:
     """Pending enrollment request awaiting admin approval."""
 
-    name: str  # Entity name
-    entity_type: str  # client | relay | server | admin
+    name: str  # Participant name
+    participant_type: str  # client | relay | server | admin
     org: str
     csr_pem: str
     submitted_at: datetime
@@ -59,31 +75,36 @@ class PendingRequest:
     approved_at: Optional[datetime] = None
     approved_by: Optional[str] = None
 
+    # Extended tracking fields (per design)
+    project: Optional[str] = None  # Project name
+    policy_id: Optional[str] = None  # Policy used for approval
+    token_jti: Optional[str] = None  # Token ID
+
 
 class EnrollmentStore(ABC):
     """Abstract interface for enrollment state storage.
 
-    Tracks enrolled entities (sites and users) and pending requests.
-    Entity uniqueness is determined by (name, entity_type) pair.
+    Tracks enrolled participants (sites and users) and pending requests.
+    Participant uniqueness is determined by (name, participant_type) pair.
     """
 
     # ─────────────────────────────────────────────────────
-    # Enrolled Entities (Sites and Users)
+    # Enrolled Participants (Sites and Users)
     # ─────────────────────────────────────────────────────
 
     @abstractmethod
-    def is_enrolled(self, name: str, entity_type: str) -> bool:
-        """Check if an entity is already enrolled."""
+    def is_enrolled(self, name: str, participant_type: str) -> bool:
+        """Check if a participant is already enrolled."""
         pass
 
     @abstractmethod
-    def add_enrolled(self, entity: EnrolledEntity) -> None:
-        """Mark an entity as enrolled. Also removes from pending."""
+    def add_enrolled(self, participant: EnrolledParticipant) -> None:
+        """Mark a participant as enrolled. Also removes from pending."""
         pass
 
     @abstractmethod
-    def get_enrolled(self, entity_type: Optional[str] = None) -> List[EnrolledEntity]:
-        """Get enrolled entities, optionally filtered by type."""
+    def get_enrolled(self, participant_type: Optional[str] = None) -> List[EnrolledParticipant]:
+        """Get enrolled participants, optionally filtered by type."""
         pass
 
     # ─────────────────────────────────────────────────────
@@ -91,8 +112,8 @@ class EnrollmentStore(ABC):
     # ─────────────────────────────────────────────────────
 
     @abstractmethod
-    def is_pending(self, name: str, entity_type: str) -> bool:
-        """Check if an entity has a pending request."""
+    def is_pending(self, name: str, participant_type: str) -> bool:
+        """Check if a participant has a pending request."""
         pass
 
     @abstractmethod
@@ -101,12 +122,12 @@ class EnrollmentStore(ABC):
         pass
 
     @abstractmethod
-    def get_pending(self, name: str, entity_type: str) -> Optional[PendingRequest]:
-        """Get pending request for an entity."""
+    def get_pending(self, name: str, participant_type: str) -> Optional[PendingRequest]:
+        """Get pending request for a participant."""
         pass
 
     @abstractmethod
-    def get_all_pending(self, entity_type: Optional[str] = None) -> List[PendingRequest]:
+    def get_all_pending(self, participant_type: Optional[str] = None) -> List[PendingRequest]:
         """Get all pending requests, optionally filtered by type."""
         pass
 
@@ -114,7 +135,7 @@ class EnrollmentStore(ABC):
     def approve_pending(
         self,
         name: str,
-        entity_type: str,
+        participant_type: str,
         signed_cert: str,
         approved_by: str,
     ) -> Optional[PendingRequest]:
@@ -125,7 +146,7 @@ class EnrollmentStore(ABC):
         pass
 
     @abstractmethod
-    def reject_pending(self, name: str, entity_type: str, reason: str) -> bool:
+    def reject_pending(self, name: str, participant_type: str, reason: str) -> bool:
         """Reject and remove a pending request.
 
         Returns True if request was found and removed, False otherwise.
@@ -156,20 +177,27 @@ class SQLiteEnrollmentStore(EnrollmentStore):
         with self._connect() as conn:
             conn.executescript(
                 """
-                -- Enrolled entities (sites and users)
-                CREATE TABLE IF NOT EXISTS enrolled_entities (
+                -- Enrolled participants (sites and users)
+                -- Extended schema with comprehensive tracking fields
+                CREATE TABLE IF NOT EXISTS enrolled_participants (
                     name TEXT NOT NULL,
-                    entity_type TEXT NOT NULL,
+                    participant_type TEXT NOT NULL,
                     enrolled_at TEXT NOT NULL,
                     org TEXT,
                     role TEXT,
-                    PRIMARY KEY (name, entity_type)
+                    project TEXT,
+                    policy_id TEXT,
+                    token_jti TEXT,
+                    source_ip TEXT,
+                    cert_fingerprint TEXT,
+                    cert_expires_at TEXT,
+                    PRIMARY KEY (name, participant_type)
                 );
 
                 -- Pending enrollment requests
                 CREATE TABLE IF NOT EXISTS pending_requests (
                     name TEXT NOT NULL,
-                    entity_type TEXT NOT NULL,
+                    participant_type TEXT NOT NULL,
                     org TEXT NOT NULL,
                     csr_pem TEXT NOT NULL,
                     submitted_at TEXT NOT NULL,
@@ -181,11 +209,14 @@ class SQLiteEnrollmentStore(EnrollmentStore):
                     approved INTEGER DEFAULT 0,
                     approved_at TEXT,
                     approved_by TEXT,
-                    PRIMARY KEY (name, entity_type)
+                    project TEXT,
+                    policy_id TEXT,
+                    token_jti TEXT,
+                    PRIMARY KEY (name, participant_type)
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_pending_type
-                    ON pending_requests(entity_type);
+                    ON pending_requests(participant_type);
                 CREATE INDEX IF NOT EXISTS idx_expires
                     ON pending_requests(expires_at);
             """
@@ -198,59 +229,66 @@ class SQLiteEnrollmentStore(EnrollmentStore):
         return conn
 
     # ─────────────────────────────────────────────────────
-    # Enrolled Entities
+    # Enrolled Participants
     # ─────────────────────────────────────────────────────
 
-    def is_enrolled(self, name: str, entity_type: str) -> bool:
+    def is_enrolled(self, name: str, participant_type: str) -> bool:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT 1 FROM enrolled_entities WHERE name = ? AND entity_type = ?",
-                (name, entity_type),
+                "SELECT 1 FROM enrolled_participants WHERE name = ? AND participant_type = ?",
+                (name, participant_type),
             ).fetchone()
         return row is not None
 
-    def add_enrolled(self, entity: EnrolledEntity) -> None:
+    def add_enrolled(self, participant: EnrolledParticipant) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO enrolled_entities
-                (name, entity_type, enrolled_at, org, role)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO enrolled_participants
+                (name, participant_type, enrolled_at, org, role,
+                 project, policy_id, token_jti, source_ip, cert_fingerprint, cert_expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
-                    entity.name,
-                    entity.entity_type,
-                    entity.enrolled_at.isoformat(),
-                    entity.org,
-                    entity.role,
+                    participant.name,
+                    participant.participant_type,
+                    participant.enrolled_at.isoformat(),
+                    participant.org,
+                    participant.role,
+                    participant.project,
+                    participant.policy_id,
+                    participant.token_jti,
+                    participant.source_ip,
+                    participant.cert_fingerprint,
+                    participant.cert_expires_at.isoformat() if participant.cert_expires_at else None,
                 ),
             )
             # Remove from pending
             conn.execute(
-                "DELETE FROM pending_requests WHERE name = ? AND entity_type = ?",
-                (entity.name, entity.entity_type),
+                "DELETE FROM pending_requests WHERE name = ? AND participant_type = ?",
+                (participant.name, participant.participant_type),
             )
 
-    def get_enrolled(self, entity_type: Optional[str] = None) -> List[EnrolledEntity]:
+    def get_enrolled(self, participant_type: Optional[str] = None) -> List[EnrolledParticipant]:
         with self._connect() as conn:
-            if entity_type:
+            if participant_type:
                 rows = conn.execute(
-                    "SELECT * FROM enrolled_entities WHERE entity_type = ?",
-                    (entity_type,),
+                    "SELECT * FROM enrolled_participants WHERE participant_type = ?",
+                    (participant_type,),
                 ).fetchall()
             else:
-                rows = conn.execute("SELECT * FROM enrolled_entities").fetchall()
-        return [self._row_to_entity(row) for row in rows]
+                rows = conn.execute("SELECT * FROM enrolled_participants").fetchall()
+        return [self._row_to_participant(row) for row in rows]
 
     # ─────────────────────────────────────────────────────
     # Pending Requests
     # ─────────────────────────────────────────────────────
 
-    def is_pending(self, name: str, entity_type: str) -> bool:
+    def is_pending(self, name: str, participant_type: str) -> bool:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT 1 FROM pending_requests WHERE name = ? AND entity_type = ?",
-                (name, entity_type),
+                "SELECT 1 FROM pending_requests WHERE name = ? AND participant_type = ?",
+                (name, participant_type),
             ).fetchone()
         return row is not None
 
@@ -259,13 +297,14 @@ class SQLiteEnrollmentStore(EnrollmentStore):
             conn.execute(
                 """
                 INSERT OR REPLACE INTO pending_requests
-                (name, entity_type, org, csr_pem, submitted_at,
-                 expires_at, token_subject, role, source_ip)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (name, participant_type, org, csr_pem, submitted_at,
+                 expires_at, token_subject, role, source_ip,
+                 project, policy_id, token_jti)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     request.name,
-                    request.entity_type,
+                    request.participant_type,
                     request.org,
                     request.csr_pem,
                     request.submitted_at.isoformat(),
@@ -273,25 +312,28 @@ class SQLiteEnrollmentStore(EnrollmentStore):
                     request.token_subject,
                     request.role,
                     request.source_ip,
+                    request.project,
+                    request.policy_id,
+                    request.token_jti,
                 ),
             )
 
-    def get_pending(self, name: str, entity_type: str) -> Optional[PendingRequest]:
+    def get_pending(self, name: str, participant_type: str) -> Optional[PendingRequest]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM pending_requests WHERE name = ? AND entity_type = ?",
-                (name, entity_type),
+                "SELECT * FROM pending_requests WHERE name = ? AND participant_type = ?",
+                (name, participant_type),
             ).fetchone()
         if not row:
             return None
         return self._row_to_request(row)
 
-    def get_all_pending(self, entity_type: Optional[str] = None) -> List[PendingRequest]:
+    def get_all_pending(self, participant_type: Optional[str] = None) -> List[PendingRequest]:
         with self._connect() as conn:
-            if entity_type:
+            if participant_type:
                 rows = conn.execute(
-                    "SELECT * FROM pending_requests WHERE approved = 0 AND entity_type = ?",
-                    (entity_type,),
+                    "SELECT * FROM pending_requests WHERE approved = 0 AND participant_type = ?",
+                    (participant_type,),
                 ).fetchall()
             else:
                 rows = conn.execute("SELECT * FROM pending_requests WHERE approved = 0").fetchall()
@@ -300,15 +342,15 @@ class SQLiteEnrollmentStore(EnrollmentStore):
     def approve_pending(
         self,
         name: str,
-        entity_type: str,
+        participant_type: str,
         signed_cert: str,
         approved_by: str,
     ) -> Optional[PendingRequest]:
         with self._connect() as conn:
             # Get the request first
             row = conn.execute(
-                "SELECT * FROM pending_requests WHERE name = ? AND entity_type = ?",
-                (name, entity_type),
+                "SELECT * FROM pending_requests WHERE name = ? AND participant_type = ?",
+                (name, participant_type),
             ).fetchone()
             if not row:
                 return None
@@ -319,20 +361,20 @@ class SQLiteEnrollmentStore(EnrollmentStore):
                 """
                 UPDATE pending_requests
                 SET signed_cert = ?, approved = 1, approved_at = ?, approved_by = ?
-                WHERE name = ? AND entity_type = ?
+                WHERE name = ? AND participant_type = ?
             """,
-                (signed_cert, now, approved_by, name, entity_type),
+                (signed_cert, now, approved_by, name, participant_type),
             )
             conn.commit()
 
             # Return updated request
             return self._row_to_request(row)
 
-    def reject_pending(self, name: str, entity_type: str, reason: str) -> bool:
+    def reject_pending(self, name: str, participant_type: str, reason: str) -> bool:
         with self._connect() as conn:
             cursor = conn.execute(
-                "DELETE FROM pending_requests WHERE name = ? AND entity_type = ?",
-                (name, entity_type),
+                "DELETE FROM pending_requests WHERE name = ? AND participant_type = ?",
+                (name, participant_type),
             )
         return cursor.rowcount > 0
 
@@ -349,19 +391,30 @@ class SQLiteEnrollmentStore(EnrollmentStore):
     # Row Converters
     # ─────────────────────────────────────────────────────
 
-    def _row_to_entity(self, row) -> EnrolledEntity:
-        return EnrolledEntity(
+    def _row_to_participant(self, row) -> EnrolledParticipant:
+        return EnrolledParticipant(
             name=row["name"],
-            entity_type=row["entity_type"],
+            participant_type=row["participant_type"],
             enrolled_at=datetime.fromisoformat(row["enrolled_at"]),
             org=row["org"],
             role=row["role"],
+            project=row["project"],
+            policy_id=row["policy_id"],
+            token_jti=row["token_jti"],
+            source_ip=row["source_ip"],
+            cert_fingerprint=row["cert_fingerprint"],
+            cert_expires_at=(
+                datetime.fromisoformat(row["cert_expires_at"]) if row["cert_expires_at"] else None
+            ),
         )
+
+    # Backward compatibility alias
+    _row_to_entity = _row_to_participant
 
     def _row_to_request(self, row) -> PendingRequest:
         return PendingRequest(
             name=row["name"],
-            entity_type=row["entity_type"],
+            participant_type=row["participant_type"],
             org=row["org"],
             csr_pem=row["csr_pem"],
             submitted_at=datetime.fromisoformat(row["submitted_at"]),
@@ -373,6 +426,9 @@ class SQLiteEnrollmentStore(EnrollmentStore):
             approved=bool(row["approved"]),
             approved_at=(datetime.fromisoformat(row["approved_at"]) if row["approved_at"] else None),
             approved_by=row["approved_by"],
+            project=row["project"],
+            policy_id=row["policy_id"],
+            token_jti=row["token_jti"],
         )
 
 
@@ -410,7 +466,7 @@ def create_enrollment_store(config: dict) -> EnrollmentStore:
 def approve_by_pattern(
     store: EnrollmentStore,
     pattern: str,
-    entity_type: str,
+    participant_type: str,
     signed_cert_func,
     approved_by: str,
 ) -> List[str]:
@@ -419,20 +475,20 @@ def approve_by_pattern(
     Args:
         store: EnrollmentStore instance
         pattern: Wildcard pattern (e.g., "hospital-*")
-        entity_type: Entity type to match
+        participant_type: Participant type to match
         signed_cert_func: Function to generate signed cert for each request
         approved_by: Admin identifier
 
     Returns:
-        List of approved entity names
+        List of approved participant names
     """
-    pending = store.get_all_pending(entity_type)
+    pending = store.get_all_pending(participant_type)
     approved_names = []
 
     for req in pending:
         if fnmatch.fnmatch(req.name, pattern):
             signed_cert = signed_cert_func(req)
-            store.approve_pending(req.name, entity_type, signed_cert, approved_by)
+            store.approve_pending(req.name, participant_type, signed_cert, approved_by)
             approved_names.append(req.name)
 
     return approved_names

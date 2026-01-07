@@ -60,16 +60,29 @@ class ApprovalAction(str, Enum):
 
 @dataclass
 class TokenPayload:
-    """Decoded enrollment token payload."""
+    """Decoded enrollment token payload.
 
-    token_id: str
-    subject: str
-    subject_type: str
-    policy: Dict[str, Any]
+    Multi-use tokens are participant-bound (one token = one participant = one enrollment).
+    Policy is stored server-side and referenced by policy_id.
+    """
+
+    token_id: str  # JWT jti claim (unique token identifier)
+    subject: str  # Participant name (e.g., "site-1", "admin@org.com")
+    subject_type: str  # client | server | relay | admin
+    policy_id: str  # Reference to server-side policy (default: "default")
     issued_at: datetime
     expires_at: datetime
     issuer: str
+
+    # Token metadata (embedded in token for client convenience)
+    project: Optional[str] = None  # Project name
+    fl_server: Optional[str] = None  # FL Server endpoint (host:port)
+    cert_service: Optional[str] = None  # Certificate Service URL
+
+    # Admin-specific fields
     roles: Optional[List[str]] = None
+
+    # Additional metadata (extensible)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -184,23 +197,29 @@ class CertService:
     def validate_token(self, jwt_token: str, context: Optional[EnrollmentContext] = None) -> TokenPayload:
         """Validate JWT enrollment token and return decoded payload.
 
+        Multi-use tokens are participant-bound:
+        - Token subject must match enrollment name (exact or pattern)
+        - One token = one participant = one enrollment
+        - Policy is looked up from server-side storage via policy_id
+
         Args:
             jwt_token: The JWT token string
-            context: Optional enrollment context for policy evaluation
+            context: Optional enrollment context for subject validation
 
         Returns:
             TokenPayload with decoded token data
 
         Raises:
-            ValueError: If token is invalid, expired, or policy check fails
+            ValueError: If token is invalid, expired, or context mismatch
         """
         try:
             # Decode and verify signature
+            # Note: policy_id is optional (defaults to "default")
             payload = jwt.decode(
                 jwt_token,
                 self.jwt_public_key,
                 algorithms=[self.JWT_ALGORITHM],
-                options={"require": ["exp", "sub", "jti", "policy"]},
+                options={"require": ["exp", "sub", "jti"]},
             )
         except jwt.ExpiredSignatureError:
             raise ValueError("Enrollment token has expired")
@@ -214,23 +233,28 @@ class CertService:
         token_id = payload["jti"]
 
         # Build token payload object
+        # policy_id defaults to "default" if not specified in token
         token_payload = TokenPayload(
             token_id=token_id,
             subject=payload["sub"],
             subject_type=payload.get("subject_type", ParticipantType.CLIENT),
-            policy=payload["policy"],
+            policy_id=payload.get("policy_id", "default"),
             issued_at=datetime.fromtimestamp(payload["iat"], tz=timezone.utc),
             expires_at=datetime.fromtimestamp(payload["exp"], tz=timezone.utc),
             issuer=payload.get("iss", "unknown"),
+            # Token metadata for client convenience
+            project=payload.get("project"),
+            fl_server=payload.get("fl_server"),
+            cert_service=payload.get("cert_service"),
             roles=payload.get("roles"),
             metadata=payload.get("metadata", {}),
         )
 
-        # Validate against embedded policy if context provided
+        # Validate token subject matches enrollment context
         if context:
             self._validate_token_for_context(token_payload, context)
 
-        self.logger.info(f"Token validated: jti={token_id}, subject={payload['sub']}")
+        self.logger.info(f"Token validated: jti={token_id}, subject={payload['sub']}, policy_id={token_payload.policy_id}")
         return token_payload
 
     def _validate_token_for_context(self, token: TokenPayload, context: EnrollmentContext):
@@ -261,17 +285,34 @@ class CertService:
     # Policy Evaluation
     # =========================================================================
 
-    def evaluate_policy(self, token: TokenPayload, context: EnrollmentContext) -> ApprovalResult:
-        """Evaluate embedded policy against enrollment context.
+    def evaluate_policy(
+        self,
+        token: TokenPayload,
+        context: EnrollmentContext,
+        policy: Optional[Dict[str, Any]] = None,
+    ) -> ApprovalResult:
+        """Evaluate approval policy against enrollment context.
+
+        Policy is loaded from server-side storage by the caller (app.py)
+        using token.policy_id to look up from PolicyManager.
 
         Args:
-            token: Validated token payload
+            token: Validated token payload (contains policy_id)
             context: Enrollment request context
+            policy: Policy dict loaded from PolicyManager. If None,
+                    defaults to auto-approve (for backward compatibility).
 
         Returns:
             ApprovalResult with action and rule details
         """
-        policy = token.policy
+        if policy is None:
+            # No policy provided - default to approve
+            return ApprovalResult(
+                action=ApprovalAction.APPROVE,
+                rule_name="no-policy",
+                message="No policy provided, defaulting to approve",
+            )
+
         approval_config = policy.get("approval", {})
         rules = approval_config.get("rules", [])
 
@@ -380,6 +421,7 @@ class CertService:
         token: str,
         context: EnrollmentContext,
         valid_days: int = 365,
+        policy: Optional[Dict[str, Any]] = None,
     ) -> bytes:
         """Sign CSR using root CA after token validation and policy evaluation.
 
@@ -388,6 +430,7 @@ class CertService:
             token: JWT enrollment token
             context: Enrollment context (name, participant type, role, source IP)
             valid_days: Certificate validity in days
+            policy: Approval policy dict (loaded from PolicyManager by caller)
 
         Returns:
             PEM-encoded signed certificate
@@ -399,7 +442,7 @@ class CertService:
         token_payload = self.validate_token(token, context)
 
         # Evaluate policy
-        result = self.evaluate_policy(token_payload, context)
+        result = self.evaluate_policy(token_payload, context, policy)
 
         if result.action == ApprovalAction.REJECT:
             raise ValueError(f"Enrollment rejected by rule '{result.rule_name}': {result.message}")

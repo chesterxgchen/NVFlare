@@ -3,6 +3,9 @@
 #
 # Approves hospital sites, requires approval for others
 
+policy_id: hospital_network
+description: "Hospital network enrollment policy"
+
 metadata:
   project: "healthcare-fl"
   description: "Hospital network enrollment policy"
