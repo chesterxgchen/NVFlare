@@ -20,9 +20,11 @@ import socket
 import ssl
 import subprocess
 import tempfile
+from typing import Any, Dict, Optional
 
 import grpc
-from requests import Response
+from requests import Request, Response, Session
+from requests.adapters import HTTPAdapter
 
 
 class NVFlareConfig:
@@ -63,6 +65,25 @@ def try_bind_address(host: str, port: int):
     finally:
         sock.close()
     return None
+
+
+def _create_http_session(ca_path=None, cert_path=None, prv_key_path=None):
+    session = Session()
+    adapter = HTTPAdapter(max_retries=1)
+    session.mount("https://", adapter)
+    if ca_path:
+        session.verify = ca_path
+        session.cert = (cert_path, prv_key_path)
+    return session
+
+
+def _send_request(
+    session, api_point, headers: Optional[Dict[str, Any]] = None, payload: Optional[Dict[str, Any]] = None
+) -> Response:
+    req = Request("POST", api_point, json=payload, headers=headers)
+    prepared = session.prepare_request(req)
+    resp = session.send(prepared)
+    return resp
 
 
 def parse_overseer_agent_args(overseer_agent_conf: dict, required_args: list) -> dict:
