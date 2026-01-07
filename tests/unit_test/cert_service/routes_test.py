@@ -152,7 +152,7 @@ class TestPendingRoutes(TestBaseRoutes):
         now = datetime.now(timezone.utc)
         request = PendingRequest(
             name="site-1",
-            entity_type="client",
+            participant_type="client",
             org="TestOrg",
             csr_pem=csr_pem,
             submitted_at=now,
@@ -668,7 +668,7 @@ class TestEnrollmentPendingFlow(TestBaseRoutes):
         from nvflare.cert_service.cert_service import ApprovalAction, ApprovalResult
 
         original_evaluate = app.cert_service.evaluate_policy
-        app.cert_service.evaluate_policy = lambda t, c: ApprovalResult(
+        app.cert_service.evaluate_policy = lambda t, c, p=None: ApprovalResult(
             action=ApprovalAction.PENDING,
             rule_name="manual_review",
             message="Requires manual approval",

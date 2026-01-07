@@ -99,8 +99,24 @@ def make_rules(*rules: RuleDict) -> RuleList:
     return list(rules)
 
 
-def create_jwt_token(private_key, subject, subject_type, policy, expires_in=3600, **extra_claims):
-    """Create a valid JWT token for testing."""
+def create_jwt_token(
+    private_key,
+    subject,
+    subject_type,
+    policy_id: str = "default",
+    expires_in=3600,
+    **extra_claims,
+):
+    """Create a valid JWT token for testing.
+
+    Args:
+        private_key: RSA private key for signing
+        subject: Token subject (participant name)
+        subject_type: Participant type (client, server, relay, admin)
+        policy_id: Reference to server-side policy (default: "default")
+        expires_in: Token validity in seconds
+        **extra_claims: Additional JWT claims
+    """
     import uuid
 
     now = datetime.now(timezone.utc)
@@ -108,7 +124,7 @@ def create_jwt_token(private_key, subject, subject_type, policy, expires_in=3600
         "jti": str(uuid.uuid4()),
         "sub": subject,
         "subject_type": subject_type,
-        "policy": policy,
+        "policy_id": policy_id,
         "iat": now,
         "exp": now + timedelta(seconds=expires_in),
         "iss": "TestRootCA",
@@ -184,24 +200,54 @@ class TestValidateToken:
 
     def test_validate_valid_token(self, cert_service, root_ca_key):
         """Test validating a valid token."""
-        policy = create_sample_policy()
-        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT, policy=policy)
+        token = create_jwt_token(
+            root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT, policy_id="default"
+        )
 
         payload = cert_service.validate_token(token)
 
         assert payload.subject == "hospital-01"
         assert payload.subject_type == ParticipantType.CLIENT
-        assert payload.policy == policy
+        assert payload.policy_id == "default"
         assert payload.issuer == "TestRootCA"
+
+    def test_validate_token_with_custom_policy_id(self, cert_service, root_ca_key):
+        """Test validating a token with custom policy_id."""
+        token = create_jwt_token(
+            root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT, policy_id="trusted-partners"
+        )
+
+        payload = cert_service.validate_token(token)
+
+        assert payload.subject == "hospital-01"
+        assert payload.policy_id == "trusted-partners"
+
+    def test_validate_token_default_policy_id(self, cert_service, root_ca_key):
+        """Test that missing policy_id defaults to 'default'."""
+        import uuid
+
+        now = datetime.now(timezone.utc)
+        # Create token WITHOUT policy_id
+        raw_payload = {
+            "jti": str(uuid.uuid4()),
+            "sub": "hospital-01",
+            "subject_type": ParticipantType.CLIENT,
+            "iat": now,
+            "exp": now + timedelta(seconds=3600),
+            "iss": "TestRootCA",
+        }
+        token = jwt.encode(raw_payload, root_ca_key, algorithm="RS256")
+
+        payload = cert_service.validate_token(token)
+
+        assert payload.policy_id == "default"
 
     def test_validate_expired_token(self, cert_service, root_ca_key):
         """Test that expired token raises error."""
-        policy = create_sample_policy()
         token = create_jwt_token(
             root_ca_key,
             subject="hospital-01",
             subject_type=ParticipantType.CLIENT,
-            policy=policy,
             expires_in=-3600,  # Expired
         )
 
@@ -212,8 +258,7 @@ class TestValidateToken:
         """Test that tampered token raises error."""
         # Create a token with a different key
         other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
-        policy = create_sample_policy()
-        token = create_jwt_token(other_key, subject="hospital-01", subject_type=ParticipantType.CLIENT, policy=policy)
+        token = create_jwt_token(other_key, subject="hospital-01", subject_type=ParticipantType.CLIENT)
 
         with pytest.raises(ValueError, match="Invalid token signature"):
             cert_service.validate_token(token)
@@ -225,8 +270,7 @@ class TestValidateToken:
 
     def test_validate_token_with_context_match(self, cert_service, root_ca_key):
         """Test validating token with matching context."""
-        policy = create_sample_policy()
-        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT, policy=policy)
+        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT)
 
         context = EnrollmentContext(name="hospital-01", participant_type=ParticipantType.CLIENT)
 
@@ -235,8 +279,7 @@ class TestValidateToken:
 
     def test_validate_token_with_context_mismatch(self, cert_service, root_ca_key):
         """Test validating token with mismatched context."""
-        policy = create_sample_policy()
-        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT, policy=policy)
+        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT)
 
         context = EnrollmentContext(name="different-site", participant_type=ParticipantType.CLIENT)
 
@@ -245,8 +288,7 @@ class TestValidateToken:
 
     def test_validate_pattern_token(self, cert_service, root_ca_key):
         """Test validating pattern token with matching name."""
-        policy = create_sample_policy()
-        token = create_jwt_token(root_ca_key, subject="hospital-*", subject_type="pattern", policy=policy)
+        token = create_jwt_token(root_ca_key, subject="hospital-*", subject_type="pattern")
 
         context = EnrollmentContext(name="hospital-01", participant_type=ParticipantType.CLIENT)
 
@@ -255,8 +297,7 @@ class TestValidateToken:
 
     def test_validate_pattern_token_no_match(self, cert_service, root_ca_key):
         """Test validating pattern token with non-matching name."""
-        policy = create_sample_policy()
-        token = create_jwt_token(root_ca_key, subject="hospital-*", subject_type="pattern", policy=policy)
+        token = create_jwt_token(root_ca_key, subject="hospital-*", subject_type="pattern")
 
         context = EnrollmentContext(name="clinic-01", participant_type=ParticipantType.CLIENT)
 
@@ -265,9 +306,8 @@ class TestValidateToken:
 
     def test_validate_token_participant_type_mismatch(self, cert_service, root_ca_key):
         """Test that token subject_type must match context participant_type."""
-        policy = create_sample_policy()
         # Token for client
-        token = create_jwt_token(root_ca_key, subject="site-01", subject_type=ParticipantType.CLIENT, policy=policy)
+        token = create_jwt_token(root_ca_key, subject="site-01", subject_type=ParticipantType.CLIENT)
 
         # Context says admin - should fail
         context = EnrollmentContext(name="site-01", participant_type=ParticipantType.ADMIN)
@@ -277,10 +317,7 @@ class TestValidateToken:
 
     def test_validate_admin_token_with_relay_context(self, cert_service, root_ca_key):
         """Test that admin token cannot be used for relay enrollment."""
-        policy = create_sample_policy()
-        token = create_jwt_token(
-            root_ca_key, subject="user@example.com", subject_type=ParticipantType.ADMIN, policy=policy
-        )
+        token = create_jwt_token(root_ca_key, subject="user@example.com", subject_type=ParticipantType.ADMIN)
 
         context = EnrollmentContext(name="user@example.com", participant_type=ParticipantType.RELAY)
 
@@ -289,30 +326,67 @@ class TestValidateToken:
 
     def test_validate_relay_token_with_client_context(self, cert_service, root_ca_key):
         """Test that relay token cannot be used for client enrollment."""
-        policy = create_sample_policy()
-        token = create_jwt_token(root_ca_key, subject="relay-01", subject_type=ParticipantType.RELAY, policy=policy)
+        token = create_jwt_token(root_ca_key, subject="relay-01", subject_type=ParticipantType.RELAY)
 
         context = EnrollmentContext(name="relay-01", participant_type=ParticipantType.CLIENT)
 
         with pytest.raises(ValueError, match="does not match enrollment type"):
             cert_service.validate_token(token, context)
 
+    def test_validate_token_with_metadata(self, cert_service, root_ca_key):
+        """Test validating token with embedded metadata (project, fl_server, cert_service)."""
+        token = create_jwt_token(
+            root_ca_key,
+            subject="hospital-01",
+            subject_type=ParticipantType.CLIENT,
+            policy_id="trusted",
+            project="my-fl-project",
+            fl_server="grpc://server.example.com:8002",
+            cert_service="https://cert-service.example.com:8443",
+        )
+
+        payload = cert_service.validate_token(token)
+
+        assert payload.subject == "hospital-01"
+        assert payload.policy_id == "trusted"
+        assert payload.project == "my-fl-project"
+        assert payload.fl_server == "grpc://server.example.com:8002"
+        assert payload.cert_service == "https://cert-service.example.com:8443"
+
 
 class TestEvaluatePolicy:
-    """Tests for policy evaluation."""
+    """Tests for policy evaluation.
+
+    Policy is now passed as a parameter to evaluate_policy() instead of
+    being embedded in the token. The token contains only policy_id which
+    is used to look up the policy from PolicyManager (done by the caller).
+    """
 
     def test_evaluate_auto_approve(self, cert_service, root_ca_key):
         """Test policy with auto-approve rule."""
         policy = create_sample_policy()
-        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT, policy=policy)
+        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT)
 
         token_payload = cert_service.validate_token(token)
         context = EnrollmentContext(name="hospital-01", participant_type=ParticipantType.CLIENT)
 
-        result = cert_service.evaluate_policy(token_payload, context)
+        result = cert_service.evaluate_policy(token_payload, context, policy)
 
         assert result.action == ApprovalAction.APPROVE
         assert result.rule_name == "auto-approve-all"
+
+    def test_evaluate_no_policy_defaults_approve(self, cert_service, root_ca_key):
+        """Test that evaluate_policy with no policy defaults to approve."""
+        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT)
+
+        token_payload = cert_service.validate_token(token)
+        context = EnrollmentContext(name="hospital-01", participant_type=ParticipantType.CLIENT)
+
+        # Pass None for policy - should default to approve
+        result = cert_service.evaluate_policy(token_payload, context, policy=None)
+
+        assert result.action == ApprovalAction.APPROVE
+        assert result.rule_name == "no-policy"
 
     def test_evaluate_reject_rule(self, cert_service, root_ca_key):
         """Test policy with reject rule."""
@@ -321,12 +395,12 @@ class TestEvaluatePolicy:
             {"name": "reject-all", "match": {}, "action": "reject", "message": "All enrollments rejected"}
         )
 
-        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT, policy=policy)
+        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT)
 
         token_payload = cert_service.validate_token(token)
         context = EnrollmentContext(name="hospital-01", participant_type=ParticipantType.CLIENT)
 
-        result = cert_service.evaluate_policy(token_payload, context)
+        result = cert_service.evaluate_policy(token_payload, context, policy)
 
         assert result.action == ApprovalAction.REJECT
         assert result.rule_name == "reject-all"
@@ -338,12 +412,12 @@ class TestEvaluatePolicy:
             {"name": "manual-review", "match": {}, "action": "pending", "notify": ["admin@example.com"]}
         )
 
-        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT, policy=policy)
+        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT)
 
         token_payload = cert_service.validate_token(token)
         context = EnrollmentContext(name="hospital-01", participant_type=ParticipantType.CLIENT)
 
-        result = cert_service.evaluate_policy(token_payload, context)
+        result = cert_service.evaluate_policy(token_payload, context, policy)
 
         assert result.action == ApprovalAction.PENDING
         assert result.notify == ["admin@example.com"]
@@ -356,18 +430,18 @@ class TestEvaluatePolicy:
             {"name": "reject-others", "match": {}, "action": "reject"},
         )
 
-        token = create_jwt_token(root_ca_key, subject="*", subject_type="pattern", policy=policy)
+        token = create_jwt_token(root_ca_key, subject="*", subject_type="pattern")
 
         token_payload = cert_service.validate_token(token)
 
         # Matching context
         context1 = EnrollmentContext(name="hospital-01", participant_type=ParticipantType.CLIENT)
-        result1 = cert_service.evaluate_policy(token_payload, context1)
+        result1 = cert_service.evaluate_policy(token_payload, context1, policy)
         assert result1.action == ApprovalAction.APPROVE
 
         # Non-matching context
         context2 = EnrollmentContext(name="clinic-01", participant_type=ParticipantType.CLIENT)
-        result2 = cert_service.evaluate_policy(token_payload, context2)
+        result2 = cert_service.evaluate_policy(token_payload, context2, policy)
         assert result2.action == ApprovalAction.REJECT
 
     def test_evaluate_source_ips(self, cert_service, root_ca_key):
@@ -378,18 +452,18 @@ class TestEvaluatePolicy:
             {"name": "reject-external", "match": {}, "action": "reject"},
         )
 
-        token = create_jwt_token(root_ca_key, subject="*", subject_type="pattern", policy=policy)
+        token = create_jwt_token(root_ca_key, subject="*", subject_type="pattern")
 
         token_payload = cert_service.validate_token(token)
 
         # Matching IP
         context1 = EnrollmentContext(name="site-01", participant_type=ParticipantType.CLIENT, source_ip="10.0.0.5")
-        result1 = cert_service.evaluate_policy(token_payload, context1)
+        result1 = cert_service.evaluate_policy(token_payload, context1, policy)
         assert result1.action == ApprovalAction.APPROVE
 
         # Non-matching IP
         context2 = EnrollmentContext(name="site-02", participant_type=ParticipantType.CLIENT, source_ip="192.168.1.5")
-        result2 = cert_service.evaluate_policy(token_payload, context2)
+        result2 = cert_service.evaluate_policy(token_payload, context2, policy)
         assert result2.action == ApprovalAction.REJECT
 
     def test_evaluate_source_ips_required(self, cert_service, root_ca_key):
@@ -399,13 +473,13 @@ class TestEvaluatePolicy:
             {"name": "approve-internal", "match": {"source_ips": ["10.0.0.0/8"]}, "action": "approve"},
         )
 
-        token = create_jwt_token(root_ca_key, subject="*", subject_type="pattern", policy=policy)
+        token = create_jwt_token(root_ca_key, subject="*", subject_type="pattern")
 
         token_payload = cert_service.validate_token(token)
 
         # No IP provided - should fail to match
         context = EnrollmentContext(name="site-01", participant_type=ParticipantType.CLIENT, source_ip=None)
-        result = cert_service.evaluate_policy(token_payload, context)
+        result = cert_service.evaluate_policy(token_payload, context, policy)
         assert result.action == ApprovalAction.REJECT
 
     def test_evaluate_admin_role_constraint(self, cert_service, root_ca_key):
@@ -413,9 +487,7 @@ class TestEvaluatePolicy:
         policy = create_sample_policy()
         policy["user"]["allowed_roles"] = ["project_admin", "org_admin"]
 
-        token = create_jwt_token(
-            root_ca_key, subject="user@example.com", subject_type=ParticipantType.ADMIN, policy=policy
-        )
+        token = create_jwt_token(root_ca_key, subject="user@example.com", subject_type=ParticipantType.ADMIN)
 
         token_payload = cert_service.validate_token(token)
 
@@ -423,14 +495,14 @@ class TestEvaluatePolicy:
         context1 = EnrollmentContext(
             name="user@example.com", participant_type=ParticipantType.ADMIN, role=AdminRole.ORG_ADMIN
         )
-        result1 = cert_service.evaluate_policy(token_payload, context1)
+        result1 = cert_service.evaluate_policy(token_payload, context1, policy)
         assert result1.action == ApprovalAction.APPROVE
 
         # Disallowed role
         context2 = EnrollmentContext(
             name="user@example.com", participant_type=ParticipantType.ADMIN, role=AdminRole.MEMBER
         )
-        result2 = cert_service.evaluate_policy(token_payload, context2)
+        result2 = cert_service.evaluate_policy(token_payload, context2, policy)
         assert result2.action == ApprovalAction.REJECT
         assert "not in allowed roles" in result2.message
 
@@ -439,29 +511,32 @@ class TestEvaluatePolicy:
         policy = create_sample_policy()
         policy["approval"]["rules"] = []
 
-        token = create_jwt_token(root_ca_key, subject="site-01", subject_type=ParticipantType.CLIENT, policy=policy)
+        token = create_jwt_token(root_ca_key, subject="site-01", subject_type=ParticipantType.CLIENT)
 
         token_payload = cert_service.validate_token(token)
         context = EnrollmentContext(name="site-01", participant_type=ParticipantType.CLIENT)
 
-        result = cert_service.evaluate_policy(token_payload, context)
+        result = cert_service.evaluate_policy(token_payload, context, policy)
 
         assert result.action == ApprovalAction.APPROVE
         assert result.rule_name == "default"
 
 
 class TestSignCSR:
-    """Tests for CSR signing."""
+    """Tests for CSR signing.
+
+    sign_csr now accepts an optional policy parameter (loaded from PolicyManager by caller).
+    """
 
     def test_sign_csr_approved(self, cert_service, root_ca_key):
         """Test signing CSR for approved enrollment."""
         policy = create_sample_policy()
-        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT, policy=policy)
+        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT)
 
         csr_data = create_csr("hospital-01", "Hospital A")
         context = EnrollmentContext(name="hospital-01", participant_type=ParticipantType.CLIENT)
 
-        signed_cert = cert_service.sign_csr(csr_data=csr_data, token=token, context=context)
+        signed_cert = cert_service.sign_csr(csr_data=csr_data, token=token, context=context, policy=policy)
 
         assert signed_cert is not None
         assert b"-----BEGIN CERTIFICATE-----" in signed_cert
@@ -470,15 +545,28 @@ class TestSignCSR:
         cert = x509.load_pem_x509_certificate(signed_cert, default_backend())
         assert cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value == "hospital-01"
 
+    def test_sign_csr_no_policy_defaults_approve(self, cert_service, root_ca_key):
+        """Test signing CSR without policy defaults to approve."""
+        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT)
+
+        csr_data = create_csr("hospital-01", "Hospital A")
+        context = EnrollmentContext(name="hospital-01", participant_type=ParticipantType.CLIENT)
+
+        # No policy passed - should default to approve
+        signed_cert = cert_service.sign_csr(csr_data=csr_data, token=token, context=context)
+
+        assert signed_cert is not None
+        assert b"-----BEGIN CERTIFICATE-----" in signed_cert
+
     def test_sign_csr_with_org(self, cert_service, root_ca_key):
         """Test signing CSR includes organization in certificate."""
         policy = create_sample_policy()
-        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT, policy=policy)
+        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT)
 
         csr_data = create_csr("hospital-01")
         context = EnrollmentContext(name="hospital-01", participant_type=ParticipantType.CLIENT, org="Acme Hospital")
 
-        signed_cert = cert_service.sign_csr(csr_data=csr_data, token=token, context=context)
+        signed_cert = cert_service.sign_csr(csr_data=csr_data, token=token, context=context, policy=policy)
 
         # Verify org is in certificate
         cert = x509.load_pem_x509_certificate(signed_cert, default_backend())
@@ -489,9 +577,7 @@ class TestSignCSR:
     def test_sign_csr_admin_with_role(self, cert_service, root_ca_key):
         """Test signing CSR for admin includes role in certificate."""
         policy = create_sample_policy()
-        token = create_jwt_token(
-            root_ca_key, subject="user@example.com", subject_type=ParticipantType.ADMIN, policy=policy
-        )
+        token = create_jwt_token(root_ca_key, subject="user@example.com", subject_type=ParticipantType.ADMIN)
 
         csr_data = create_csr("user@example.com")
         context = EnrollmentContext(
@@ -501,7 +587,7 @@ class TestSignCSR:
             role=AdminRole.LEAD,
         )
 
-        signed_cert = cert_service.sign_csr(csr_data=csr_data, token=token, context=context)
+        signed_cert = cert_service.sign_csr(csr_data=csr_data, token=token, context=context, policy=policy)
 
         # Verify role is embedded (in unstructured name)
         cert = x509.load_pem_x509_certificate(signed_cert, default_backend())
@@ -511,12 +597,12 @@ class TestSignCSR:
     def test_sign_csr_relay_with_role(self, cert_service, root_ca_key):
         """Test signing CSR for relay includes 'relay' role in certificate."""
         policy = create_sample_policy()
-        token = create_jwt_token(root_ca_key, subject="relay-01", subject_type=ParticipantType.RELAY, policy=policy)
+        token = create_jwt_token(root_ca_key, subject="relay-01", subject_type=ParticipantType.RELAY)
 
         csr_data = create_csr("relay-01")
         context = EnrollmentContext(name="relay-01", participant_type=ParticipantType.RELAY)
 
-        signed_cert = cert_service.sign_csr(csr_data=csr_data, token=token, context=context)
+        signed_cert = cert_service.sign_csr(csr_data=csr_data, token=token, context=context, policy=policy)
 
         # Verify cert can be loaded
         cert = x509.load_pem_x509_certificate(signed_cert, default_backend())
@@ -529,13 +615,13 @@ class TestSignCSR:
             {"name": "reject-all", "match": {}, "action": "reject", "message": "Rejected"},
         )
 
-        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT, policy=policy)
+        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT)
 
         csr_data = create_csr("hospital-01")
         context = EnrollmentContext(name="hospital-01", participant_type=ParticipantType.CLIENT)
 
         with pytest.raises(ValueError, match="Enrollment rejected"):
-            cert_service.sign_csr(csr_data=csr_data, token=token, context=context)
+            cert_service.sign_csr(csr_data=csr_data, token=token, context=context, policy=policy)
 
     def test_sign_csr_pending(self, cert_service, root_ca_key):
         """Test signing CSR for pending enrollment raises error."""
@@ -544,13 +630,13 @@ class TestSignCSR:
             {"name": "pending", "match": {}, "action": "pending", "notify": ["admin@test.com"]},
         )
 
-        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT, policy=policy)
+        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT)
 
         csr_data = create_csr("hospital-01")
         context = EnrollmentContext(name="hospital-01", participant_type=ParticipantType.CLIENT)
 
         with pytest.raises(ValueError, match="manual approval"):
-            cert_service.sign_csr(csr_data=csr_data, token=token, context=context)
+            cert_service.sign_csr(csr_data=csr_data, token=token, context=context, policy=policy)
 
     def test_sign_csr_invalid_token(self, cert_service):
         """Test signing CSR with invalid token raises error."""
@@ -563,12 +649,12 @@ class TestSignCSR:
     def test_sign_csr_invalid_csr(self, cert_service, root_ca_key):
         """Test signing invalid CSR raises error."""
         policy = create_sample_policy()
-        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT, policy=policy)
+        token = create_jwt_token(root_ca_key, subject="hospital-01", subject_type=ParticipantType.CLIENT)
 
         context = EnrollmentContext(name="hospital-01", participant_type=ParticipantType.CLIENT)
 
         with pytest.raises(Exception):
-            cert_service.sign_csr(csr_data=b"not-a-valid-csr", token=token, context=context)
+            cert_service.sign_csr(csr_data=b"not-a-valid-csr", token=token, context=context, policy=policy)
 
 
 class TestIPInRanges:
@@ -602,7 +688,10 @@ class TestIPInRanges:
 
 
 class TestPolicyApprovalScenarios:
-    """Comprehensive tests for policy approval/rejection scenarios."""
+    """Comprehensive tests for policy approval/rejection scenarios.
+
+    Policy is now passed as a parameter to evaluate_policy().
+    """
 
     def test_first_match_wins(self, cert_service, root_ca_key):
         """Test that first matching rule wins (order matters)."""
@@ -613,12 +702,12 @@ class TestPolicyApprovalScenarios:
             {"name": "rule-3", "match": {}, "action": "pending"},
         )
 
-        token = create_jwt_token(root_ca_key, "*", "pattern", policy)
+        token = create_jwt_token(root_ca_key, "*", "pattern")
         token_payload = cert_service.validate_token(token)
 
         # hospital-01 matches rule-1 first -> reject
         context = EnrollmentContext(name="hospital-01", participant_type=ParticipantType.CLIENT)
-        result = cert_service.evaluate_policy(token_payload, context)
+        result = cert_service.evaluate_policy(token_payload, context, policy)
         assert result.action == ApprovalAction.REJECT
         assert result.rule_name == "rule-1"
 
@@ -631,20 +720,20 @@ class TestPolicyApprovalScenarios:
             {"name": "reject-rest", "match": {}, "action": "reject"},
         )
 
-        token = create_jwt_token(root_ca_key, "*", "pattern", policy)
+        token = create_jwt_token(root_ca_key, "*", "pattern")
         token_payload = cert_service.validate_token(token)
 
         # hospital matches first rule
         ctx1 = EnrollmentContext(name="hospital-01", participant_type=ParticipantType.CLIENT)
-        assert cert_service.evaluate_policy(token_payload, ctx1).action == ApprovalAction.APPROVE
+        assert cert_service.evaluate_policy(token_payload, ctx1, policy).action == ApprovalAction.APPROVE
 
         # clinic matches second rule
         ctx2 = EnrollmentContext(name="clinic-01", participant_type=ParticipantType.CLIENT)
-        assert cert_service.evaluate_policy(token_payload, ctx2).action == ApprovalAction.PENDING
+        assert cert_service.evaluate_policy(token_payload, ctx2, policy).action == ApprovalAction.PENDING
 
         # unknown matches catch-all
         ctx3 = EnrollmentContext(name="lab-01", participant_type=ParticipantType.CLIENT)
-        assert cert_service.evaluate_policy(token_payload, ctx3).action == ApprovalAction.REJECT
+        assert cert_service.evaluate_policy(token_payload, ctx3, policy).action == ApprovalAction.REJECT
 
     def test_no_matching_rule_default_deny(self, cert_service, root_ca_key):
         """Test default deny when no rule matches."""
@@ -653,12 +742,12 @@ class TestPolicyApprovalScenarios:
             {"name": "hospitals-only", "match": {"site_name_pattern": "hospital-*"}, "action": "approve"},
         )
 
-        token = create_jwt_token(root_ca_key, "*", "pattern", policy)
+        token = create_jwt_token(root_ca_key, "*", "pattern")
         token_payload = cert_service.validate_token(token)
 
         # No match -> default deny
         context = EnrollmentContext(name="clinic-01", participant_type=ParticipantType.CLIENT)
-        result = cert_service.evaluate_policy(token_payload, context)
+        result = cert_service.evaluate_policy(token_payload, context, policy)
         assert result.action == ApprovalAction.REJECT
         assert result.rule_name == "default-deny"
 
@@ -674,20 +763,20 @@ class TestPolicyApprovalScenarios:
             {"name": "reject-rest", "match": {}, "action": "reject"},
         )
 
-        token = create_jwt_token(root_ca_key, "*", "pattern", policy)
+        token = create_jwt_token(root_ca_key, "*", "pattern")
         token_payload = cert_service.validate_token(token)
 
         # Both conditions match
         ctx1 = EnrollmentContext(name="hospital-01", participant_type=ParticipantType.CLIENT, source_ip="10.0.0.5")
-        assert cert_service.evaluate_policy(token_payload, ctx1).action == ApprovalAction.APPROVE
+        assert cert_service.evaluate_policy(token_payload, ctx1, policy).action == ApprovalAction.APPROVE
 
         # Name matches but IP doesn't
         ctx2 = EnrollmentContext(name="hospital-01", participant_type=ParticipantType.CLIENT, source_ip="192.168.1.1")
-        assert cert_service.evaluate_policy(token_payload, ctx2).action == ApprovalAction.REJECT
+        assert cert_service.evaluate_policy(token_payload, ctx2, policy).action == ApprovalAction.REJECT
 
         # IP matches but name doesn't
         ctx3 = EnrollmentContext(name="clinic-01", participant_type=ParticipantType.CLIENT, source_ip="10.0.0.5")
-        assert cert_service.evaluate_policy(token_payload, ctx3).action == ApprovalAction.REJECT
+        assert cert_service.evaluate_policy(token_payload, ctx3, policy).action == ApprovalAction.REJECT
 
     def test_ip_whitelist_no_site_restriction(self, cert_service, root_ca_key):
         """Test IP whitelist without site name restriction."""
@@ -697,19 +786,19 @@ class TestPolicyApprovalScenarios:
             {"name": "reject-external", "match": {}, "action": "reject"},
         )
 
-        token = create_jwt_token(root_ca_key, "*", "pattern", policy)
+        token = create_jwt_token(root_ca_key, "*", "pattern")
         token_payload = cert_service.validate_token(token)
 
         # Any site from internal network
         ctx1 = EnrollmentContext(name="any-site-01", participant_type=ParticipantType.CLIENT, source_ip="10.0.0.5")
-        assert cert_service.evaluate_policy(token_payload, ctx1).action == ApprovalAction.APPROVE
+        assert cert_service.evaluate_policy(token_payload, ctx1, policy).action == ApprovalAction.APPROVE
 
         ctx2 = EnrollmentContext(name="any-site-02", participant_type=ParticipantType.CLIENT, source_ip="172.16.0.1")
-        assert cert_service.evaluate_policy(token_payload, ctx2).action == ApprovalAction.APPROVE
+        assert cert_service.evaluate_policy(token_payload, ctx2, policy).action == ApprovalAction.APPROVE
 
         # External IP rejected
         ctx3 = EnrollmentContext(name="any-site-03", participant_type=ParticipantType.CLIENT, source_ip="8.8.8.8")
-        assert cert_service.evaluate_policy(token_payload, ctx3).action == ApprovalAction.REJECT
+        assert cert_service.evaluate_policy(token_payload, ctx3, policy).action == ApprovalAction.REJECT
 
     def test_wildcard_patterns(self, cert_service, root_ca_key):
         """Test various wildcard patterns."""
@@ -722,28 +811,28 @@ class TestPolicyApprovalScenarios:
             {"name": "reject-rest", "match": {}, "action": "reject"},
         )
 
-        token = create_jwt_token(root_ca_key, "*", "pattern", policy)
+        token = create_jwt_token(root_ca_key, "*", "pattern")
         token_payload = cert_service.validate_token(token)
 
         # Prefix match
         ctx1 = EnrollmentContext(name="prod-server-01", participant_type=ParticipantType.CLIENT)
-        assert cert_service.evaluate_policy(token_payload, ctx1).action == ApprovalAction.APPROVE
+        assert cert_service.evaluate_policy(token_payload, ctx1, policy).action == ApprovalAction.APPROVE
 
         # Suffix match
         ctx2 = EnrollmentContext(name="server-prod", participant_type=ParticipantType.CLIENT)
-        assert cert_service.evaluate_policy(token_payload, ctx2).action == ApprovalAction.APPROVE
+        assert cert_service.evaluate_policy(token_payload, ctx2, policy).action == ApprovalAction.APPROVE
 
         # Contains match
         ctx3 = EnrollmentContext(name="server-staging-01", participant_type=ParticipantType.CLIENT)
-        assert cert_service.evaluate_policy(token_payload, ctx3).action == ApprovalAction.PENDING
+        assert cert_service.evaluate_policy(token_payload, ctx3, policy).action == ApprovalAction.PENDING
 
         # Exact match
         ctx4 = EnrollmentContext(name="special", participant_type=ParticipantType.CLIENT)
-        assert cert_service.evaluate_policy(token_payload, ctx4).action == ApprovalAction.APPROVE
+        assert cert_service.evaluate_policy(token_payload, ctx4, policy).action == ApprovalAction.APPROVE
 
         # No match
         ctx5 = EnrollmentContext(name="dev-server", participant_type=ParticipantType.CLIENT)
-        assert cert_service.evaluate_policy(token_payload, ctx5).action == ApprovalAction.REJECT
+        assert cert_service.evaluate_policy(token_payload, ctx5, policy).action == ApprovalAction.REJECT
 
     def test_admin_role_enforcement(self, cert_service, root_ca_key):
         """Test admin role enforcement with different roles."""
@@ -753,30 +842,30 @@ class TestPolicyApprovalScenarios:
             {"name": "approve-all", "match": {}, "action": "approve"},
         )
 
-        token = create_jwt_token(root_ca_key, "user@example.com", ParticipantType.ADMIN, policy)
+        token = create_jwt_token(root_ca_key, "user@example.com", ParticipantType.ADMIN)
         token_payload = cert_service.validate_token(token)
 
         # Allowed role
         ctx1 = EnrollmentContext(
             name="user@example.com", participant_type=ParticipantType.ADMIN, role=AdminRole.PROJECT_ADMIN
         )
-        assert cert_service.evaluate_policy(token_payload, ctx1).action == ApprovalAction.APPROVE
+        assert cert_service.evaluate_policy(token_payload, ctx1, policy).action == ApprovalAction.APPROVE
 
         # Another allowed role
         ctx2 = EnrollmentContext(
             name="user@example.com", participant_type=ParticipantType.ADMIN, role=AdminRole.ORG_ADMIN
         )
-        assert cert_service.evaluate_policy(token_payload, ctx2).action == ApprovalAction.APPROVE
+        assert cert_service.evaluate_policy(token_payload, ctx2, policy).action == ApprovalAction.APPROVE
 
         # Disallowed role
         ctx3 = EnrollmentContext(name="user@example.com", participant_type=ParticipantType.ADMIN, role=AdminRole.MEMBER)
-        result = cert_service.evaluate_policy(token_payload, ctx3)
+        result = cert_service.evaluate_policy(token_payload, ctx3, policy)
         assert result.action == ApprovalAction.REJECT
         assert result.rule_name == "role-constraint"
 
         # Disallowed role
         ctx4 = EnrollmentContext(name="user@example.com", participant_type=ParticipantType.ADMIN, role=AdminRole.LEAD)
-        assert cert_service.evaluate_policy(token_payload, ctx4).action == ApprovalAction.REJECT
+        assert cert_service.evaluate_policy(token_payload, ctx4, policy).action == ApprovalAction.REJECT
 
     def test_role_bypass_for_clients(self, cert_service, root_ca_key):
         """Test that role constraints don't affect client enrollments."""
@@ -786,12 +875,12 @@ class TestPolicyApprovalScenarios:
             {"name": "approve-all", "match": {}, "action": "approve"},
         )
 
-        token = create_jwt_token(root_ca_key, "site-01", ParticipantType.CLIENT, policy)
+        token = create_jwt_token(root_ca_key, "site-01", ParticipantType.CLIENT)
         token_payload = cert_service.validate_token(token)
 
         # Client enrollment should not be affected by role constraints
         context = EnrollmentContext(name="site-01", participant_type=ParticipantType.CLIENT)
-        assert cert_service.evaluate_policy(token_payload, context).action == ApprovalAction.APPROVE
+        assert cert_service.evaluate_policy(token_payload, context, policy).action == ApprovalAction.APPROVE
 
     def test_empty_match_matches_all(self, cert_service, root_ca_key):
         """Test that empty match condition matches everything."""
@@ -800,13 +889,13 @@ class TestPolicyApprovalScenarios:
             {"name": "approve-all", "match": {}, "action": "approve"},
         )
 
-        token = create_jwt_token(root_ca_key, "*", "pattern", policy)
+        token = create_jwt_token(root_ca_key, "*", "pattern")
         token_payload = cert_service.validate_token(token)
 
         # Should match any site
         for name in ["site-01", "hospital-01", "clinic-01", "x", "long-name-with-dashes"]:
             context = EnrollmentContext(name=name, participant_type=ParticipantType.CLIENT)
-            assert cert_service.evaluate_policy(token_payload, context).action == ApprovalAction.APPROVE
+            assert cert_service.evaluate_policy(token_payload, context, policy).action == ApprovalAction.APPROVE
 
     def test_pending_with_notification(self, cert_service, root_ca_key):
         """Test pending action with notification list."""
@@ -822,11 +911,11 @@ class TestPolicyApprovalScenarios:
             {"name": "approve-rest", "match": {}, "action": "approve"},
         )
 
-        token = create_jwt_token(root_ca_key, "*", "pattern", policy)
+        token = create_jwt_token(root_ca_key, "*", "pattern")
         token_payload = cert_service.validate_token(token)
 
         context = EnrollmentContext(name="external-partner-01", participant_type=ParticipantType.CLIENT)
-        result = cert_service.evaluate_policy(token_payload, context)
+        result = cert_service.evaluate_policy(token_payload, context, policy)
 
         assert result.action == ApprovalAction.PENDING
         assert result.notify == ["admin@company.com", "security@company.com"]
@@ -845,11 +934,11 @@ class TestPolicyApprovalScenarios:
             {"name": "approve-rest", "match": {}, "action": "approve"},
         )
 
-        token = create_jwt_token(root_ca_key, "*", "pattern", policy)
+        token = create_jwt_token(root_ca_key, "*", "pattern")
         token_payload = cert_service.validate_token(token)
 
         context = EnrollmentContext(name="test-server-01", participant_type=ParticipantType.CLIENT)
-        result = cert_service.evaluate_policy(token_payload, context)
+        result = cert_service.evaluate_policy(token_payload, context, policy)
 
         assert result.action == ApprovalAction.REJECT
         assert result.message == "Test environments not allowed in production"
@@ -863,28 +952,28 @@ class TestPolicyApprovalScenarios:
             {"name": "reject-public", "match": {}, "action": "reject"},
         )
 
-        token = create_jwt_token(root_ca_key, "*", "pattern", policy)
+        token = create_jwt_token(root_ca_key, "*", "pattern")
         token_payload = cert_service.validate_token(token)
 
         # AWS internal
         ctx1 = EnrollmentContext(name="aws-01", participant_type=ParticipantType.CLIENT, source_ip="10.128.0.5")
-        assert cert_service.evaluate_policy(token_payload, ctx1).action == ApprovalAction.APPROVE
+        assert cert_service.evaluate_policy(token_payload, ctx1, policy).action == ApprovalAction.APPROVE
 
         # GCP internal
         ctx2 = EnrollmentContext(name="gcp-01", participant_type=ParticipantType.CLIENT, source_ip="172.20.0.5")
-        assert cert_service.evaluate_policy(token_payload, ctx2).action == ApprovalAction.APPROVE
+        assert cert_service.evaluate_policy(token_payload, ctx2, policy).action == ApprovalAction.APPROVE
 
         # Azure internal
         ctx3 = EnrollmentContext(name="azure-01", participant_type=ParticipantType.CLIENT, source_ip="192.168.5.10")
-        assert cert_service.evaluate_policy(token_payload, ctx3).action == ApprovalAction.APPROVE
+        assert cert_service.evaluate_policy(token_payload, ctx3, policy).action == ApprovalAction.APPROVE
 
         # CGNAT
         ctx4 = EnrollmentContext(name="cgnat-01", participant_type=ParticipantType.CLIENT, source_ip="100.64.1.5")
-        assert cert_service.evaluate_policy(token_payload, ctx4).action == ApprovalAction.APPROVE
+        assert cert_service.evaluate_policy(token_payload, ctx4, policy).action == ApprovalAction.APPROVE
 
         # Public IP rejected
         ctx5 = EnrollmentContext(name="public-01", participant_type=ParticipantType.CLIENT, source_ip="203.0.113.5")
-        assert cert_service.evaluate_policy(token_payload, ctx5).action == ApprovalAction.REJECT
+        assert cert_service.evaluate_policy(token_payload, ctx5, policy).action == ApprovalAction.REJECT
 
     def test_relay_enrollment(self, cert_service, root_ca_key):
         """Test relay node enrollment policies."""
@@ -894,12 +983,12 @@ class TestPolicyApprovalScenarios:
             {"name": "reject-rest", "match": {}, "action": "reject"},
         )
 
-        token = create_jwt_token(root_ca_key, "relay-*", "pattern", policy)
+        token = create_jwt_token(root_ca_key, "relay-*", "pattern")
         token_payload = cert_service.validate_token(token)
 
         # Relay enrollment
         context = EnrollmentContext(name="relay-01", participant_type=ParticipantType.RELAY)
-        assert cert_service.evaluate_policy(token_payload, context).action == ApprovalAction.APPROVE
+        assert cert_service.evaluate_policy(token_payload, context, policy).action == ApprovalAction.APPROVE
 
     def test_tiered_approval(self, cert_service, root_ca_key):
         """Test tiered approval based on site naming convention."""
@@ -916,26 +1005,26 @@ class TestPolicyApprovalScenarios:
             {"name": "default-reject", "match": {}, "action": "reject"},
         )
 
-        token = create_jwt_token(root_ca_key, "*", "pattern", policy)
+        token = create_jwt_token(root_ca_key, "*", "pattern")
         token_payload = cert_service.validate_token(token)
 
         # Trusted partner - auto approve
         ctx1 = EnrollmentContext(name="partner-trusted-acme", participant_type=ParticipantType.CLIENT)
-        assert cert_service.evaluate_policy(token_payload, ctx1).action == ApprovalAction.APPROVE
+        assert cert_service.evaluate_policy(token_payload, ctx1, policy).action == ApprovalAction.APPROVE
 
         # New partner - pending
         ctx2 = EnrollmentContext(name="partner-newcorp", participant_type=ParticipantType.CLIENT)
-        result = cert_service.evaluate_policy(token_payload, ctx2)
+        result = cert_service.evaluate_policy(token_payload, ctx2, policy)
         assert result.action == ApprovalAction.PENDING
         assert result.notify == ["partnerships@company.com"]
 
         # Internal - approved
         ctx3 = EnrollmentContext(name="internal-server-01", participant_type=ParticipantType.CLIENT)
-        assert cert_service.evaluate_policy(token_payload, ctx3).action == ApprovalAction.APPROVE
+        assert cert_service.evaluate_policy(token_payload, ctx3, policy).action == ApprovalAction.APPROVE
 
         # Unknown - rejected
         ctx4 = EnrollmentContext(name="unknown-site", participant_type=ParticipantType.CLIENT)
-        assert cert_service.evaluate_policy(token_payload, ctx4).action == ApprovalAction.REJECT
+        assert cert_service.evaluate_policy(token_payload, ctx4, policy).action == ApprovalAction.REJECT
 
 
 class TestParticipantTypeValidation:
@@ -943,8 +1032,7 @@ class TestParticipantTypeValidation:
 
     def test_client_token_for_client_enrollment(self, cert_service, root_ca_key):
         """Test client token works for client enrollment."""
-        policy = create_sample_policy()
-        token = create_jwt_token(root_ca_key, "site-01", ParticipantType.CLIENT, policy)
+        token = create_jwt_token(root_ca_key, "site-01", ParticipantType.CLIENT)
 
         context = EnrollmentContext(name="site-01", participant_type=ParticipantType.CLIENT)
         payload = cert_service.validate_token(token, context)
@@ -952,8 +1040,7 @@ class TestParticipantTypeValidation:
 
     def test_admin_token_for_admin_enrollment(self, cert_service, root_ca_key):
         """Test admin token works for admin enrollment."""
-        policy = create_sample_policy()
-        token = create_jwt_token(root_ca_key, "user@example.com", ParticipantType.ADMIN, policy)
+        token = create_jwt_token(root_ca_key, "user@example.com", ParticipantType.ADMIN)
 
         context = EnrollmentContext(
             name="user@example.com", participant_type=ParticipantType.ADMIN, role=AdminRole.LEAD
@@ -963,8 +1050,7 @@ class TestParticipantTypeValidation:
 
     def test_relay_token_for_relay_enrollment(self, cert_service, root_ca_key):
         """Test relay token works for relay enrollment."""
-        policy = create_sample_policy()
-        token = create_jwt_token(root_ca_key, "relay-01", ParticipantType.RELAY, policy)
+        token = create_jwt_token(root_ca_key, "relay-01", ParticipantType.RELAY)
 
         context = EnrollmentContext(name="relay-01", participant_type=ParticipantType.RELAY)
         payload = cert_service.validate_token(token, context)
@@ -972,8 +1058,7 @@ class TestParticipantTypeValidation:
 
     def test_pattern_token_allows_any_participant_type(self, cert_service, root_ca_key):
         """Test pattern token can be used for any participant type."""
-        policy = create_sample_policy()
-        token = create_jwt_token(root_ca_key, "*-01", "pattern", policy)
+        token = create_jwt_token(root_ca_key, "*-01", "pattern")
 
         # Pattern token allows client
         ctx1 = EnrollmentContext(name="site-01", participant_type=ParticipantType.CLIENT)
@@ -987,10 +1072,8 @@ class TestParticipantTypeValidation:
 
     def test_cross_type_enrollment_fails(self, cert_service, root_ca_key):
         """Test that using wrong token type for enrollment fails."""
-        policy = create_sample_policy()
-
         # Client token
-        client_token = create_jwt_token(root_ca_key, "site-01", ParticipantType.CLIENT, policy)
+        client_token = create_jwt_token(root_ca_key, "site-01", ParticipantType.CLIENT)
 
         # Cannot use for admin
         with pytest.raises(ValueError, match="does not match enrollment type"):
@@ -1010,8 +1093,7 @@ class TestEnrollmentContextOrg:
 
     def test_context_with_org(self, cert_service, root_ca_key):
         """Test enrollment context with organization."""
-        policy = create_sample_policy()
-        token = create_jwt_token(root_ca_key, "site-01", ParticipantType.CLIENT, policy)
+        token = create_jwt_token(root_ca_key, "site-01", ParticipantType.CLIENT)
 
         context = EnrollmentContext(name="site-01", participant_type=ParticipantType.CLIENT, org="Acme Corp")
         payload = cert_service.validate_token(token, context)
@@ -1019,8 +1101,7 @@ class TestEnrollmentContextOrg:
 
     def test_context_without_org(self, cert_service, root_ca_key):
         """Test enrollment context without organization."""
-        policy = create_sample_policy()
-        token = create_jwt_token(root_ca_key, "site-01", ParticipantType.CLIENT, policy)
+        token = create_jwt_token(root_ca_key, "site-01", ParticipantType.CLIENT)
 
         context = EnrollmentContext(name="site-01", participant_type=ParticipantType.CLIENT)
         payload = cert_service.validate_token(token, context)
@@ -1028,8 +1109,7 @@ class TestEnrollmentContextOrg:
 
     def test_admin_context_with_org_and_role(self, cert_service, root_ca_key):
         """Test admin enrollment context with org and role."""
-        policy = create_sample_policy()
-        token = create_jwt_token(root_ca_key, "user@example.com", ParticipantType.ADMIN, policy)
+        token = create_jwt_token(root_ca_key, "user@example.com", ParticipantType.ADMIN)
 
         context = EnrollmentContext(
             name="user@example.com",

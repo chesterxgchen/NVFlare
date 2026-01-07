@@ -38,7 +38,7 @@ class TestSQLiteEnrollmentStore:
         """Create a sample enrolled entity."""
         return EnrolledEntity(
             name="site-1",
-            entity_type="client",
+            participant_type="client",
             enrolled_at=datetime.now(timezone.utc),
             org="TestOrg",
             role=None,
@@ -50,7 +50,7 @@ class TestSQLiteEnrollmentStore:
         now = datetime.now(timezone.utc)
         return PendingRequest(
             name="site-2",
-            entity_type="client",
+            participant_type="client",
             org="TestOrg",
             csr_pem="-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----",
             submitted_at=now,
@@ -114,7 +114,7 @@ class TestEnrolledEntities(TestSQLiteEnrollmentStore):
         """Test enrolled entity with admin role."""
         entity = EnrolledEntity(
             name="admin-1",
-            entity_type="admin",
+            participant_type="admin",
             enrolled_at=datetime.now(timezone.utc),
             org="TestOrg",
             role="lead",
@@ -134,7 +134,7 @@ class TestEnrolledEntities(TestSQLiteEnrollmentStore):
         # Enroll
         entity = EnrolledEntity(
             name="site-2",
-            entity_type="client",
+            participant_type="client",
             enrolled_at=datetime.now(timezone.utc),
             org="TestOrg",
         )
@@ -179,7 +179,7 @@ class TestPendingRequests(TestSQLiteEnrollmentStore):
         result = store.get_pending("site-2", "client")
         assert result is not None
         assert result.name == "site-2"
-        assert result.entity_type == "client"
+        assert result.participant_type == "client"
         assert result.org == "TestOrg"
         assert result.source_ip == "10.0.0.1"
 
@@ -225,7 +225,7 @@ class TestPendingRequests(TestSQLiteEnrollmentStore):
 
         result = store.approve_pending(
             name="site-2",
-            entity_type="client",
+            participant_type="client",
             signed_cert="-----BEGIN CERTIFICATE-----\nsigned\n-----END CERTIFICATE-----",
             approved_by="admin",
         )
