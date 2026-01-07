@@ -87,8 +87,9 @@ notifications:
 def _check_jwt_dependency():
     """Check if PyJWT is installed."""
     try:
-        import jwt  # noqa: F401
+        import jwt
 
+        _ = jwt  # Ensure import is used
         return True
     except ImportError:
         print("\nError: PyJWT is required for token operations.")
