@@ -28,9 +28,17 @@ Supports enrollment types:
 
 Uses HTTP to communicate with the Certificate Service.
 
+Token Metadata:
+    Tokens may contain embedded metadata that can be used to simplify
+    enrollment:
+    - project: Project name
+    - fl_server: FL Server endpoint (host:port)
+    - cert_service: Certificate Service URL
+    - policy_id: Server-side policy reference (not visible to client)
+
 Example usage:
 
-    from nvflare.private.fed.client.enrollment import (
+    from nvflare.security.enrollment import (
         CertRequestor,
         EnrollmentIdentity,
         EnrollmentOptions,
@@ -61,14 +69,19 @@ Example usage:
         result = requestor.request_certificate()
         print(f"Certificate saved to: {result.cert_path}")
         print(f"Root CA saved to: {result.ca_path}")
+    except PendingApprovalError as e:
+        print(f"Enrollment pending manual approval: {e}")
     except Exception as e:
         print(f"Enrollment failed: {e}")
 """
 
+import base64
+import json
 import logging
 import os
-from dataclasses import dataclass
-from typing import Any, Optional
+import time
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -76,6 +89,31 @@ from pydantic import BaseModel, field_validator
 
 from nvflare.lighter.constants import DEFINED_PARTICIPANT_TYPES, DEFINED_ROLES, AdminRole, ParticipantType
 from nvflare.lighter.utils import generate_keys, serialize_pri_key
+
+
+# =============================================================================
+# Exceptions
+# =============================================================================
+
+
+class PendingApprovalError(Exception):
+    """Raised when enrollment requires manual approval.
+
+    The enrollment request has been submitted but requires manual approval
+    by an administrator before a certificate can be issued.
+    """
+
+    def __init__(self, message: str, request_id: Optional[str] = None):
+        super().__init__(message)
+        self.request_id = request_id
+
+
+class EnrollmentRejectedError(Exception):
+    """Raised when enrollment is rejected by policy."""
+
+    def __init__(self, message: str, rule_name: Optional[str] = None):
+        super().__init__(message)
+        self.rule_name = rule_name
 
 # =============================================================================
 # Configuration Classes (Simple interface, Pydantic validation)
@@ -189,6 +227,10 @@ class EnrollmentOptions(BaseModel):
     retry_count: int = 3
     cert_valid_days: int = 360
     output_dir: str = "."
+    # Pending approval options
+    wait_for_approval: bool = False  # If True, poll for approval instead of raising error
+    poll_interval: float = 30.0  # Seconds between status checks
+    max_wait_time: float = 3600.0  # Maximum time to wait for approval (1 hour)
 
     @field_validator("timeout")
     @classmethod
@@ -211,6 +253,32 @@ class EnrollmentOptions(BaseModel):
             raise ValueError("cert_valid_days must be positive")
         return v
 
+    @field_validator("poll_interval")
+    @classmethod
+    def validate_poll_interval(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("poll_interval must be positive")
+        return v
+
+    @field_validator("max_wait_time")
+    @classmethod
+    def validate_max_wait_time(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("max_wait_time must be positive")
+        return v
+
+
+@dataclass
+class TokenMetadata:
+    """Metadata extracted from enrollment token (optional fields)."""
+
+    project: Optional[str] = None
+    fl_server: Optional[str] = None
+    cert_service: Optional[str] = None
+    policy_id: Optional[str] = None
+    subject: Optional[str] = None
+    subject_type: Optional[str] = None
+
 
 @dataclass
 class EnrollmentResult:
@@ -225,6 +293,9 @@ class EnrollmentResult:
     cert_path: str
     key_path: str
     ca_path: str
+
+    # Token metadata (extracted from JWT)
+    token_metadata: Optional[TokenMetadata] = field(default=None)
 
 
 # =============================================================================
@@ -248,6 +319,10 @@ class CertRequestor:
     Security:
     - Private key is generated locally and never transmitted
     - rootCA.pem is only returned after token is validated
+
+    Token Metadata:
+    - Token may contain project, fl_server, cert_service for convenience
+    - policy_id references server-side policy (transparent to client)
     """
 
     def __init__(
@@ -261,7 +336,7 @@ class CertRequestor:
 
         Args:
             cert_service_url: URL of the Certificate Service (e.g., https://cert-svc:8443)
-            enrollment_token: JWT token with embedded policy
+            enrollment_token: JWT token with policy_id reference
             identity: Client identity information (client, admin, relay, or server)
             options: Optional configuration parameters
 
@@ -283,6 +358,57 @@ class CertRequestor:
         # Generated key pair
         self.private_key = None
         self.public_key = None
+
+        # Parse token metadata (without verification - just for convenience)
+        self._token_metadata: Optional[TokenMetadata] = None
+        self._parse_token_metadata()
+
+    def _parse_token_metadata(self) -> None:
+        """Parse token metadata without verification.
+
+        This extracts optional metadata from the JWT token for convenience
+        (e.g., project name, fl_server endpoint). Does NOT verify the token -
+        that's done server-side.
+        """
+        try:
+            # JWT format: header.payload.signature
+            parts = self.enrollment_token.split(".")
+            if len(parts) != 3:
+                return
+
+            # Decode payload (base64url)
+            payload_b64 = parts[1]
+            # Add padding if needed
+            padding = 4 - len(payload_b64) % 4
+            if padding != 4:
+                payload_b64 += "=" * padding
+
+            payload_json = base64.urlsafe_b64decode(payload_b64)
+            payload = json.loads(payload_json)
+
+            self._token_metadata = TokenMetadata(
+                project=payload.get("project"),
+                fl_server=payload.get("fl_server"),
+                cert_service=payload.get("cert_service"),
+                policy_id=payload.get("policy_id"),
+                subject=payload.get("sub"),
+                subject_type=payload.get("subject_type"),
+            )
+
+            self.logger.debug(f"Token metadata: project={self._token_metadata.project}, "
+                             f"policy_id={self._token_metadata.policy_id}")
+
+        except Exception as e:
+            self.logger.debug(f"Could not parse token metadata: {e}")
+            self._token_metadata = None
+
+    def get_token_metadata(self) -> Optional[TokenMetadata]:
+        """Get metadata extracted from the enrollment token.
+
+        Returns:
+            TokenMetadata with project, fl_server, etc. or None if not available
+        """
+        return self._token_metadata
 
     def generate_key_pair(self) -> None:
         """Generate RSA key pair for CSR."""
@@ -319,7 +445,7 @@ class CertRequestor:
 
         return csr.public_bytes(serialization.Encoding.PEM)
 
-    def submit_csr(self, csr_data: bytes) -> dict:
+    def submit_csr(self, csr_data: bytes) -> Dict[str, Any]:
         """Submit CSR to Certificate Service for signing.
 
         Args:
@@ -329,6 +455,8 @@ class CertRequestor:
             Dict with 'certificate' and 'ca_cert' keys
 
         Raises:
+            PendingApprovalError: If enrollment requires manual approval
+            EnrollmentRejectedError: If enrollment is rejected by policy
             RuntimeError: If CSR submission fails
         """
         try:
@@ -360,22 +488,131 @@ class CertRequestor:
                 # so no custom CA verification needed
             )
 
-            if response.status_code == 401:
+            if response.status_code == 200:
+                result = response.json()
+                self.logger.info(f"{self.identity.participant_type} CSR signed successfully")
+                return result
+
+            elif response.status_code == 202:
+                # Pending manual approval
+                data = response.json()
+                message = data.get("message", "Enrollment requires manual approval")
+                request_id = data.get("request_id")
+                self.logger.info(f"Enrollment pending approval: {message}")
+                raise PendingApprovalError(message, request_id=request_id)
+
+            elif response.status_code == 401:
                 error = response.json().get("error", "Invalid or expired token")
                 raise RuntimeError(f"Authentication failed: {error}")
+
             elif response.status_code == 403:
-                error = response.json().get("error", "Policy rejection")
-                raise RuntimeError(f"Enrollment rejected: {error}")
-            elif response.status_code != 200:
-                error = response.json().get("error", response.text)
-                raise RuntimeError(f"CSR submission failed: {error}")
+                data = response.json()
+                error = data.get("error", "Policy rejection")
+                rule_name = data.get("rule_name")
+                raise EnrollmentRejectedError(error, rule_name=rule_name)
 
-            result = response.json()
-            self.logger.info(f"{self.identity.participant_type} CSR signed successfully")
-            return result
+            elif response.status_code == 409:
+                # Already enrolled
+                error = response.json().get("error", "Already enrolled")
+                raise RuntimeError(f"Already enrolled: {error}")
 
+            else:
+                try:
+                    error = response.json().get("error", response.text)
+                except Exception:
+                    error = response.text
+                raise RuntimeError(f"CSR submission failed ({response.status_code}): {error}")
+
+        except (PendingApprovalError, EnrollmentRejectedError):
+            raise  # Re-raise our custom exceptions
         except requests.RequestException as e:
             raise RuntimeError(f"Failed to connect to Certificate Service: {e}")
+
+    def check_approval_status(self) -> Optional[Dict[str, Any]]:
+        """Check if a pending enrollment has been approved.
+
+        Returns:
+            Dict with 'certificate' and 'ca_cert' if approved, None if still pending
+
+        Raises:
+            EnrollmentRejectedError: If enrollment was rejected
+            RuntimeError: If check fails
+        """
+        try:
+            import requests
+        except ImportError:
+            raise ImportError("requests library is required. Install with: pip install requests")
+
+        url = (f"{self.cert_service_url}/api/v1/pending/{self.identity.name}"
+               f"?entity_type={self.identity.participant_type}")
+
+        self.logger.debug(f"Checking approval status for: {self.identity.name}")
+
+        try:
+            response = requests.get(url, timeout=self.options.timeout)
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("approved"):
+                    self.logger.info("Enrollment approved, certificate available")
+                    return {
+                        "certificate": data.get("signed_cert"),
+                        "ca_cert": data.get("ca_cert"),
+                    }
+                else:
+                    self.logger.debug("Enrollment still pending")
+                    return None
+
+            elif response.status_code == 404:
+                # Not found - might have been rejected
+                raise RuntimeError("Pending enrollment not found - may have been rejected")
+
+            else:
+                error = response.json().get("error", response.text)
+                raise RuntimeError(f"Status check failed: {error}")
+
+        except requests.RequestException as e:
+            raise RuntimeError(f"Failed to check approval status: {e}")
+
+    def wait_for_approval(self, csr_data: bytes) -> Dict[str, Any]:
+        """Submit CSR and wait for approval (polling).
+
+        Args:
+            csr_data: PEM-encoded CSR
+
+        Returns:
+            Dict with 'certificate' and 'ca_cert' keys
+
+        Raises:
+            TimeoutError: If max_wait_time exceeded
+            EnrollmentRejectedError: If enrollment rejected
+            RuntimeError: If enrollment fails
+        """
+        # Submit CSR
+        try:
+            return self.submit_csr(csr_data)
+        except PendingApprovalError:
+            self.logger.info("Enrollment pending, waiting for approval...")
+
+        # Poll for approval
+        start_time = time.time()
+        while True:
+            elapsed = time.time() - start_time
+            if elapsed >= self.options.max_wait_time:
+                raise TimeoutError(
+                    f"Enrollment approval timed out after {self.options.max_wait_time} seconds"
+                )
+
+            # Wait before checking
+            time.sleep(self.options.poll_interval)
+
+            # Check status
+            result = self.check_approval_status()
+            if result:
+                return result
+
+            remaining = self.options.max_wait_time - elapsed
+            self.logger.info(f"Still waiting for approval ({remaining:.0f}s remaining)...")
 
     def save_credentials(self, cert_pem: str, ca_cert_pem: str) -> tuple:
         """Save private key, certificate, and root CA to files.
@@ -425,6 +662,10 @@ class CertRequestor:
             EnrollmentResult with in-memory certs and file paths
 
         Raises:
+            PendingApprovalError: If enrollment requires manual approval
+                                  (and wait_for_approval is False)
+            EnrollmentRejectedError: If enrollment is rejected by policy
+            TimeoutError: If wait_for_approval timed out
             RuntimeError: If enrollment fails
         """
         self.logger.info(f"Starting {self.identity.participant_type} enrollment for: {self.identity.name}")
@@ -433,7 +674,11 @@ class CertRequestor:
         csr_data = self.create_csr()
 
         # Submit to Certificate Service
-        result = self.submit_csr(csr_data)
+        if self.options.wait_for_approval:
+            result = self.wait_for_approval(csr_data)
+        else:
+            result = self.submit_csr(csr_data)
+
         cert_pem = result["certificate"]
         ca_cert_pem = result["ca_cert"]
 
@@ -449,4 +694,5 @@ class CertRequestor:
             cert_path=cert_path,
             key_path=key_path,
             ca_path=ca_path,
+            token_metadata=self._token_metadata,
         )

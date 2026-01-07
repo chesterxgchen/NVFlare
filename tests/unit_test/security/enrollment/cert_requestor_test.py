@@ -24,7 +24,13 @@ from cryptography.hazmat.backends import default_backend
 from pydantic import ValidationError
 
 from nvflare.lighter.constants import AdminRole, ParticipantType
-from nvflare.security.enrollment import CertRequestor, EnrollmentIdentity, EnrollmentOptions
+from nvflare.security.enrollment import (
+    CertRequestor,
+    EnrollmentIdentity,
+    EnrollmentOptions,
+    EnrollmentRejectedError,
+    PendingApprovalError,
+)
 
 
 class TestEnrollmentIdentity:
@@ -503,7 +509,7 @@ class TestSubmitCSR:
             identity=identity,
         )
 
-        with pytest.raises(RuntimeError, match="Enrollment rejected"):
+        with pytest.raises(EnrollmentRejectedError, match="Site name does not match pattern"):
             requestor.submit_csr(b"csr-data")
 
     @patch("requests.post")
@@ -617,3 +623,198 @@ class TestRequestCertificate:
 
             assert result.cert_path == os.path.join(tmp_dir, "server.crt")
             assert result.key_path == os.path.join(tmp_dir, "server.key")
+
+
+class TestPendingApproval:
+    """Tests for pending approval handling."""
+
+    @patch("requests.post")
+    def test_submit_csr_pending_raises_error(self, mock_post):
+        """Test that 202 status raises PendingApprovalError."""
+        mock_response = MagicMock()
+        mock_response.status_code = 202
+        mock_response.json.return_value = {
+            "status": "pending",
+            "message": "Requires manual approval",
+            "request_id": "req-123",
+        }
+        mock_post.return_value = mock_response
+
+        identity = EnrollmentIdentity.for_client("site-01")
+        requestor = CertRequestor(
+            cert_service_url="https://cert-service:8443",
+            enrollment_token="token",
+            identity=identity,
+        )
+
+        with pytest.raises(PendingApprovalError) as exc_info:
+            requestor.submit_csr(b"csr-data")
+
+        assert exc_info.value.request_id == "req-123"
+
+    @patch("requests.post")
+    def test_submit_csr_rejection_raises_error(self, mock_post):
+        """Test that 403 status raises EnrollmentRejectedError."""
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        mock_response.json.return_value = {
+            "error": "Site name does not match pattern",
+            "rule_name": "name-pattern-rule",
+        }
+        mock_post.return_value = mock_response
+
+        identity = EnrollmentIdentity.for_client("invalid-site")
+        requestor = CertRequestor(
+            cert_service_url="https://cert-service:8443",
+            enrollment_token="token",
+            identity=identity,
+        )
+
+        with pytest.raises(EnrollmentRejectedError) as exc_info:
+            requestor.submit_csr(b"csr-data")
+
+        assert exc_info.value.rule_name == "name-pattern-rule"
+
+    @patch("requests.post")
+    def test_submit_csr_already_enrolled(self, mock_post):
+        """Test that 409 status raises RuntimeError for already enrolled."""
+        mock_response = MagicMock()
+        mock_response.status_code = 409
+        mock_response.json.return_value = {"error": "Already enrolled"}
+        mock_post.return_value = mock_response
+
+        identity = EnrollmentIdentity.for_client("site-01")
+        requestor = CertRequestor(
+            cert_service_url="https://cert-service:8443",
+            enrollment_token="token",
+            identity=identity,
+        )
+
+        with pytest.raises(RuntimeError, match="Already enrolled"):
+            requestor.submit_csr(b"csr-data")
+
+
+class TestTokenMetadata:
+    """Tests for token metadata parsing."""
+
+    def test_parse_token_metadata(self):
+        """Test parsing metadata from JWT token."""
+        import base64
+        import json
+
+        # Create a mock JWT token with metadata
+        header = base64.urlsafe_b64encode(b'{"alg":"RS256","typ":"JWT"}').decode().rstrip("=")
+        payload_data = {
+            "sub": "site-01",
+            "subject_type": "client",
+            "project": "my-project",
+            "fl_server": "grpc://server:8002",
+            "cert_service": "https://cert:8443",
+            "policy_id": "trusted",
+        }
+        payload = base64.urlsafe_b64encode(json.dumps(payload_data).encode()).decode().rstrip("=")
+        signature = base64.urlsafe_b64encode(b"fake-signature").decode().rstrip("=")
+        token = f"{header}.{payload}.{signature}"
+
+        identity = EnrollmentIdentity.for_client("site-01")
+        requestor = CertRequestor(
+            cert_service_url="https://cert-service:8443",
+            enrollment_token=token,
+            identity=identity,
+        )
+
+        metadata = requestor.get_token_metadata()
+        assert metadata is not None
+        assert metadata.project == "my-project"
+        assert metadata.fl_server == "grpc://server:8002"
+        assert metadata.cert_service == "https://cert:8443"
+        assert metadata.policy_id == "trusted"
+        assert metadata.subject == "site-01"
+        assert metadata.subject_type == "client"
+
+    def test_parse_invalid_token_returns_none(self):
+        """Test that invalid token returns None for metadata."""
+        identity = EnrollmentIdentity.for_client("site-01")
+        requestor = CertRequestor(
+            cert_service_url="https://cert-service:8443",
+            enrollment_token="not-a-jwt",
+            identity=identity,
+        )
+
+        metadata = requestor.get_token_metadata()
+        assert metadata is None
+
+
+class TestEnrollmentOptionsExtended:
+    """Tests for extended enrollment options."""
+
+    def test_wait_for_approval_option(self):
+        """Test wait_for_approval option."""
+        options = EnrollmentOptions(wait_for_approval=True)
+        assert options.wait_for_approval is True
+
+    def test_poll_interval_option(self):
+        """Test poll_interval option."""
+        options = EnrollmentOptions(poll_interval=60.0)
+        assert options.poll_interval == 60.0
+
+    def test_max_wait_time_option(self):
+        """Test max_wait_time option."""
+        options = EnrollmentOptions(max_wait_time=7200.0)
+        assert options.max_wait_time == 7200.0
+
+    def test_negative_poll_interval_raises_error(self):
+        """Test that negative poll_interval raises validation error."""
+        with pytest.raises(ValidationError):
+            EnrollmentOptions(poll_interval=-1.0)
+
+    def test_negative_max_wait_time_raises_error(self):
+        """Test that negative max_wait_time raises validation error."""
+        with pytest.raises(ValidationError):
+            EnrollmentOptions(max_wait_time=-1.0)
+
+
+class TestEnrollmentResultMetadata:
+    """Tests for EnrollmentResult with token metadata."""
+
+    @patch("requests.post")
+    def test_result_includes_token_metadata(self, mock_post):
+        """Test that enrollment result includes token metadata."""
+        import base64
+        import json
+
+        # Create mock token with metadata
+        header = base64.urlsafe_b64encode(b'{"alg":"RS256","typ":"JWT"}').decode().rstrip("=")
+        payload_data = {
+            "sub": "site-01",
+            "project": "test-project",
+            "policy_id": "default",
+        }
+        payload = base64.urlsafe_b64encode(json.dumps(payload_data).encode()).decode().rstrip("=")
+        signature = base64.urlsafe_b64encode(b"sig").decode().rstrip("=")
+        token = f"{header}.{payload}.{signature}"
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "certificate": "-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----",
+            "ca_cert": "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----",
+        }
+        mock_post.return_value = mock_response
+
+        identity = EnrollmentIdentity.for_client("site-01")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            options = EnrollmentOptions(output_dir=tmp_dir)
+            requestor = CertRequestor(
+                cert_service_url="https://cert-service:8443",
+                enrollment_token=token,
+                identity=identity,
+                options=options,
+            )
+
+            result = requestor.request_certificate()
+
+            assert result.token_metadata is not None
+            assert result.token_metadata.project == "test-project"
+            assert result.token_metadata.policy_id == "default"
