@@ -90,7 +90,6 @@ from pydantic import BaseModel, field_validator
 from nvflare.lighter.constants import DEFINED_PARTICIPANT_TYPES, DEFINED_ROLES, AdminRole, ParticipantType
 from nvflare.lighter.utils import generate_keys, serialize_pri_key
 
-
 # =============================================================================
 # Exceptions
 # =============================================================================
@@ -114,6 +113,7 @@ class EnrollmentRejectedError(Exception):
     def __init__(self, message: str, rule_name: Optional[str] = None):
         super().__init__(message)
         self.rule_name = rule_name
+
 
 # =============================================================================
 # Configuration Classes (Simple interface, Pydantic validation)
@@ -395,8 +395,10 @@ class CertRequestor:
                 subject_type=payload.get("subject_type"),
             )
 
-            self.logger.debug(f"Token metadata: project={self._token_metadata.project}, "
-                             f"policy_id={self._token_metadata.policy_id}")
+            self.logger.debug(
+                f"Token metadata: project={self._token_metadata.project}, "
+                f"policy_id={self._token_metadata.policy_id}"
+            )
 
         except Exception as e:
             self.logger.debug(f"Could not parse token metadata: {e}")
@@ -543,8 +545,10 @@ class CertRequestor:
         except ImportError:
             raise ImportError("requests library is required. Install with: pip install requests")
 
-        url = (f"{self.cert_service_url}/api/v1/pending/{self.identity.name}"
-               f"?entity_type={self.identity.participant_type}")
+        url = (
+            f"{self.cert_service_url}/api/v1/pending/{self.identity.name}"
+            f"?entity_type={self.identity.participant_type}"
+        )
 
         self.logger.debug(f"Checking approval status for: {self.identity.name}")
 
@@ -599,9 +603,7 @@ class CertRequestor:
         while True:
             elapsed = time.time() - start_time
             if elapsed >= self.options.max_wait_time:
-                raise TimeoutError(
-                    f"Enrollment approval timed out after {self.options.max_wait_time} seconds"
-                )
+                raise TimeoutError(f"Enrollment approval timed out after {self.options.max_wait_time} seconds")
 
             # Wait before checking
             time.sleep(self.options.poll_interval)

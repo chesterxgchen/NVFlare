@@ -242,9 +242,7 @@ class TestAdminAutoEnrollIfNeeded:
         from nvflare.fuel.hci.client.api import AdminAPI, ConfigError
         from nvflare.security.enrollment import EnrollmentRejectedError
 
-        mock_admin._perform_enrollment = MagicMock(
-            side_effect=EnrollmentRejectedError("Admin not in allowed list")
-        )
+        mock_admin._perform_enrollment = MagicMock(side_effect=EnrollmentRejectedError("Admin not in allowed list"))
 
         with patch.dict(
             os.environ,

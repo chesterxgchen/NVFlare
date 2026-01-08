@@ -254,7 +254,9 @@ class CertService:
         if context:
             self._validate_token_for_context(token_payload, context)
 
-        self.logger.info(f"Token validated: jti={token_id}, subject={payload['sub']}, policy_id={token_payload.policy_id}")
+        self.logger.info(
+            f"Token validated: jti={token_id}, subject={payload['sub']}, policy_id={token_payload.policy_id}"
+        )
         return token_payload
 
     def _validate_token_for_context(self, token: TokenPayload, context: EnrollmentContext):

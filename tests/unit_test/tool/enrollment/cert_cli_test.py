@@ -430,5 +430,3 @@ class TestHandleCert:
                 shutil.rmtree(out_dir, ignore_errors=True)
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
-
-

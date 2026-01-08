@@ -403,9 +403,7 @@ class SQLiteEnrollmentStore(EnrollmentStore):
             token_jti=row["token_jti"],
             source_ip=row["source_ip"],
             cert_fingerprint=row["cert_fingerprint"],
-            cert_expires_at=(
-                datetime.fromisoformat(row["cert_expires_at"]) if row["cert_expires_at"] else None
-            ),
+            cert_expires_at=(datetime.fromisoformat(row["cert_expires_at"]) if row["cert_expires_at"] else None),
         )
 
     # Backward compatibility alias

@@ -98,7 +98,6 @@ def define_cert_parser(parser):
     )
 
 
-
 def handle_cert(args):
     """Handle the cert command."""
     if not hasattr(args, "cert_cmd") or args.cert_cmd is None:
@@ -334,5 +333,3 @@ def _load_root_ca(ca_path: str) -> tuple:
     issuer = "NVFlare"
 
     return root_cert_pem, root_key_pem, issuer
-
-
