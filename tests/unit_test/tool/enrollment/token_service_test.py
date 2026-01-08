@@ -183,9 +183,7 @@ class TestGenerateToken:
 
     def test_generate_pattern_token(self, token_service):
         """Test generating a pattern token for wildcard matching."""
-        token = token_service.generate_token(
-            subject="hospital-*", subject_type=TokenService.SUBJECT_TYPE_PATTERN
-        )
+        token = token_service.generate_token(subject="hospital-*", subject_type=TokenService.SUBJECT_TYPE_PATTERN)
 
         payload = jwt.decode(token, options={"verify_signature": False})
         assert payload["sub"] == "hospital-*"
@@ -215,9 +213,7 @@ class TestGenerateToken:
 
     def test_generate_token_custom_validity(self, token_service):
         """Test generating a token with custom validity."""
-        token = token_service.generate_token(
-            subject="site-01", subject_type=ParticipantType.CLIENT, validity="30d"
-        )
+        token = token_service.generate_token(subject="site-01", subject_type=ParticipantType.CLIENT, validity="30d")
 
         payload = jwt.decode(token, options={"verify_signature": False})
         iat = datetime.fromtimestamp(payload["iat"], tz=timezone.utc)

@@ -266,9 +266,7 @@ class TestServerAutoEnrollIfNeeded:
         from nvflare.private.fed.server.fed_server import FederatedServer
         from nvflare.security.enrollment import EnrollmentRejectedError
 
-        mock_server._perform_enrollment = MagicMock(
-            side_effect=EnrollmentRejectedError("Server not in allowed list")
-        )
+        mock_server._perform_enrollment = MagicMock(side_effect=EnrollmentRejectedError("Server not in allowed list"))
 
         with patch.dict(
             os.environ,

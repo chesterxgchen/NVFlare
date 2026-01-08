@@ -273,9 +273,7 @@ class TestAutoEnrollIfNeeded:
         from nvflare.private.fed.client.fed_client_base import FederatedClientBase
         from nvflare.security.enrollment import EnrollmentRejectedError
 
-        mock_client._perform_enrollment = MagicMock(
-            side_effect=EnrollmentRejectedError("IP not in whitelist")
-        )
+        mock_client._perform_enrollment = MagicMock(side_effect=EnrollmentRejectedError("IP not in whitelist"))
 
         with patch.dict(
             os.environ,

@@ -232,8 +232,6 @@ class TestRemoteTokenGeneration:
             )
 
 
-
-
 class TestParseValidityToDays:
     """Test validity string to days conversion."""
 
@@ -402,10 +400,14 @@ class TestHandleGenerateCmd:
         from nvflare.tool.enrollment.token_cli import _handle_generate_cmd
 
         # Clear any environment variables that might interfere
-        env_patch = patch.dict(os.environ, {
-            "NVFLARE_API_KEY": "",
-            "NVFLARE_CERT_SERVICE_URL": "",
-        }, clear=False)
+        env_patch = patch.dict(
+            os.environ,
+            {
+                "NVFLARE_API_KEY": "",
+                "NVFLARE_CERT_SERVICE_URL": "",
+            },
+            clear=False,
+        )
 
         # Mock TokenService where it's imported (inside the handler)
         with env_patch, patch("nvflare.tool.enrollment.token_service.TokenService") as mock_class:

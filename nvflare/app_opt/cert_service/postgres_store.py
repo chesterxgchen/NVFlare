@@ -39,10 +39,12 @@ from typing import List, Optional
 try:
     import psycopg2
     from psycopg2 import pool
+
+    _ = psycopg2  # Ensure psycopg2 is available (pool depends on it)
 except ImportError:
     raise ImportError("PostgreSQL support requires psycopg2. " "Install with: pip install psycopg2-binary")
 
-from nvflare.cert_service.store import EnrolledEntity, EnrollmentStore, PendingRequest
+from nvflare.cert_service.store import EnrolledParticipant, EnrollmentStore, PendingRequest
 
 
 class PostgreSQLEnrollmentStore(EnrollmentStore):
@@ -140,10 +142,10 @@ class PostgreSQLEnrollmentStore(EnrollmentStore):
                 )
                 return cur.fetchone() is not None
 
-    def add_enrolled(self, entity: EnrolledEntity) -> None:
+    def add_enrolled(self, participant: EnrolledParticipant) -> None:
         with self._get_conn() as conn:
             with conn.cursor() as cur:
-                # Upsert enrolled entity
+                # Upsert enrolled participant
                 cur.execute(
                     """
                     INSERT INTO enrolled_entities (name, entity_type, enrolled_at, org, role)
@@ -154,35 +156,35 @@ class PostgreSQLEnrollmentStore(EnrollmentStore):
                         role = EXCLUDED.role
                     """,
                     (
-                        entity.name,
-                        entity.entity_type,
-                        entity.enrolled_at,
-                        entity.org,
-                        entity.role,
+                        participant.name,
+                        participant.participant_type,
+                        participant.enrolled_at,
+                        participant.org,
+                        participant.role,
                     ),
                 )
                 # Remove from pending
                 cur.execute(
                     "DELETE FROM pending_requests WHERE name = %s AND entity_type = %s",
-                    (entity.name, entity.entity_type),
+                    (participant.name, participant.participant_type),
                 )
             conn.commit()
 
-    def get_enrolled(self, entity_type: Optional[str] = None) -> List[EnrolledEntity]:
+    def get_enrolled(self, participant_type: Optional[str] = None) -> List[EnrolledParticipant]:
         with self._get_conn() as conn:
             with conn.cursor() as cur:
-                if entity_type:
+                if participant_type:
                     cur.execute(
                         "SELECT name, entity_type, enrolled_at, org, role FROM enrolled_entities WHERE entity_type = %s",
-                        (entity_type,),
+                        (participant_type,),
                     )
                 else:
                     cur.execute("SELECT name, entity_type, enrolled_at, org, role FROM enrolled_entities")
                 rows = cur.fetchall()
         return [
-            EnrolledEntity(
+            EnrolledParticipant(
                 name=row[0],
-                entity_type=row[1],
+                participant_type=row[1],
                 enrolled_at=row[2],
                 org=row[3],
                 role=row[4],
@@ -222,7 +224,7 @@ class PostgreSQLEnrollmentStore(EnrollmentStore):
                     """,
                     (
                         request.name,
-                        request.entity_type,
+                        request.participant_type,
                         request.org,
                         request.csr_pem,
                         request.submitted_at,
@@ -326,7 +328,7 @@ class PostgreSQLEnrollmentStore(EnrollmentStore):
     def _row_to_request(self, row) -> PendingRequest:
         return PendingRequest(
             name=row[0],
-            entity_type=row[1],
+            participant_type=row[1],
             org=row[2],
             csr_pem=row[3],
             submitted_at=row[4],

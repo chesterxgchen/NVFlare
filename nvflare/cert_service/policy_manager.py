@@ -304,4 +304,3 @@ class PolicyManager:
         policy_file_yml = self.policy_dir / f"{policy_id}.yml"
         if policy_file_yml.exists():
             os.remove(policy_file_yml)
-

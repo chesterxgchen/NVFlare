@@ -397,7 +397,6 @@ class TokenService:
             **claims,
         )
 
-
     def _parse_duration(self, duration_str: str) -> timedelta:
         """Parse duration string like '7d', '24h', '30m' to timedelta."""
         match = re.match(r"^(\d+)([dhms])$", duration_str.lower())

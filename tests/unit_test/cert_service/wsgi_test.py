@@ -99,12 +99,7 @@ class TestWSGIModule:
 
     def test_wsgi_environment_variables(self):
         """Test that environment variable names are correct."""
-        from nvflare.cert_service.wsgi import (
-            ENV_API_KEY,
-            ENV_CONFIG,
-            ENV_DATA_DIR,
-            ENV_PORT,
-        )
+        from nvflare.cert_service.wsgi import ENV_API_KEY, ENV_CONFIG, ENV_DATA_DIR, ENV_PORT
 
         assert ENV_PORT == "NVFLARE_CERT_SERVICE_PORT"
         assert ENV_CONFIG == "NVFLARE_CERT_SERVICE_CONFIG"
