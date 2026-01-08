@@ -432,7 +432,7 @@ class TestPackageFromProject:
 
 
 class TestEnrollmentFiles:
-    """Tests for enrollment file generation (Auto-Scale workflow)."""
+    """Tests for enrollment file generation (Dynamic workflow)."""
 
     @pytest.fixture
     def workspace_dir(self):

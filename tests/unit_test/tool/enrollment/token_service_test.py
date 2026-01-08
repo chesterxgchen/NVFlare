@@ -134,8 +134,14 @@ class TestGenerateToken:
 
     def test_generate_client_token(self, token_service):
         """Test generating a client enrollment token."""
-        policy = create_sample_policy()
-        token = token_service.generate_token(policy=policy, subject="hospital-01", subject_type=ParticipantType.CLIENT)
+        token = token_service.generate_token(
+            subject="hospital-01",
+            subject_type=ParticipantType.CLIENT,
+            project="test-project",
+            fl_server="grpc://server:8002",
+            cert_service="https://cert:8443",
+            policy_id="default",
+        )
 
         # Verify token is a valid JWT
         assert token is not None
@@ -145,17 +151,21 @@ class TestGenerateToken:
         payload = jwt.decode(token, options={"verify_signature": False})
         assert payload["sub"] == "hospital-01"
         assert payload["subject_type"] == ParticipantType.CLIENT
-        assert payload["max_uses"] == 1
-        assert "policy" in payload
+        assert payload["policy_id"] == "default"
+        assert payload["project"] == "test-project"
+        assert payload["fl_server"] == "grpc://server:8002"
+        assert payload["cert_service"] == "https://cert:8443"
         assert "jti" in payload
         assert "iat" in payload
         assert "exp" in payload
 
     def test_generate_admin_token(self, token_service):
         """Test generating an admin enrollment token."""
-        policy = create_sample_policy()
         token = token_service.generate_token(
-            policy=policy, subject="admin@example.com", subject_type=ParticipantType.ADMIN, roles=["org_admin"]
+            subject="admin@example.com",
+            subject_type=ParticipantType.ADMIN,
+            policy_id="default",
+            roles=["org_admin"],
         )
 
         payload = jwt.decode(token, options={"verify_signature": False})
@@ -165,8 +175,7 @@ class TestGenerateToken:
 
     def test_generate_relay_token(self, token_service):
         """Test generating a relay enrollment token."""
-        policy = create_sample_policy()
-        token = token_service.generate_token(policy=policy, subject="relay-01", subject_type=ParticipantType.RELAY)
+        token = token_service.generate_token(subject="relay-01", subject_type=ParticipantType.RELAY)
 
         payload = jwt.decode(token, options={"verify_signature": False})
         assert payload["sub"] == "relay-01"
@@ -174,9 +183,8 @@ class TestGenerateToken:
 
     def test_generate_pattern_token(self, token_service):
         """Test generating a pattern token for wildcard matching."""
-        policy = create_sample_policy()
         token = token_service.generate_token(
-            policy=policy, subject="hospital-*", subject_type=TokenService.SUBJECT_TYPE_PATTERN
+            subject="hospital-*", subject_type=TokenService.SUBJECT_TYPE_PATTERN
         )
 
         payload = jwt.decode(token, options={"verify_signature": False})
@@ -185,9 +193,7 @@ class TestGenerateToken:
 
     def test_generate_token_with_source_ips(self, token_service):
         """Test generating a token with source IP restrictions."""
-        policy = create_sample_policy()
         token = token_service.generate_token(
-            policy=policy,
             subject="dc-server-01",
             subject_type=ParticipantType.CLIENT,
             source_ips=["10.0.0.0/8", "192.168.0.0/16"],
@@ -198,9 +204,7 @@ class TestGenerateToken:
 
     def test_generate_token_with_metadata(self, token_service):
         """Test generating a token with custom metadata."""
-        policy = create_sample_policy()
         token = token_service.generate_token(
-            policy=policy,
             subject="site-01",
             subject_type=ParticipantType.CLIENT,
             metadata={"region": "us-west", "env": "production"},
@@ -211,9 +215,8 @@ class TestGenerateToken:
 
     def test_generate_token_custom_validity(self, token_service):
         """Test generating a token with custom validity."""
-        policy = create_sample_policy()
         token = token_service.generate_token(
-            policy=policy, subject="site-01", subject_type=ParticipantType.CLIENT, validity="30d"
+            subject="site-01", subject_type=ParticipantType.CLIENT, validity="30d"
         )
 
         payload = jwt.decode(token, options={"verify_signature": False})
@@ -224,31 +227,40 @@ class TestGenerateToken:
 
     def test_generate_token_empty_subject(self, token_service):
         """Test that empty subject raises error."""
-        policy = create_sample_policy()
         with pytest.raises(ValueError, match="subject is required"):
-            token_service.generate_token(policy=policy, subject="", subject_type=ParticipantType.CLIENT)
+            token_service.generate_token(subject="", subject_type=ParticipantType.CLIENT)
 
     def test_generate_token_invalid_subject_type(self, token_service):
         """Test that invalid subject type raises error."""
-        policy = create_sample_policy()
         with pytest.raises(ValueError, match="subject_type must be one of"):
-            token_service.generate_token(policy=policy, subject="site-01", subject_type="invalid")
+            token_service.generate_token(subject="site-01", subject_type="invalid")
 
 
 class TestConvenienceMethods:
     """Tests for convenience token generation methods."""
 
-    def test_generate_client_token_method(self, token_service, policy_file):
-        """Test generate_client_token convenience method."""
-        token = token_service.generate_client_token(policy_file=policy_file, client_name="hospital-01")
+    def test_generate_site_token_method(self, token_service, policy_file):
+        """Test generate_site_token convenience method."""
+        token = token_service.generate_site_token(
+            site_name="hospital-01",
+            project="test-project",
+            fl_server="grpc://server:8002",
+            policy_id="default",
+        )
 
         payload = jwt.decode(token, options={"verify_signature": False})
         assert payload["sub"] == "hospital-01"
         assert payload["subject_type"] == ParticipantType.CLIENT
+        assert payload["policy_id"] == "default"
 
     def test_generate_admin_token_method(self, token_service, policy_file):
         """Test generate_admin_token convenience method."""
-        token = token_service.generate_admin_token(policy_file=policy_file, user_id="user@example.com", roles=["lead"])
+        token = token_service.generate_admin_token(
+            user_id="user@example.com",
+            project="test-project",
+            policy_id="default",
+            roles=["lead"],
+        )
 
         payload = jwt.decode(token, options={"verify_signature": False})
         assert payload["sub"] == "user@example.com"
@@ -257,7 +269,7 @@ class TestConvenienceMethods:
 
     def test_generate_admin_token_default_role(self, token_service, policy_file):
         """Test generate_admin_token uses default LEAD role when no roles specified (has job submission permissions)."""
-        token = token_service.generate_admin_token(policy_file=policy_file, user_id="user@example.com")
+        token = token_service.generate_admin_token(user_id="user@example.com")
 
         payload = jwt.decode(token, options={"verify_signature": False})
         assert payload["sub"] == "user@example.com"
@@ -266,19 +278,29 @@ class TestConvenienceMethods:
 
     def test_generate_relay_token_method(self, token_service, policy_file):
         """Test generate_relay_token convenience method."""
-        token = token_service.generate_relay_token(policy_file=policy_file, relay_name="relay-01")
+        token = token_service.generate_relay_token(relay_name="relay-01", policy_id="default")
 
         payload = jwt.decode(token, options={"verify_signature": False})
         assert payload["sub"] == "relay-01"
         assert payload["subject_type"] == ParticipantType.RELAY
 
-    def test_generate_site_token_method(self, token_service, policy_file):
-        """Test generate_site_token convenience method (alias for client token)."""
-        token = token_service.generate_site_token(policy_file=policy_file, site_name="hospital-01")
+    def test_generate_site_token_with_metadata(self, token_service, policy_file):
+        """Test generate_site_token includes metadata."""
+        token = token_service.generate_site_token(
+            site_name="hospital-01",
+            project="healthcare-fl",
+            fl_server="grpc://server:8002",
+            cert_service="https://cert:8443",
+            policy_id="trusted",
+        )
 
         payload = jwt.decode(token, options={"verify_signature": False})
         assert payload["sub"] == "hospital-01"
         assert payload["subject_type"] == ParticipantType.CLIENT
+        assert payload["project"] == "healthcare-fl"
+        assert payload["fl_server"] == "grpc://server:8002"
+        assert payload["cert_service"] == "https://cert:8443"
+        assert payload["policy_id"] == "trusted"
 
 
 class TestBatchGeneration:
@@ -286,7 +308,7 @@ class TestBatchGeneration:
 
     def test_batch_generate_with_count(self, token_service, policy_file):
         """Test batch generation with count and prefix."""
-        tokens = token_service.batch_generate_tokens(policy_file=policy_file, count=5, name_prefix="hospital")
+        tokens = token_service.batch_generate_tokens(count=5, name_prefix="hospital", policy_id="default")
 
         assert len(tokens) == 5
         assert tokens[0]["name"] == "hospital-001"
@@ -300,7 +322,7 @@ class TestBatchGeneration:
     def test_batch_generate_with_names(self, token_service, policy_file):
         """Test batch generation with explicit names."""
         names = ["site-a", "site-b", "site-c"]
-        tokens = token_service.batch_generate_tokens(policy_file=policy_file, names=names)
+        tokens = token_service.batch_generate_tokens(names=names, policy_id="default")
 
         assert len(tokens) == 3
         assert [t["name"] for t in tokens] == names
@@ -309,7 +331,7 @@ class TestBatchGeneration:
         """Test batch generation with file output."""
         output_file = os.path.join(root_ca_dir, "tokens.csv")
         tokens = token_service.batch_generate_tokens(
-            policy_file=policy_file, count=3, name_prefix="site", output_file=output_file
+            count=3, name_prefix="site", policy_id="default", output_file=output_file
         )
 
         assert os.path.exists(output_file)
@@ -353,15 +375,24 @@ class TestGetTokenInfo:
 
     def test_get_token_info(self, token_service):
         """Test getting token information."""
-        policy = create_sample_policy()
-        token = token_service.generate_token(policy=policy, subject="site-01", subject_type=ParticipantType.CLIENT)
+        token = token_service.generate_token(
+            subject="site-01",
+            subject_type=ParticipantType.CLIENT,
+            project="test-project",
+            fl_server="grpc://server:8002",
+            cert_service="https://cert:8443",
+            policy_id="trusted",
+        )
 
         info = token_service.get_token_info(token)
 
         assert info["subject"] == "site-01"
         assert info["subject_type"] == ParticipantType.CLIENT
         assert info["issuer"] == "TestRootCA"
-        assert info["max_uses"] == 1
+        assert info["project"] == "test-project"
+        assert info["fl_server"] == "grpc://server:8002"
+        assert info["cert_service"] == "https://cert:8443"
+        assert info["policy_id"] == "trusted"
         assert info["token_id"] is not None
         assert info["issued_at"] is not None
         assert info["expires_at"] is not None

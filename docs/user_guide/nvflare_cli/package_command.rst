@@ -65,9 +65,9 @@ Options
    * - ``--listening_port``
      - Listening port for relay type (default: ``8002``)
    * - ``--cert-service``
-     - Certificate Service URL to embed in the package (for Auto-Scale workflow)
+     - Certificate Service URL to embed in the package (for Dynamic workflow)
    * - ``--token``
-     - Enrollment token to embed in the package (for Auto-Scale workflow)
+     - Enrollment token to embed in the package (for Dynamic workflow)
 
 ***********************
 Supported Schemes
@@ -173,10 +173,10 @@ Generate Client Package
     # Client with two-port configuration
     nvflare package -n hospital-1 -e grpc://server:8002:8003
 
-Generate Client Package with Embedded Enrollment (Auto-Scale Workflow)
+Generate Client Package with Embedded Enrollment (Dynamic Workflow)
 ----------------------------------------------------------------------
 
-For the Auto-Scale workflow, embed the Certificate Service URL and enrollment token
+For the Dynamic workflow, embed the Certificate Service URL and enrollment token
 directly in the package:
 
 .. code-block:: shell
@@ -386,7 +386,7 @@ Next Steps
 2. **Distribute packages** along with signed certificates to each site
 3. **Start the clients** - they will connect using the pre-signed certificates
 
-**Auto-Scale Workflow (with --cert-service and --token):**
+**Dynamic Workflow (with --cert-service and --token):**
 
 1. **Distribute packages** - enrollment information is already embedded
 2. **Start the clients** - they will automatically enroll and obtain certificates:
@@ -395,7 +395,7 @@ Next Steps
 
        cd hospital-1 && ./startup/start.sh
 
-**Auto-Scale Workflow (with --cert-service only):**
+**Dynamic Workflow (with --cert-service only):**
 
 1. **Distribute packages** along with enrollment tokens to each site
 2. **Set the enrollment token** on each client machine:

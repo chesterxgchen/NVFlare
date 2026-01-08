@@ -26,6 +26,16 @@ from nvflare.apis.fl_constant import SecureTrainConst
 
 
 @dataclass
+class MockTokenMetadata:
+    """Mock token metadata."""
+
+    project: str = "test-project"
+    fl_server: str = "server:8003"
+    cert_service: str = "https://cert-svc:8443"
+    participant_type: str = "client"
+
+
+@dataclass
 class MockEnrollmentResult:
     """Mock enrollment result."""
 
@@ -35,6 +45,7 @@ class MockEnrollmentResult:
     private_key: object = None
     certificate_pem: str = "cert-pem"
     ca_cert_pem: str = "ca-pem"
+    token_metadata: MockTokenMetadata = None
 
 
 @pytest.fixture
@@ -212,6 +223,72 @@ class TestAutoEnrollIfNeeded:
         ):
             with pytest.raises(RuntimeError, match="Auto-enrollment failed"):
                 FederatedClientBase._auto_enroll_if_needed(mock_client)
+
+    def test_raises_on_pending_approval(self, temp_startup_dir):
+        """Test that PendingApprovalError is handled with informative message."""
+        tmp_dir, root_ca_path = temp_startup_dir
+
+        mock_client = MagicMock()
+        mock_client.secure_train = True
+        mock_client.client_name = "test-client"
+        mock_client.client_args = {
+            SecureTrainConst.SSL_CERT: os.path.join(tmp_dir, "nonexistent.crt"),
+            SecureTrainConst.SSL_ROOT_CERT: root_ca_path,
+        }
+        mock_client.logger = MagicMock()
+
+        from nvflare.private.fed.client.fed_client_base import FederatedClientBase
+        from nvflare.security.enrollment import PendingApprovalError
+
+        mock_client._perform_enrollment = MagicMock(
+            side_effect=PendingApprovalError("req-123", "Pending admin approval")
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "NVFLARE_ENROLLMENT_TOKEN": "test-token",
+                "NVFLARE_CERT_SERVICE_URL": "https://cert-svc:8443",
+            },
+        ):
+            with pytest.raises(RuntimeError, match="pending approval"):
+                FederatedClientBase._auto_enroll_if_needed(mock_client)
+
+        # Verify helpful error message logged
+        mock_client.logger.error.assert_called()
+
+    def test_raises_on_enrollment_rejected(self, temp_startup_dir):
+        """Test that EnrollmentRejectedError is handled with informative message."""
+        tmp_dir, root_ca_path = temp_startup_dir
+
+        mock_client = MagicMock()
+        mock_client.secure_train = True
+        mock_client.client_name = "test-client"
+        mock_client.client_args = {
+            SecureTrainConst.SSL_CERT: os.path.join(tmp_dir, "nonexistent.crt"),
+            SecureTrainConst.SSL_ROOT_CERT: root_ca_path,
+        }
+        mock_client.logger = MagicMock()
+
+        from nvflare.private.fed.client.fed_client_base import FederatedClientBase
+        from nvflare.security.enrollment import EnrollmentRejectedError
+
+        mock_client._perform_enrollment = MagicMock(
+            side_effect=EnrollmentRejectedError("IP not in whitelist")
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "NVFLARE_ENROLLMENT_TOKEN": "test-token",
+                "NVFLARE_CERT_SERVICE_URL": "https://cert-svc:8443",
+            },
+        ):
+            with pytest.raises(RuntimeError, match="Enrollment rejected"):
+                FederatedClientBase._auto_enroll_if_needed(mock_client)
+
+        # Verify error logged
+        mock_client.logger.error.assert_called()
 
 
 class TestPerformEnrollment:

@@ -1,7 +1,7 @@
 # NVIDIA FLARE Certificate Service Configuration
 # ================================================
 #
-# This file configures the Certificate Service for the Auto-Scale enrollment workflow.
+# This file configures the Certificate Service for the Dynamic enrollment workflow.
 # Copy and modify this file for your deployment.
 #
 # Generate API key with: nvflare cert api-key

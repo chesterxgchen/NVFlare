@@ -82,7 +82,7 @@ def define_package_parser(parser):
         "--listening_port", type=int, default=8002, help="Listening port for relay type (default: 8002)"
     )
 
-    # Auto-Scale workflow options
+    # Dynamic workflow options
     parser.add_argument(
         "--cert-service",
         type=str,
@@ -239,7 +239,7 @@ def handle_single_participant_mode(args, workspace: str) -> int:
         print("\nNext steps:")
         if args.type == "server":
             if cert_service_url and enrollment_token:
-                # Auto-Scale workflow for server
+                # Dynamic workflow for server
                 print("1. Start the server: cd {result_dir} && ./startup/start.sh")
                 print("   (Server will auto-enroll with Certificate Service)")
             else:
@@ -251,7 +251,7 @@ def handle_single_participant_mode(args, workspace: str) -> int:
                 print(f"2. Start the server: cd {result_dir} && ./startup/start.sh")
         else:
             if cert_service_url and enrollment_token:
-                # Auto-Scale workflow - everything is embedded
+                # Dynamic workflow - everything is embedded
                 print(f"1. Start: cd {result_dir} && ./startup/start.sh")
                 print("   (Client will auto-enroll with Certificate Service)")
             elif cert_service_url:
@@ -267,7 +267,7 @@ def handle_single_participant_mode(args, workspace: str) -> int:
                 print("  2. Copy certificates to the startup/ folder")
                 print(f"  3. Start: cd {result_dir} && ./startup/start.sh")
                 print("")
-                print("Option B: Auto-Scale Workflow (with Certificate Service)")
+                print("Option B: Dynamic Workflow (with Certificate Service)")
                 print("  1. Set Certificate Service URL:")
                 print("     export NVFLARE_CERT_SERVICE_URL=https://<cert-service>:8443")
                 print("  2. Set enrollment token from Project Admin:")

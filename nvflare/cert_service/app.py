@@ -15,7 +15,7 @@
 """FLARE Certificate Service - HTTP Application.
 
 This module provides the HTTP wrapper around CertService for the
-Auto-Scale enrollment workflow.
+Dynamic enrollment workflow.
 
 REST API Endpoints:
 

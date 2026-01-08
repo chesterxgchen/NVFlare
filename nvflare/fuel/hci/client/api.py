@@ -400,8 +400,24 @@ class AdminAPI(AdminAPISpec, StreamableEngine):
         try:
             self._perform_enrollment(cert_service_url, token, startup_dir, admin_config)
         except Exception as e:
-            self.logger.error(f"Auto-enrollment failed: {e}")
-            raise ConfigError(f"Auto-enrollment failed: {e}") from e
+            # Import here to avoid circular imports
+            from nvflare.security.enrollment import EnrollmentRejectedError, PendingApprovalError
+
+            if isinstance(e, PendingApprovalError):
+                self.logger.error(
+                    f"Enrollment pending manual approval. Contact your administrator to approve "
+                    f"the enrollment request for admin '{self.user_name}'."
+                )
+                raise ConfigError(
+                    f"Enrollment pending approval for admin '{self.user_name}'. "
+                    "Contact administrator to approve the request."
+                ) from e
+            elif isinstance(e, EnrollmentRejectedError):
+                self.logger.error(f"Enrollment rejected by policy: {e}")
+                raise ConfigError(f"Enrollment rejected: {e}") from e
+            else:
+                self.logger.error(f"Auto-enrollment failed: {e}")
+                raise ConfigError(f"Auto-enrollment failed: {e}") from e
 
     def _perform_enrollment(self, cert_service_url: str, token: str, startup_dir: str, admin_config: dict):
         """Perform CSR enrollment via Certificate Service HTTP API.
@@ -411,6 +427,11 @@ class AdminAPI(AdminAPISpec, StreamableEngine):
             token: JWT enrollment token
             startup_dir: Directory to save certificates
             admin_config: Admin config dict to update with new cert paths
+
+        Raises:
+            PendingApprovalError: If enrollment requires manual approval
+            EnrollmentRejectedError: If enrollment is rejected by policy
+            RuntimeError: If enrollment fails for other reasons
         """
         from nvflare.security.enrollment import EnrollmentIdentity, enroll
 
@@ -420,6 +441,12 @@ class AdminAPI(AdminAPISpec, StreamableEngine):
         identity = EnrollmentIdentity.for_admin(email=self.user_name, role=role)
         result = enroll(cert_service_url, token, identity, startup_dir)
         self.logger.info(f"Enrollment successful. Certificate saved to: {result.cert_path}")
+
+        # Log token metadata if available
+        if result.token_metadata:
+            meta = result.token_metadata
+            if meta.project:
+                self.logger.info(f"Enrolled in project: {meta.project}")
 
         # Update admin_config and self with new certificate paths
         admin_config[AdminConfigKey.CA_CERT] = result.ca_path

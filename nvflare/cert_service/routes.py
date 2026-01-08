@@ -342,14 +342,21 @@ class RoutesMixin:
                     "name": "site-1",
                     "entity_type": "client",
                     "valid_days": 7,
-                    "policy_file": "/path/to/policy.yaml"  (optional)
+                    "project": "my-project",
+                    "fl_server": "grpc://server:8002",
+                    "cert_service": "https://cert:8443",
+                    "policy_id": "default"
                 }
 
             Request (batch):
                 {
                     "names": ["site-1", "site-2", "site-3"],
                     "entity_type": "client",
-                    "valid_days": 7
+                    "valid_days": 7,
+                    "project": "my-project",
+                    "fl_server": "grpc://server:8002",
+                    "cert_service": "https://cert:8443",
+                    "policy_id": "default"
                 }
 
             Response (single):
@@ -378,7 +385,12 @@ class RoutesMixin:
 
                 entity_type = data.get("entity_type", ParticipantType.CLIENT)
                 valid_days = data.get("valid_days", 7)
-                policy_file = data.get("policy_file") or self.config.get("policy", {}).get("file")
+                policy_id = data.get("policy_id", "default")
+
+                # Metadata claims (embedded in token for simplified packaging)
+                project = data.get("project")
+                fl_server = data.get("fl_server")
+                cert_service = data.get("cert_service")
 
                 # Batch mode
                 if "names" in data:
@@ -392,7 +404,10 @@ class RoutesMixin:
                             name=name,
                             entity_type=entity_type,
                             valid_days=valid_days,
-                            policy_file=policy_file,
+                            policy_id=policy_id,
+                            project=project,
+                            fl_server=fl_server,
+                            cert_service=cert_service,
                             role=data.get("role"),
                         )
                         tokens.append({"name": name, "token": token})
@@ -408,7 +423,10 @@ class RoutesMixin:
                     name=name,
                     entity_type=entity_type,
                     valid_days=valid_days,
-                    policy_file=policy_file,
+                    policy_id=policy_id,
+                    project=project,
+                    fl_server=fl_server,
+                    cert_service=cert_service,
                     role=data.get("role"),
                 )
 
@@ -431,28 +449,40 @@ class RoutesMixin:
         name: str,
         entity_type: str,
         valid_days: int,
-        policy_file: Optional[str],
+        policy_id: str,
+        project: Optional[str],
+        fl_server: Optional[str],
+        cert_service: Optional[str],
         role: Optional[str],
     ) -> str:
         """Generate a single enrollment token."""
         if entity_type == ParticipantType.ADMIN:
             return self.token_service.generate_admin_token(
                 user_id=name,
+                project=project,
+                fl_server=fl_server,
+                cert_service=cert_service,
+                policy_id=policy_id,
                 valid_days=valid_days,
-                policy_file=policy_file,
                 roles=[role] if role else [AdminRole.LEAD],
             )
         elif entity_type == ParticipantType.RELAY:
             return self.token_service.generate_relay_token(
                 relay_name=name,
+                project=project,
+                fl_server=fl_server,
+                cert_service=cert_service,
+                policy_id=policy_id,
                 valid_days=valid_days,
-                policy_file=policy_file,
             )
         else:
             return self.token_service.generate_site_token(
                 site_name=name,
+                project=project,
+                fl_server=fl_server,
+                cert_service=cert_service,
+                policy_id=policy_id,
                 valid_days=valid_days,
-                policy_file=policy_file,
             )
 
     def _register_pending_routes(self):

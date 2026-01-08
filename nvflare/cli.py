@@ -45,6 +45,12 @@ CMD_AUTHZ_PREVIEW = "authz_preview"
 CMD_JOB = "job"
 CMD_CONFIG = "config"
 CMD_PRE_INSTALL = "pre-install"
+# New enrollment-related commands
+CMD_CERT = "cert"
+CMD_TOKEN = "token"
+CMD_PACKAGE = "package"
+CMD_ENROLLMENT = "enrollment"
+CMD_POLICY = "policy"
 
 
 def def_provision_parser(sub_cmd):
@@ -138,6 +144,115 @@ def def_pre_install_parser(sub_cmd):
         sys.exit(1)
 
 
+def def_cert_parser(sub_cmd):
+    """Define the cert command parser."""
+    cmd = CMD_CERT
+    try:
+        from nvflare.tool.enrollment.cert_cli import define_cert_parser
+
+        cert_parser = sub_cmd.add_parser(cmd, help="Certificate generation for manual workflow")
+        define_cert_parser(cert_parser)
+        return {cmd: cert_parser}
+    except ImportError:
+        # cryptography not installed
+        cert_parser = sub_cmd.add_parser(cmd, help="Certificate generation (requires cryptography)")
+        return {cmd: cert_parser}
+
+
+def handle_cert_cmd(args):
+    """Handle the cert command."""
+    from nvflare.tool.enrollment.cert_cli import handle_cert
+
+    return handle_cert(args)
+
+
+def def_token_parser(sub_cmd):
+    """Define the token command parser.
+
+    Note: token_cli.def_token_parser expects the subparsers object directly
+    and creates its own parser with add_parser().
+    """
+    try:
+        from nvflare.tool.enrollment.token_cli import def_token_parser as token_parser_fn
+
+        return token_parser_fn(sub_cmd)
+    except ImportError:
+        # jwt not installed
+        cmd = CMD_TOKEN
+        token_parser = sub_cmd.add_parser(cmd, help="Token generation (requires PyJWT)")
+        return {cmd: token_parser}
+
+
+def handle_token_cmd(args):
+    """Handle the token command."""
+    from nvflare.tool.enrollment.token_cli import handle_token_cmd as token_handler
+
+    return token_handler(args)
+
+
+def def_package_parser(sub_cmd):
+    """Define the package command parser."""
+    cmd = CMD_PACKAGE
+    from nvflare.lighter.startup_kit import define_package_parser
+
+    package_parser = sub_cmd.add_parser(cmd, help="Generate startup kit packages (without certificates)")
+    define_package_parser(package_parser)
+    return {cmd: package_parser}
+
+
+def handle_package_cmd(args):
+    """Handle the package command."""
+    from nvflare.lighter.startup_kit import handle_package
+
+    return handle_package(args)
+
+
+def def_enrollment_parser(sub_cmd):
+    """Define the enrollment command parser.
+
+    Note: enrollment_cli.define_enrollment_parser expects the subparsers object directly
+    and creates its own parser with add_parser().
+    """
+    try:
+        from nvflare.tool.enrollment.enrollment_cli import define_enrollment_parser
+
+        return define_enrollment_parser(sub_cmd)
+    except ImportError:
+        cmd = CMD_ENROLLMENT
+        enrollment_parser = sub_cmd.add_parser(cmd, help="Enrollment management (requires requests)")
+        return {cmd: enrollment_parser}
+
+
+def handle_enrollment_cmd(args):
+    """Handle the enrollment command."""
+    from nvflare.tool.enrollment.enrollment_cli import handle_enrollment_cmd as enrollment_handler
+
+    return enrollment_handler(args)
+
+
+def def_policy_parser(sub_cmd):
+    """Define the policy command parser.
+
+    Note: policy_cli.define_policy_parser expects the subparsers object directly
+    and creates its own parser with add_parser().
+    """
+    try:
+        from nvflare.tool.enrollment.policy_cli import define_policy_parser
+
+        return define_policy_parser(sub_cmd)
+    except ImportError:
+        cmd = CMD_POLICY
+        policy_parser = sub_cmd.add_parser(cmd, help="Policy management (requires requests, pyyaml)")
+        return {cmd: policy_parser}
+
+
+def handle_policy_cmd(args):
+    """Handle the policy command."""
+    from nvflare.tool.enrollment.policy_cli import handle_policy_cmd as policy_handler
+
+    return policy_handler(args)
+
+
 def parse_args(prog_name: str):
     _parser = argparse.ArgumentParser(description=prog_name)
     _parser.add_argument("--version", "-V", action="store_true", help="print nvflare version")
@@ -152,6 +267,12 @@ def parse_args(prog_name: str):
     sub_cmd_parsers.update(def_job_cli_parser(sub_cmd))
     sub_cmd_parsers.update(def_config_parser(sub_cmd))
     sub_cmd_parsers.update(def_pre_install_parser(sub_cmd))
+    # New enrollment-related commands
+    sub_cmd_parsers.update(def_cert_parser(sub_cmd))
+    sub_cmd_parsers.update(def_token_parser(sub_cmd))
+    sub_cmd_parsers.update(def_package_parser(sub_cmd))
+    sub_cmd_parsers.update(def_enrollment_parser(sub_cmd))
+    sub_cmd_parsers.update(def_policy_parser(sub_cmd))
 
     args, argv = _parser.parse_known_args(None, None)
     cmd = args.__dict__.get("sub_command")
@@ -181,6 +302,12 @@ handlers = {
     CMD_JOB: handle_job_cli_cmd,
     CMD_CONFIG: handle_config_cmd,
     CMD_PRE_INSTALL: handle_pre_install_cmd,
+    # New enrollment-related commands
+    CMD_CERT: handle_cert_cmd,
+    CMD_TOKEN: handle_token_cmd,
+    CMD_PACKAGE: handle_package_cmd,
+    CMD_ENROLLMENT: handle_enrollment_cmd,
+    CMD_POLICY: handle_policy_cmd,
 }
 
 

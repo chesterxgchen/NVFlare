@@ -26,6 +26,16 @@ from nvflare.fuel.hci.client.api_spec import AdminConfigKey
 
 
 @dataclass
+class MockTokenMetadata:
+    """Mock token metadata."""
+
+    project: str = "test-project"
+    fl_server: str = "server:8003"
+    cert_service: str = "https://cert-svc:8443"
+    participant_type: str = "admin"
+
+
+@dataclass
 class MockEnrollmentResult:
     """Mock enrollment result."""
 
@@ -35,6 +45,7 @@ class MockEnrollmentResult:
     private_key: object = None
     certificate_pem: str = "cert-pem"
     ca_cert_pem: str = "ca-pem"
+    token_metadata: MockTokenMetadata = None
 
 
 @pytest.fixture
@@ -185,6 +196,68 @@ class TestAdminAutoEnrollIfNeeded:
         ):
             with pytest.raises(ConfigError, match="Auto-enrollment failed"):
                 AdminAPI._auto_enroll_if_needed(mock_admin, admin_config)
+
+    def test_raises_on_pending_approval(self, temp_startup_dir):
+        """Test that PendingApprovalError is handled with informative message."""
+        admin_config = {
+            AdminConfigKey.CLIENT_CERT: os.path.join(temp_startup_dir, "nonexistent.crt"),
+            AdminConfigKey.STARTUP_DIR: temp_startup_dir,
+        }
+
+        mock_admin = MagicMock()
+        mock_admin.user_name = "admin@example.com"
+        mock_admin.logger = MagicMock()
+
+        from nvflare.fuel.hci.client.api import AdminAPI, ConfigError
+        from nvflare.security.enrollment import PendingApprovalError
+
+        mock_admin._perform_enrollment = MagicMock(
+            side_effect=PendingApprovalError("req-123", "Pending admin approval")
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "NVFLARE_ENROLLMENT_TOKEN": "test-token",
+                "NVFLARE_CERT_SERVICE_URL": "https://cert-svc:8443",
+            },
+        ):
+            with pytest.raises(ConfigError, match="pending approval"):
+                AdminAPI._auto_enroll_if_needed(mock_admin, admin_config)
+
+        # Verify helpful error message logged
+        mock_admin.logger.error.assert_called()
+
+    def test_raises_on_enrollment_rejected(self, temp_startup_dir):
+        """Test that EnrollmentRejectedError is handled with informative message."""
+        admin_config = {
+            AdminConfigKey.CLIENT_CERT: os.path.join(temp_startup_dir, "nonexistent.crt"),
+            AdminConfigKey.STARTUP_DIR: temp_startup_dir,
+        }
+
+        mock_admin = MagicMock()
+        mock_admin.user_name = "admin@example.com"
+        mock_admin.logger = MagicMock()
+
+        from nvflare.fuel.hci.client.api import AdminAPI, ConfigError
+        from nvflare.security.enrollment import EnrollmentRejectedError
+
+        mock_admin._perform_enrollment = MagicMock(
+            side_effect=EnrollmentRejectedError("Admin not in allowed list")
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "NVFLARE_ENROLLMENT_TOKEN": "test-token",
+                "NVFLARE_CERT_SERVICE_URL": "https://cert-svc:8443",
+            },
+        ):
+            with pytest.raises(ConfigError, match="Enrollment rejected"):
+                AdminAPI._auto_enroll_if_needed(mock_admin, admin_config)
+
+        # Verify error logged
+        mock_admin.logger.error.assert_called()
 
 
 class TestAdminPerformEnrollment:
