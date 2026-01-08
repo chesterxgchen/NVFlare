@@ -26,6 +26,16 @@ from nvflare.apis.fl_constant import SecureTrainConst
 
 
 @dataclass
+class MockTokenMetadata:
+    """Mock token metadata."""
+
+    project: str = "test-project"
+    fl_server: str = "server:8003"
+    cert_service: str = "https://cert-svc:8443"
+    participant_type: str = "server"
+
+
+@dataclass
 class MockEnrollmentResult:
     """Mock enrollment result."""
 
@@ -35,6 +45,7 @@ class MockEnrollmentResult:
     private_key: object = None
     certificate_pem: str = "cert-pem"
     ca_cert_pem: str = "ca-pem"
+    token_metadata: MockTokenMetadata = None
 
 
 @pytest.fixture
@@ -211,6 +222,66 @@ class TestServerAutoEnrollIfNeeded:
         ):
             with pytest.raises(RuntimeError, match="Auto-enrollment failed"):
                 FederatedServer._auto_enroll_if_needed(mock_server, grpc_args, temp_startup_dir)
+
+    def test_raises_on_pending_approval(self, temp_startup_dir):
+        """Test that PendingApprovalError is handled with informative message."""
+        grpc_args = {
+            SecureTrainConst.SSL_CERT: os.path.join(temp_startup_dir, "nonexistent.crt"),
+            "name": "test-server",
+        }
+
+        mock_server = MagicMock()
+        mock_server.logger = MagicMock()
+
+        from nvflare.private.fed.server.fed_server import FederatedServer
+        from nvflare.security.enrollment import PendingApprovalError
+
+        mock_server._perform_enrollment = MagicMock(
+            side_effect=PendingApprovalError("req-123", "Pending admin approval")
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "NVFLARE_ENROLLMENT_TOKEN": "test-token",
+                "NVFLARE_CERT_SERVICE_URL": "https://cert-svc:8443",
+            },
+        ):
+            with pytest.raises(RuntimeError, match="pending approval"):
+                FederatedServer._auto_enroll_if_needed(mock_server, grpc_args, temp_startup_dir)
+
+        # Verify helpful error message logged
+        mock_server.logger.error.assert_called()
+
+    def test_raises_on_enrollment_rejected(self, temp_startup_dir):
+        """Test that EnrollmentRejectedError is handled with informative message."""
+        grpc_args = {
+            SecureTrainConst.SSL_CERT: os.path.join(temp_startup_dir, "nonexistent.crt"),
+            "name": "test-server",
+        }
+
+        mock_server = MagicMock()
+        mock_server.logger = MagicMock()
+
+        from nvflare.private.fed.server.fed_server import FederatedServer
+        from nvflare.security.enrollment import EnrollmentRejectedError
+
+        mock_server._perform_enrollment = MagicMock(
+            side_effect=EnrollmentRejectedError("Server not in allowed list")
+        )
+
+        with patch.dict(
+            os.environ,
+            {
+                "NVFLARE_ENROLLMENT_TOKEN": "test-token",
+                "NVFLARE_CERT_SERVICE_URL": "https://cert-svc:8443",
+            },
+        ):
+            with pytest.raises(RuntimeError, match="Enrollment rejected"):
+                FederatedServer._auto_enroll_if_needed(mock_server, grpc_args, temp_startup_dir)
+
+        # Verify error logged
+        mock_server.logger.error.assert_called()
 
 
 class TestServerPerformEnrollment:

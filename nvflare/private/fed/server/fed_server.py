@@ -199,8 +199,24 @@ class BaseServer(ABC):
             self._perform_enrollment(cert_service_url, token, startup_dir, server_name, org, grpc_args)
             return True
         except Exception as e:
-            self.logger.error(f"Auto-enrollment failed: {e}")
-            raise RuntimeError(f"Auto-enrollment failed: {e}") from e
+            # Import here to avoid circular imports
+            from nvflare.security.enrollment import EnrollmentRejectedError, PendingApprovalError
+
+            if isinstance(e, PendingApprovalError):
+                self.logger.error(
+                    f"Enrollment pending manual approval. Contact your administrator to approve "
+                    f"the enrollment request for server '{server_name}'."
+                )
+                raise RuntimeError(
+                    f"Enrollment pending approval for server '{server_name}'. "
+                    "Contact administrator to approve the request."
+                ) from e
+            elif isinstance(e, EnrollmentRejectedError):
+                self.logger.error(f"Enrollment rejected by policy: {e}")
+                raise RuntimeError(f"Enrollment rejected: {e}") from e
+            else:
+                self.logger.error(f"Auto-enrollment failed: {e}")
+                raise RuntimeError(f"Auto-enrollment failed: {e}") from e
 
     def _perform_enrollment(
         self, cert_service_url: str, token: str, startup_dir: str, server_name: str, org: str, grpc_args: dict
@@ -214,12 +230,23 @@ class BaseServer(ABC):
             server_name: Server name for certificate
             org: Organization name
             grpc_args: Server config to update with new cert paths
+
+        Raises:
+            PendingApprovalError: If enrollment requires manual approval
+            EnrollmentRejectedError: If enrollment is rejected by policy
+            RuntimeError: If enrollment fails for other reasons
         """
         from nvflare.security.enrollment import EnrollmentIdentity, enroll
 
         identity = EnrollmentIdentity.for_server(name=server_name, org=org)
         result = enroll(cert_service_url, token, identity, startup_dir)
         self.logger.info(f"Enrollment successful. Certificate saved to: {result.cert_path}")
+
+        # Log token metadata if available
+        if result.token_metadata:
+            meta = result.token_metadata
+            if meta.project:
+                self.logger.info(f"Enrolled in project: {meta.project}")
 
         # Update grpc_args with new certificate paths
         grpc_args[SecureTrainConst.SSL_CERT] = result.cert_path

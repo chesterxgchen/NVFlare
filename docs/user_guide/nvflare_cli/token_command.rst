@@ -39,7 +39,7 @@ Two Modes of Operation
 The token CLI supports two modes:
 
 1. **Local Mode** (Manual Workflow): Generate tokens using local root CA from provisioning
-2. **Remote Mode** (Auto-Scale Workflow): Generate tokens via Certificate Service API
+2. **Remote Mode** (Dynamic Workflow): Generate tokens via Certificate Service API
 
 ***********************
 Environment Variables
@@ -61,7 +61,7 @@ The token CLI supports environment variables to simplify repeated usage:
    * - ``NVFLARE_ENROLLMENT_POLICY``
      - Path to enrollment policy YAML file (optional, uses built-in default if not set)
 
-**Remote Mode (Auto-Scale Workflow):**
+**Remote Mode (Dynamic Workflow):**
 
 .. list-table::
    :widths: 30 70
@@ -91,7 +91,7 @@ Setting these variables allows you to omit options from commands:
     export NVFLARE_CA_PATH=/path/to/workspace/my_project
     nvflare token generate -s hospital-1
 
-    # Remote Mode (Auto-Scale Workflow)
+    # Remote Mode (Dynamic Workflow)
     export NVFLARE_CERT_SERVICE_URL=https://cert-service:8443
     export NVFLARE_API_KEY=your-api-key
     nvflare token generate -s hospital-1
@@ -171,7 +171,7 @@ Generate tokens using local root CA from provisioning:
     export NVFLARE_CA_PATH=/path/to/workspace/my_project
     nvflare token generate -s hospital-1
 
-**Remote Mode (Auto-Scale Workflow)**
+**Remote Mode (Dynamic Workflow)**
 
 Generate tokens via Certificate Service API:
 
@@ -269,7 +269,7 @@ Examples
 
     # Creates tokens for: hospital-1, hospital-2, ..., hospital-10
 
-**Remote Mode (Auto-Scale Workflow):**
+**Remote Mode (Dynamic Workflow):**
 
 .. code-block:: shell
 

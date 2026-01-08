@@ -15,11 +15,18 @@
 """FLARE Enrollment Token (FET) Service.
 
 This module handles JWT-based enrollment token:
-- Single token generation with embedded policies
+- Single token generation with policy_id reference (policies stored server-side)
 - Batch token generation for multiple clients
+- Token metadata embedding (project, fl_server, cert_service)
 - Token inspection
 
 Token generation is separate from certificate services to maintain separation of concerns.
+
+Token Structure (JWT Claims):
+- Standard: jti, sub, iat, exp, iss
+- Required Metadata: project, fl_server, cert_service, subject_type
+- Policy: policy_id (references server-side policy, defaults to "default")
+- Optional: roles, source_ips
 """
 
 import logging
@@ -30,7 +37,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import jwt
-import yaml
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 
@@ -49,11 +55,15 @@ def _get_cert_cn(cert: x509.Certificate) -> str:
 class TokenService:
     """Manage enrollment token (JWT) generation and inspection.
 
-    The enrollment token (FET - FLARE Enrollment Token) is a signed JWT that embeds
-    the approval policy. This ensures:
-    - Token cannot be tampered (signature verification)
-    - Policy is self-contained (no database lookup needed)
-    - Lightweight validation (no external auth system required)
+    The enrollment token (FET - FLARE Enrollment Token) is a signed JWT that contains:
+    - Participant identity (sub, subject_type)
+    - Required metadata (project, fl_server, cert_service)
+    - Policy reference (policy_id - points to server-side policy)
+
+    Token Security:
+    - Signed with root CA private key (cannot be forged)
+    - Multi-use but participant-bound (one token = one participant = one enrollment)
+    - Policies are server-side (not embedded, preventing policy leakage)
 
     This service handles:
     - Token generation (signed with root CA private key)
@@ -165,70 +175,67 @@ class TokenService:
         )
         self.issuer = _get_cert_cn(self.root_cert)
 
-    def _load_policy(self, policy_file: str) -> Dict[str, Any]:
-        """Load policy from a YAML file.
-
-        Args:
-            policy_file: Path to policy YAML file
-
-        Returns:
-            Policy dictionary
-
-        Raises:
-            FileNotFoundError: If policy file doesn't exist
-        """
-        if not os.path.exists(policy_file):
-            raise FileNotFoundError(f"Policy file not found: {policy_file}")
-
-        with open(policy_file, "r") as f:
-            return yaml.safe_load(f) or {}
-
     def generate_token(
         self,
-        policy: Dict[str, Any],
         subject: str,
         subject_type: str = ParticipantType.CLIENT,
+        project: Optional[str] = None,
+        fl_server: Optional[str] = None,
+        cert_service: Optional[str] = None,
+        policy_id: str = "default",
         validity: Optional[str] = None,
         **claims,
     ) -> str:
-        """Generate a signed enrollment token (JWT) with embedded policy.
+        """Generate a signed enrollment token (JWT) with policy_id reference.
 
-        Uses a flexible **claims approach - any additional claims are passed
-        through to the JWT payload without requiring code changes when
-        the policy schema evolves.
+        Tokens contain metadata (project, fl_server, cert_service) that enables
+        simplified packaging workflow where nvflare package extracts all necessary
+        information from the token.
 
         Args:
-            policy: Approval policy dictionary (from YAML file)
             subject: The subject identifier (site name, user id, or pattern)
             subject_type: Type of subject from ParticipantType (client, admin, relay)
                          or "pattern" for wildcard matching
-            validity: Token validity duration (e.g., "7d", "24h").
-                      Defaults to policy token.validity or "7d"
+            project: Project name (required for production tokens)
+            fl_server: FL Server endpoint URI (e.g., "grpc://server:8002")
+            cert_service: Certificate Service URL (e.g., "https://cert:8443")
+            policy_id: Reference to server-side policy (default: "default")
+            validity: Token validity duration (e.g., "7d", "24h"). Defaults to "7d"
             **claims: Additional claims to embed in the token (flexible).
-                      Examples: roles, source_ips, metadata, etc.
+                      Examples: roles, source_ips
 
         Returns:
             Signed JWT token string
 
         Examples:
-            # Client (site) token
-            token = service.generate_token(policy, "hospital-01", ParticipantType.CLIENT)
+            # Client (site) token with full metadata
+            token = service.generate_token(
+                subject="hospital-01",
+                subject_type=ParticipantType.CLIENT,
+                project="healthcare-fl",
+                fl_server="grpc://server.example.com:8002",
+                cert_service="https://cert.example.com:8443",
+                policy_id="trusted"
+            )
 
             # Admin (user) token with roles
             token = service.generate_token(
-                policy, "user@example.com", ParticipantType.ADMIN,
+                subject="user@example.com",
+                subject_type=ParticipantType.ADMIN,
+                project="my-project",
+                fl_server="grpc://server:8002",
+                cert_service="https://cert:8443",
                 roles=["org_admin", "lead"]
             )
 
-            # Client token with optional IP restriction (AWS, GCP, Azure, on-premise)
+            # Token with IP restriction
             token = service.generate_token(
-                policy, "dc-server-01", ParticipantType.CLIENT,
-                source_ips=["10.0.0.0/8", "192.168.0.0/16"]
-            )
-
-            # Pattern token for wildcard site names
-            token = service.generate_token(
-                policy, "hospital-*", TokenService.SUBJECT_TYPE_PATTERN
+                subject="dc-server-01",
+                subject_type=ParticipantType.CLIENT,
+                project="secure-fl",
+                fl_server="grpc://server:8002",
+                cert_service="https://cert:8443",
+                source_ips=["10.0.0.0/8"]
             )
         """
         if not subject:
@@ -239,9 +246,8 @@ class TokenService:
         if subject_type not in valid_types:
             raise ValueError(f"subject_type must be one of: {valid_types}")
 
-        # Parse validity duration from argument or policy
-        token_config = policy.get("token", {})
-        validity_str = validity or token_config.get("validity", "7d")
+        # Parse validity duration
+        validity_str = validity or "7d"
         validity_delta = self._parse_duration(validity_str)
 
         now = datetime.now(timezone.utc)
@@ -256,9 +262,16 @@ class TokenService:
             "iss": self.issuer,  # Issuer
             # FLARE-specific claims
             "subject_type": subject_type,
-            "policy": policy,  # Embedded policy (signed, tamper-proof)
-            "max_uses": 1,  # Single-use token
+            "policy_id": policy_id,  # Reference to server-side policy
         }
+
+        # Add required metadata claims (for simplified packaging)
+        if project:
+            payload["project"] = project
+        if fl_server:
+            payload["fl_server"] = fl_server
+        if cert_service:
+            payload["cert_service"] = cert_service
 
         # Merge any additional claims (flexible - no code changes needed)
         for key, value in claims.items():
@@ -275,62 +288,25 @@ class TokenService:
         self.logger.info(f"Generated enrollment token: jti={payload['jti']}, subject={subject}, type={subject_type}")
         return signed_token
 
-    def generate_token_from_file(self, policy_file: str, **kwargs) -> str:
-        """Generate token from a policy YAML file.
-
-        Args:
-            policy_file: Path to policy YAML file
-            **kwargs: Additional arguments passed to generate_token
-
-        Returns:
-            Signed JWT token string
-        """
-        with open(policy_file, "r") as f:
-            policy = yaml.safe_load(f)
-        return self.generate_token(policy=policy, **kwargs)
-
-    def generate_client_token(
-        self,
-        policy_file: str,
-        client_name: str,
-        validity: Optional[str] = None,
-        **claims,
-    ) -> str:
-        """Convenience method for generating client (site) enrollment tokens.
-
-        Args:
-            policy_file: Path to policy YAML file
-            client_name: Client/site identifier
-            validity: Token validity duration
-            **claims: Additional claims (source_ips, metadata, etc.)
-
-        Returns:
-            Signed JWT token string
-        """
-        return self.generate_token_from_file(
-            policy_file,
-            subject=client_name,
-            subject_type=ParticipantType.CLIENT,
-            validity=validity,
-            **claims,
-        )
-
     def generate_site_token(
         self,
         site_name: str,
+        project: Optional[str] = None,
+        fl_server: Optional[str] = None,
+        cert_service: Optional[str] = None,
+        policy_id: str = "default",
         valid_days: int = 7,
-        policy_file: Optional[str] = None,
         **claims,
     ) -> str:
         """Convenience method for generating site enrollment tokens.
 
-        Sites can be clients or servers. This is an alias for generate_client_token
-        with simpler parameters.
-
         Args:
             site_name: Site identifier
+            project: Project name
+            fl_server: FL Server endpoint URI
+            cert_service: Certificate Service URL
+            policy_id: Reference to server-side policy (default: "default")
             valid_days: Token validity in days (default: 7)
-            policy_file: Path to policy YAML file (optional)
             **claims: Additional claims
 
         Returns:
@@ -339,16 +315,22 @@ class TokenService:
         return self.generate_token(
             subject=site_name,
             subject_type=ParticipantType.CLIENT,
-            valid_days=valid_days,
-            policy=self._load_policy(policy_file) if policy_file else {},
+            project=project,
+            fl_server=fl_server,
+            cert_service=cert_service,
+            policy_id=policy_id,
+            validity=f"{valid_days}d",
             **claims,
         )
 
     def generate_admin_token(
         self,
         user_id: str,
+        project: Optional[str] = None,
+        fl_server: Optional[str] = None,
+        cert_service: Optional[str] = None,
+        policy_id: str = "default",
         valid_days: int = 7,
-        policy_file: Optional[str] = None,
         roles: Optional[list] = None,
         **claims,
     ) -> str:
@@ -356,8 +338,11 @@ class TokenService:
 
         Args:
             user_id: User identifier (email)
+            project: Project name
+            fl_server: FL Server endpoint URI
+            cert_service: Certificate Service URL
+            policy_id: Reference to server-side policy (default: "default")
             valid_days: Token validity in days (default: 7)
-            policy_file: Path to policy YAML file (optional)
             roles: List of roles for the admin (default: [AdminRole.LEAD])
             **claims: Additional claims
 
@@ -368,8 +353,11 @@ class TokenService:
         return self.generate_token(
             subject=user_id,
             subject_type=ParticipantType.ADMIN,
-            valid_days=valid_days,
-            policy=self._load_policy(policy_file) if policy_file else {},
+            project=project,
+            fl_server=fl_server,
+            cert_service=cert_service,
+            policy_id=policy_id,
+            validity=f"{valid_days}d",
             roles=roles or [AdminRole.LEAD],
             **claims,
         )
@@ -377,16 +365,22 @@ class TokenService:
     def generate_relay_token(
         self,
         relay_name: str,
+        project: Optional[str] = None,
+        fl_server: Optional[str] = None,
+        cert_service: Optional[str] = None,
+        policy_id: str = "default",
         valid_days: int = 7,
-        policy_file: Optional[str] = None,
         **claims,
     ) -> str:
         """Convenience method for generating relay enrollment tokens.
 
         Args:
             relay_name: Relay node identifier
+            project: Project name
+            fl_server: FL Server endpoint URI
+            cert_service: Certificate Service URL
+            policy_id: Reference to server-side policy (default: "default")
             valid_days: Token validity in days (default: 7)
-            policy_file: Path to policy YAML file (optional)
             **claims: Additional claims
 
         Returns:
@@ -395,62 +389,14 @@ class TokenService:
         return self.generate_token(
             subject=relay_name,
             subject_type=ParticipantType.RELAY,
-            valid_days=valid_days,
-            policy=self._load_policy(policy_file) if policy_file else {},
+            project=project,
+            fl_server=fl_server,
+            cert_service=cert_service,
+            policy_id=policy_id,
+            validity=f"{valid_days}d",
             **claims,
         )
 
-    def generate_admin_token_from_file(
-        self,
-        policy_file: str,
-        user_id: str,
-        validity: Optional[str] = None,
-        **claims,
-    ) -> str:
-        """Generate admin token from policy file.
-
-        Args:
-            policy_file: Path to policy YAML file
-            user_id: User identifier (email)
-            validity: Token validity duration
-            **claims: Additional claims (roles, metadata, etc.)
-
-        Returns:
-            Signed JWT token string
-        """
-        return self.generate_token_from_file(
-            policy_file,
-            subject=user_id,
-            subject_type=ParticipantType.ADMIN,
-            validity=validity,
-            **claims,
-        )
-
-    def generate_relay_token_from_file(
-        self,
-        policy_file: str,
-        relay_name: str,
-        validity: Optional[str] = None,
-        **claims,
-    ) -> str:
-        """Generate relay token from policy file.
-
-        Args:
-            policy_file: Path to policy YAML file
-            relay_name: Relay node identifier
-            validity: Token validity duration
-            **claims: Additional claims (source_ips, metadata, etc.)
-
-        Returns:
-            Signed JWT token string
-        """
-        return self.generate_token_from_file(
-            policy_file,
-            subject=relay_name,
-            subject_type=ParticipantType.RELAY,
-            validity=validity,
-            **claims,
-        )
 
     def _parse_duration(self, duration_str: str) -> timedelta:
         """Parse duration string like '7d', '24h', '30m' to timedelta."""
@@ -490,11 +436,14 @@ class TokenService:
 
     def batch_generate_tokens(
         self,
-        policy_file: str,
         count: int = 0,
         name_prefix: Optional[str] = None,
         names: Optional[List[str]] = None,
         subject_type: str = ParticipantType.CLIENT,
+        project: Optional[str] = None,
+        fl_server: Optional[str] = None,
+        cert_service: Optional[str] = None,
+        policy_id: str = "default",
         validity: Optional[str] = None,
         output_file: Optional[str] = None,
         **claims,
@@ -502,17 +451,20 @@ class TokenService:
         """Generate multiple enrollment tokens in batch.
 
         This is useful for pre-generating tokens for multiple clients.
-        Each token is single-use (max_uses=1).
+        Tokens are multi-use but participant-bound (one token = one participant).
 
         Args:
-            policy_file: Path to policy YAML file
             count: Number of tokens to generate (ignored if names provided)
             name_prefix: Prefix for auto-generated names (e.g., "site" -> "site-001")
             names: Explicit list of names (overrides count and name_prefix)
             subject_type: Type of participant (client, admin, relay)
+            project: Project name (embedded in all tokens)
+            fl_server: FL Server endpoint URI (embedded in all tokens)
+            cert_service: Certificate Service URL (embedded in all tokens)
+            policy_id: Reference to server-side policy (default: "default")
             validity: Token validity duration (e.g., "7d", "24h")
             output_file: Optional file path to save tokens (CSV or TXT format)
-            **claims: Additional claims to embed in each token (source_ips, metadata, etc.)
+            **claims: Additional claims to embed in each token
 
         Returns:
             List of dicts with "name" and "token" keys
@@ -520,23 +472,24 @@ class TokenService:
         Example:
             # Generate 100 client tokens with auto-generated names
             tokens = service.batch_generate_tokens(
-                "policy.yaml",
                 count=100,
                 name_prefix="hospital",
+                project="healthcare-fl",
+                fl_server="grpc://server:8002",
+                cert_service="https://cert:8443",
+                policy_id="trusted",
                 validity="30d"
             )
             # Result: [{"name": "hospital-001", "token": "eyJ..."}, ...]
 
-            # Generate tokens for specific clients with metadata
+            # Generate tokens for specific clients
             tokens = service.batch_generate_tokens(
-                "policy.yaml",
                 names=["site-a", "site-b", "site-c"],
-                metadata={"region": "us-west"}
+                project="my-project",
+                fl_server="grpc://server:8002",
+                cert_service="https://cert:8443"
             )
         """
-        with open(policy_file, "r") as f:
-            policy = yaml.safe_load(f)
-
         # Determine names
         if names:
             name_list = names
@@ -550,9 +503,12 @@ class TokenService:
         results = []
         for name in name_list:
             token = self.generate_token(
-                policy=policy,
                 subject=name,
                 subject_type=subject_type,
+                project=project,
+                fl_server=fl_server,
+                cert_service=cert_service,
+                policy_id=policy_id,
                 validity=validity,
                 **claims,
             )
@@ -597,7 +553,7 @@ class TokenService:
             jwt_token: The JWT token string
 
         Returns:
-            Dictionary with token details (from embedded claims only)
+            Dictionary with token details (from embedded claims)
         """
         try:
             # Decode without verification to inspect claims
@@ -610,9 +566,14 @@ class TokenService:
                 "issuer": payload.get("iss"),
                 "issued_at": datetime.fromtimestamp(payload.get("iat", 0), tz=timezone.utc).isoformat(),
                 "expires_at": datetime.fromtimestamp(payload.get("exp", 0), tz=timezone.utc).isoformat(),
-                "max_uses": payload.get("max_uses", 1),
+                # Metadata claims
+                "project": payload.get("project"),
+                "fl_server": payload.get("fl_server"),
+                "cert_service": payload.get("cert_service"),
+                "policy_id": payload.get("policy_id", "default"),
+                # Optional claims
                 "roles": payload.get("roles"),
-                "policy_project": payload.get("policy", {}).get("metadata", {}).get("project"),
+                "source_ips": payload.get("source_ips"),
             }
         except Exception as e:
             raise ValueError(f"Failed to decode token: {e}")

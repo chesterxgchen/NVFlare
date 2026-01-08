@@ -45,8 +45,11 @@ from nvflare.security.enrollment import (
     CertRequestor,
     EnrollmentIdentity,
     EnrollmentOptions,
+    EnrollmentRejectedError,
     EnrollmentResult,
     ParticipantType,
+    PendingApprovalError,
+    TokenMetadata,
 )
 
 __all__ = [
@@ -55,6 +58,10 @@ __all__ = [
     "EnrollmentIdentity",
     "EnrollmentOptions",
     "EnrollmentResult",
+    "TokenMetadata",
+    # Exceptions
+    "PendingApprovalError",
+    "EnrollmentRejectedError",
     # Constants
     "ENROLLMENT_TOKEN_ENV",
     "CERT_SERVICE_URL_ENV",

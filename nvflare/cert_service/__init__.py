@@ -14,7 +14,7 @@
 
 """FLARE Certificate Service package.
 
-This package provides a standalone Certificate Service for the Auto-Scale
+This package provides a standalone Certificate Service for the Dynamic
 enrollment workflow. It handles:
 
 - JWT enrollment token generation

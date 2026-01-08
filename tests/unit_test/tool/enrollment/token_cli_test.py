@@ -38,7 +38,8 @@ class TestTokenCLIImports:
             ENV_API_KEY,
             ENV_CA_PATH,
             ENV_CERT_SERVICE_URL,
-            ENV_ENROLLMENT_POLICY,
+            ENV_FL_SERVER,
+            ENV_PROJECT,
             SUBCMD_BATCH,
             SUBCMD_GENERATE,
             SUBCMD_INFO,
@@ -49,18 +50,10 @@ class TestTokenCLIImports:
         assert SUBCMD_BATCH == "batch"
         assert SUBCMD_INFO == "info"
         assert ENV_CA_PATH == "NVFLARE_CA_PATH"
-        assert ENV_ENROLLMENT_POLICY == "NVFLARE_ENROLLMENT_POLICY"
+        assert ENV_PROJECT == "NVFLARE_PROJECT"
+        assert ENV_FL_SERVER == "NVFLARE_FL_SERVER"
         assert ENV_CERT_SERVICE_URL == "NVFLARE_CERT_SERVICE_URL"
         assert ENV_API_KEY == "NVFLARE_API_KEY"
-
-    def test_default_policy_defined(self):
-        """Test that built-in default policy is defined."""
-        from nvflare.tool.enrollment.token_cli import DEFAULT_POLICY
-
-        assert "metadata:" in DEFAULT_POLICY
-        assert "token:" in DEFAULT_POLICY
-        assert "approval:" in DEFAULT_POLICY
-        assert "auto-approve-all" in DEFAULT_POLICY
 
 
 class TestGetCaPath:
@@ -239,59 +232,6 @@ class TestRemoteTokenGeneration:
             )
 
 
-class TestGetPolicyPath:
-    """Test policy path resolution."""
-
-    def test_policy_path_from_args(self):
-        """Test policy path from CLI argument takes priority."""
-        from nvflare.tool.enrollment.token_cli import _get_policy_path
-
-        args = argparse.Namespace(policy="/path/to/policy.yaml")
-        path, is_temp = _get_policy_path(args)
-        assert path == "/path/to/policy.yaml"
-        assert is_temp is False
-
-    def test_policy_path_from_env_var(self):
-        """Test policy path from environment variable."""
-        from nvflare.tool.enrollment.token_cli import ENV_ENROLLMENT_POLICY, _get_policy_path
-
-        args = argparse.Namespace(policy=None)
-        with patch.dict(os.environ, {ENV_ENROLLMENT_POLICY: "/path/from/env.yaml"}):
-            path, is_temp = _get_policy_path(args)
-            assert path == "/path/from/env.yaml"
-            assert is_temp is False
-
-    def test_policy_args_overrides_env(self):
-        """Test CLI argument overrides environment variable."""
-        from nvflare.tool.enrollment.token_cli import ENV_ENROLLMENT_POLICY, _get_policy_path
-
-        args = argparse.Namespace(policy="/path/from/args.yaml")
-        with patch.dict(os.environ, {ENV_ENROLLMENT_POLICY: "/path/from/env.yaml"}):
-            path, is_temp = _get_policy_path(args)
-            assert path == "/path/from/args.yaml"
-            assert is_temp is False
-
-    def test_default_policy_used_when_not_specified(self):
-        """Test that default policy is used when no policy specified."""
-        from nvflare.tool.enrollment.token_cli import _get_policy_path
-
-        args = argparse.Namespace(policy=None)
-        with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("NVFLARE_ENROLLMENT_POLICY", None)
-            path, is_temp = _get_policy_path(args)
-
-            # Should return a temp file path
-            assert is_temp is True
-            assert path.endswith(".yaml")
-            assert os.path.exists(path)
-
-            # Verify content
-            with open(path, "r") as f:
-                content = f.read()
-            assert "auto-approve-all" in content
-
-            # Cleanup
-            os.remove(path)
 
 
 class TestParseValidityToDays:
@@ -458,53 +398,58 @@ class TestHandleGenerateCmd:
             yield
 
     def test_generate_with_all_args(self, mock_jwt_check):
-        """Test generate command with all arguments provided."""
+        """Test generate command with all arguments provided (local mode)."""
         from nvflare.tool.enrollment.token_cli import _handle_generate_cmd
 
-        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
-            f.write(b"metadata:\n  project: test\n")
-            policy_path = f.name
+        # Clear any environment variables that might interfere
+        env_patch = patch.dict(os.environ, {
+            "NVFLARE_API_KEY": "",
+            "NVFLARE_CERT_SERVICE_URL": "",
+        }, clear=False)
 
-        try:
-            # Mock TokenService where it's imported (inside the handler)
-            with patch("nvflare.tool.enrollment.token_service.TokenService") as mock_class:
-                mock_instance = MagicMock()
-                mock_instance.generate_token_from_file.return_value = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
-                mock_instance.get_token_info.return_value = {
-                    "subject": "site-1",
-                    "subject_type": "client",
-                    "expires_at": "2025-01-09T00:00:00+00:00",
-                }
-                mock_class.return_value = mock_instance
+        # Mock TokenService where it's imported (inside the handler)
+        with env_patch, patch("nvflare.tool.enrollment.token_service.TokenService") as mock_class:
+            mock_instance = MagicMock()
+            mock_instance.generate_token.return_value = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+            mock_instance.get_token_info.return_value = {
+                "subject": "site-1",
+                "subject_type": "client",
+                "project": "test-project",
+                "fl_server": "grpc://server:8002",
+                "cert_service": "https://cert:8443",
+                "policy_id": "default",
+                "expires_at": "2025-01-09T00:00:00+00:00",
+            }
+            mock_class.return_value = mock_instance
 
-                args = argparse.Namespace(
-                    subject="site-1",
-                    ca_path="/path/to/ca",
-                    policy=policy_path,
-                    type="client",
-                    validity="7d",
-                    roles=None,
-                    source_ips=None,
-                    output=None,
-                )
+            # Test local mode: ca_path provided, no cert_service (local generation)
+            args = argparse.Namespace(
+                subject="site-1",
+                ca_path="/path/to/ca",
+                project="test-project",
+                fl_server="grpc://server:8002",
+                cert_service=None,  # No cert service = local mode
+                policy_id="default",
+                type="client",
+                validity="7d",
+                roles=None,
+                source_ips=None,
+                output=None,
+                api_key=None,
+            )
 
-                # Should not raise
-                _handle_generate_cmd(args)
+            # Should not raise
+            _handle_generate_cmd(args)
 
-                # Verify TokenService was called correctly
-                mock_instance.generate_token_from_file.assert_called_once()
-                call_args = mock_instance.generate_token_from_file.call_args
-                assert call_args.kwargs["subject"] == "site-1"
-        finally:
-            os.remove(policy_path)
+            # Verify TokenService was called correctly
+            mock_instance.generate_token.assert_called_once()
+            call_args = mock_instance.generate_token.call_args
+            assert call_args.kwargs["subject"] == "site-1"
+            assert call_args.kwargs["policy_id"] == "default"
 
     def test_generate_saves_to_output_file(self, mock_jwt_check):
         """Test generate command saves token to output file."""
         from nvflare.tool.enrollment.token_cli import _handle_generate_cmd
-
-        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as policy_file:
-            policy_file.write(b"metadata:\n  project: test\n")
-            policy_path = policy_file.name
 
         with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as output_file:
             output_path = output_file.name
@@ -512,10 +457,12 @@ class TestHandleGenerateCmd:
         try:
             with patch("nvflare.tool.enrollment.token_service.TokenService") as mock_class:
                 mock_instance = MagicMock()
-                mock_instance.generate_token_from_file.return_value = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+                mock_instance.generate_token.return_value = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
                 mock_instance.get_token_info.return_value = {
                     "subject": "site-1",
                     "subject_type": "client",
+                    "project": "test-project",
+                    "policy_id": "default",
                     "expires_at": "2025-01-09T00:00:00+00:00",
                 }
                 mock_class.return_value = mock_instance
@@ -523,12 +470,16 @@ class TestHandleGenerateCmd:
                 args = argparse.Namespace(
                     subject="site-1",
                     ca_path="/path/to/ca",
-                    policy=policy_path,
+                    project="test-project",
+                    fl_server=None,
+                    cert_service=None,
+                    policy_id="default",
                     type="client",
-                    validity=None,
+                    validity="7d",
                     roles=None,
                     source_ips=None,
                     output=output_path,
+                    api_key=None,
                 )
 
                 _handle_generate_cmd(args)
@@ -538,7 +489,6 @@ class TestHandleGenerateCmd:
                     content = f.read()
                 assert "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9" in content
         finally:
-            os.remove(policy_path)
             os.remove(output_path)
 
 
@@ -565,8 +515,10 @@ class TestHandleInfoCmd:
             "iss": "nvflare-enrollment",
             "iat": int(datetime.now(timezone.utc).timestamp()),
             "exp": int((datetime.now(timezone.utc) + timedelta(days=7)).timestamp()),
-            "max_uses": 1,
-            "policy": {"metadata": {"project": "test-project", "version": "1.0"}},
+            "project": "test-project",
+            "fl_server": "grpc://server:8002",
+            "cert_service": "https://cert:8443",
+            "policy_id": "default",
         }
         # Use a simple secret for test (normally would use RSA)
         return jwt.encode(payload, "test-secret", algorithm="HS256")
@@ -582,6 +534,7 @@ class TestHandleInfoCmd:
         assert "site-1" in captured.out
         assert "client" in captured.out
         assert "test-project" in captured.out
+        assert "policy_id" in captured.out
 
     def test_info_json_output(self, mock_jwt_check, sample_token, capsys):
         """Test info command with JSON output."""

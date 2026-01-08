@@ -34,7 +34,6 @@ Usage:
 
 import os
 import sys
-import tempfile
 from typing import Optional
 
 CMD_TOKEN = "token"
@@ -46,42 +45,10 @@ SUBCMD_INFO = "info"
 
 # Environment variable names
 ENV_CA_PATH = "NVFLARE_CA_PATH"
-ENV_ENROLLMENT_POLICY = "NVFLARE_ENROLLMENT_POLICY"
 ENV_CERT_SERVICE_URL = "NVFLARE_CERT_SERVICE_URL"
 ENV_API_KEY = "NVFLARE_API_KEY"
-
-# Built-in default policy (simple auto-approve for quick start)
-DEFAULT_POLICY = """
-metadata:
-  project: "nvflare-default"
-  description: "Built-in default policy for quick start"
-  version: "1.0"
-
-token:
-  validity: 7d
-  max_uses: 1
-
-site:
-  name_pattern: "*"
-
-user:
-  allowed_roles:
-    - researcher
-    - org_admin
-    - project_admin
-  default_role: researcher
-
-approval:
-  method: policy
-  rules:
-    - name: "auto-approve-all"
-      description: "Auto-approve all enrollment requests"
-      match: {}
-      action: approve
-
-notifications:
-  enabled: false
-"""
+ENV_PROJECT = "NVFLARE_PROJECT"
+ENV_FL_SERVER = "NVFLARE_FL_SERVER"
 
 
 def _check_jwt_dependency():
@@ -211,24 +178,31 @@ def _parse_validity_to_days(validity_str: Optional[str]) -> Optional[int]:
         return int(validity_str)
 
 
-def _get_policy_path(args):
-    """Resolve policy path from args, environment variable, or use built-in default."""
-    policy_path = getattr(args, "policy", None)
-    if policy_path:
-        return policy_path, False
+def _print_token_next_steps(subject: str, subject_type: str, output_file: Optional[str] = None):
+    """Print next steps after token generation."""
+    print("\nNext steps:")
+    if output_file:
+        print(f"  1. Securely deliver the token file ({output_file}) to the site/user")
+    else:
+        print("  1. Copy and securely deliver the token above to the site/user")
 
-    policy_path = os.environ.get(ENV_ENROLLMENT_POLICY)
-    if policy_path:
-        return policy_path, False
+    if subject_type == "admin":
+        print("  2. Org Admin generates startup kit: nvflare package -n <name> -t admin ...")
+    else:
+        print(f"  2. Org Admin generates startup kit: nvflare package -n {subject} -t {subject_type} ...")
 
-    # Use built-in default policy - write to temp file
-    fd, temp_path = tempfile.mkstemp(suffix=".yaml", prefix="nvflare_default_policy_")
-    try:
-        os.write(fd, DEFAULT_POLICY.encode("utf-8"))
-    finally:
-        os.close(fd)
+    print("  3. Org Admin copies the token to the startup kit's startup/ directory")
+    print("  4. Start the participant: ./startup/start.sh (auto-enrollment will occur)")
 
-    return temp_path, True
+
+def _print_batch_next_steps(output_file: str, count: int):
+    """Print next steps after batch token generation."""
+    print("\nNext steps:")
+    print(f"  1. Distribute tokens from {output_file} to respective sites/users")
+    print("  2. Each Org Admin generates startup kit: nvflare package -n <site> -t <type> ...")
+    print("  3. Each Org Admin copies their token to startup/ directory")
+    print("  4. Start participants: ./startup/start.sh (auto-enrollment will occur)")
+    print(f"\nNote: {count} tokens generated. Each token is bound to a specific participant.")
 
 
 # =============================================================================
@@ -242,10 +216,16 @@ def _define_generate_parser(sub_parser):
         SUBCMD_GENERATE,
         help="Generate a single enrollment token",
         description=(
-            "Generate a policy-based enrollment token (JWT) for a single subject.\n\n"
+            "Generate an enrollment token (JWT) for a single participant.\n\n"
+            "Tokens contain metadata (project, fl_server, cert_service) that enables\n"
+            "simplified packaging workflow. Policies are stored server-side and\n"
+            "referenced by policy_id.\n\n"
             "Environment variables:\n"
-            f"  {ENV_CA_PATH}: Path to CA directory (alternative to -c)\n"
-            f"  {ENV_ENROLLMENT_POLICY}: Path to policy file (alternative to -p)"
+            f"  {ENV_CA_PATH}: Path to CA directory (local generation)\n"
+            f"  {ENV_PROJECT}: Project name\n"
+            f"  {ENV_FL_SERVER}: FL Server endpoint\n"
+            f"  {ENV_CERT_SERVICE_URL}: Certificate Service URL\n"
+            f"  {ENV_API_KEY}: API key (remote generation)"
         ),
         formatter_class=lambda prog: __import__("argparse").RawDescriptionHelpFormatter(prog, max_help_position=40),
     )
@@ -259,20 +239,43 @@ def _define_generate_parser(sub_parser):
         help="Subject identifier (site name, user email, or pattern like 'hospital-*')",
     )
 
+    # Token metadata (required for production tokens)
+    parser.add_argument(
+        "--project",
+        type=str,
+        default=None,
+        help=f"Project name (or set {ENV_PROJECT})",
+    )
+    parser.add_argument(
+        "--fl-server",
+        type=str,
+        default=None,
+        metavar="URI",
+        help=f"FL Server endpoint URI, e.g., 'grpc://server:8002' (or set {ENV_FL_SERVER})",
+    )
+    parser.add_argument(
+        "--cert-service",
+        type=str,
+        default=None,
+        metavar="URL",
+        help=f"Certificate Service URL, e.g., 'https://cert:8443' (or set {ENV_CERT_SERVICE_URL})",
+    )
+
+    # Policy reference (server-side policies)
+    parser.add_argument(
+        "--policy-id",
+        type=str,
+        default="default",
+        help="Policy ID referencing server-side policy (default: 'default')",
+    )
+
     # Optional arguments (can be set via env vars)
     parser.add_argument(
         "-c",
         "--ca_path",
         type=str,
         default=None,
-        help=f"Path to CA directory (or set {ENV_CA_PATH})",
-    )
-    parser.add_argument(
-        "-p",
-        "--policy",
-        type=str,
-        default=None,
-        help=f"Path to policy YAML file (or set {ENV_ENROLLMENT_POLICY}, uses default if not set)",
+        help=f"Path to CA directory for local token generation (or set {ENV_CA_PATH})",
     )
 
     # Optional arguments with defaults
@@ -288,8 +291,8 @@ def _define_generate_parser(sub_parser):
         "-v",
         "--validity",
         type=str,
-        default=None,
-        help="Token validity duration (e.g., '7d', '24h', '30m'). Defaults to policy setting.",
+        default="7d",
+        help="Token validity duration (e.g., '7d', '24h', '30m'). Default: 7d",
     )
     parser.add_argument(
         "-r",
@@ -297,7 +300,7 @@ def _define_generate_parser(sub_parser):
         type=str,
         nargs="+",
         default=None,
-        help="Roles for admin tokens (e.g., 'org_admin researcher')",
+        help="Roles for admin tokens (e.g., 'org_admin lead')",
     )
     parser.add_argument(
         "--source_ips",
@@ -316,18 +319,11 @@ def _define_generate_parser(sub_parser):
 
     # Remote token generation (Certificate Service API)
     parser.add_argument(
-        "--cert-service",
-        type=str,
-        default=None,
-        metavar="URL",
-        help=f"Certificate Service URL for remote token generation (or set {ENV_CERT_SERVICE_URL})",
-    )
-    parser.add_argument(
         "--api-key",
         type=str,
         default=None,
         metavar="KEY",
-        help=f"Certificate Service API key (or set {ENV_API_KEY})",
+        help=f"Certificate Service API key for remote generation (or set {ENV_API_KEY})",
     )
 
 
@@ -337,10 +333,15 @@ def _define_batch_parser(sub_parser):
         SUBCMD_BATCH,
         help="Generate multiple enrollment tokens",
         description=(
-            "Generate multiple policy-based enrollment tokens in batch.\n\n"
+            "Generate multiple enrollment tokens in batch.\n\n"
+            "All tokens share the same metadata (project, fl_server, cert_service)\n"
+            "but each has a unique subject name.\n\n"
             "Environment variables:\n"
-            f"  {ENV_CA_PATH}: Path to CA directory (alternative to -c)\n"
-            f"  {ENV_ENROLLMENT_POLICY}: Path to policy file (alternative to -p)"
+            f"  {ENV_CA_PATH}: Path to CA directory (local generation)\n"
+            f"  {ENV_PROJECT}: Project name\n"
+            f"  {ENV_FL_SERVER}: FL Server endpoint\n"
+            f"  {ENV_CERT_SERVICE_URL}: Certificate Service URL\n"
+            f"  {ENV_API_KEY}: API key (remote generation)"
         ),
         formatter_class=lambda prog: __import__("argparse").RawDescriptionHelpFormatter(prog, max_help_position=40),
     )
@@ -369,20 +370,43 @@ def _define_batch_parser(sub_parser):
         help="Output file to save tokens (.csv or .txt)",
     )
 
+    # Token metadata (required for production tokens)
+    parser.add_argument(
+        "--project",
+        type=str,
+        default=None,
+        help=f"Project name (or set {ENV_PROJECT})",
+    )
+    parser.add_argument(
+        "--fl-server",
+        type=str,
+        default=None,
+        metavar="URI",
+        help=f"FL Server endpoint URI, e.g., 'grpc://server:8002' (or set {ENV_FL_SERVER})",
+    )
+    parser.add_argument(
+        "--cert-service",
+        type=str,
+        default=None,
+        metavar="URL",
+        help=f"Certificate Service URL, e.g., 'https://cert:8443' (or set {ENV_CERT_SERVICE_URL})",
+    )
+
+    # Policy reference
+    parser.add_argument(
+        "--policy-id",
+        type=str,
+        default="default",
+        help="Policy ID referencing server-side policy (default: 'default')",
+    )
+
     # Optional arguments (can be set via env vars)
     parser.add_argument(
         "-c",
         "--ca_path",
         type=str,
         default=None,
-        help=f"Path to CA directory (or set {ENV_CA_PATH})",
-    )
-    parser.add_argument(
-        "-p",
-        "--policy",
-        type=str,
-        default=None,
-        help=f"Path to policy YAML file (or set {ENV_ENROLLMENT_POLICY}, uses default if not set)",
+        help=f"Path to CA directory for local token generation (or set {ENV_CA_PATH})",
     )
 
     # Optional arguments with defaults
@@ -404,18 +428,11 @@ def _define_batch_parser(sub_parser):
         "-v",
         "--validity",
         type=str,
-        default=None,
-        help="Token validity duration (e.g., '7d', '24h')",
+        default="7d",
+        help="Token validity duration (e.g., '7d', '24h'). Default: 7d",
     )
 
     # Remote token generation (Certificate Service API)
-    parser.add_argument(
-        "--cert-service",
-        type=str,
-        default=None,
-        metavar="URL",
-        help=f"Certificate Service URL for remote token generation (or set {ENV_CERT_SERVICE_URL})",
-    )
     parser.add_argument(
         "--api-key",
         type=str,
@@ -467,10 +484,13 @@ def def_token_parser(sub_cmd):
         help="Generate and manage enrollment tokens",
         description=(
             "Commands for generating and inspecting enrollment tokens (JWT).\n\n"
+            "Tokens contain metadata (project, fl_server, cert_service) for simplified\n"
+            "packaging. Policies are stored server-side and referenced by policy_id.\n\n"
             "Environment variables:\n"
             f"  {ENV_CA_PATH}: CA directory path (local generation)\n"
-            f"  {ENV_ENROLLMENT_POLICY}: Policy file path (local generation)\n"
-            f"  {ENV_CERT_SERVICE_URL}: Certificate Service URL (remote generation)\n"
+            f"  {ENV_PROJECT}: Project name\n"
+            f"  {ENV_FL_SERVER}: FL Server endpoint\n"
+            f"  {ENV_CERT_SERVICE_URL}: Certificate Service URL\n"
             f"  {ENV_API_KEY}: API key (remote generation)"
         ),
         formatter_class=lambda prog: __import__("argparse").RawDescriptionHelpFormatter(prog, max_help_position=40),
@@ -508,15 +528,20 @@ def _handle_generate_cmd(args):
         "pattern": TokenService.SUBJECT_TYPE_PATTERN,
     }
 
-    # Check for remote generation first
+    # Get metadata from args or environment
+    project = getattr(args, "project", None) or os.environ.get(ENV_PROJECT)
+    fl_server = getattr(args, "fl_server", None) or os.environ.get(ENV_FL_SERVER)
     cert_service_url = _get_cert_service_url(args)
-    if cert_service_url:
-        # Remote token generation via Certificate Service API
-        api_key = _get_api_key(args)
+    policy_id = getattr(args, "policy_id", "default")
 
+    # Check for remote generation (requires API key)
+    api_key = _get_api_key(args)
+    if cert_service_url and api_key:
+        # Remote token generation via Certificate Service API
         request_data = {
             "name": args.subject,
             "entity_type": type_map[args.type],
+            "policy_id": policy_id,
         }
         # Parse validity string to days for API (e.g., "7d" -> 7)
         if args.validity:
@@ -524,6 +549,12 @@ def _handle_generate_cmd(args):
             if validity_days:
                 request_data["valid_days"] = validity_days
 
+        if project:
+            request_data["project"] = project
+        if fl_server:
+            request_data["fl_server"] = fl_server
+        if cert_service_url:
+            request_data["cert_service"] = cert_service_url
         if args.roles:
             request_data["role"] = args.roles[0] if len(args.roles) == 1 else args.roles
         if args.source_ips:
@@ -548,13 +579,18 @@ def _handle_generate_cmd(args):
             print("\nToken Info:")
             print(f"  Subject: {payload.get('sub')}")
             print(f"  Type: {payload.get('subject_type')}")
+            print(f"  Project: {payload.get('project')}")
+            print(f"  Policy ID: {payload.get('policy_id', 'default')}")
             print(f"  Expires: {payload.get('exp')}")
+
+        # Show next steps
+        subject_type = args.type
+        _print_token_next_steps(args.subject, subject_type, args.output)
 
         return
 
     # Local token generation (requires CA path)
     ca_path = _get_ca_path(args, required=True)
-    policy_path, is_temp_policy = _get_policy_path(args)
 
     try:
         service = TokenService(ca_path)
@@ -565,10 +601,13 @@ def _handle_generate_cmd(args):
         if args.source_ips:
             claims["source_ips"] = args.source_ips
 
-        token = service.generate_token_from_file(
-            policy_file=policy_path,
+        token = service.generate_token(
             subject=args.subject,
             subject_type=type_map[args.type],
+            project=project,
+            fl_server=fl_server,
+            cert_service=cert_service_url,
+            policy_id=policy_id,
             validity=args.validity,
             **claims,
         )
@@ -587,9 +626,14 @@ def _handle_generate_cmd(args):
             print("\nToken Info:")
             print(f"  Subject: {info['subject']}")
             print(f"  Type: {info['subject_type']}")
+            print(f"  Project: {info.get('project')}")
+            print(f"  FL Server: {info.get('fl_server')}")
+            print(f"  Cert Service: {info.get('cert_service')}")
+            print(f"  Policy ID: {info.get('policy_id', 'default')}")
             print(f"  Expires: {info['expires_at']}")
-            if is_temp_policy:
-                print("  Policy: (using built-in default)")
+
+        # Show next steps
+        _print_token_next_steps(args.subject, args.type, args.output)
 
     except FileNotFoundError as e:
         print(f"\nError: File not found - {e}")
@@ -597,9 +641,6 @@ def _handle_generate_cmd(args):
     except Exception as e:
         print(f"\nError generating token: {e}")
         sys.exit(1)
-    finally:
-        if is_temp_policy and os.path.exists(policy_path):
-            os.remove(policy_path)
 
 
 def _handle_batch_cmd(args):
@@ -621,12 +662,16 @@ def _handle_batch_cmd(args):
     else:
         names = [f"{args.prefix}-{i:03d}" for i in range(1, args.count + 1)]
 
-    # Check for remote generation first
+    # Get metadata from args or environment
+    project = getattr(args, "project", None) or os.environ.get(ENV_PROJECT)
+    fl_server = getattr(args, "fl_server", None) or os.environ.get(ENV_FL_SERVER)
     cert_service_url = _get_cert_service_url(args)
-    if cert_service_url:
-        # Remote batch generation via Certificate Service API
-        api_key = _get_api_key(args)
+    policy_id = getattr(args, "policy_id", "default")
 
+    # Check for remote generation (requires API key)
+    api_key = _get_api_key(args)
+    if cert_service_url and api_key:
+        # Remote batch generation via Certificate Service API
         # Parse validity string to days for API
         valid_days = _parse_validity_to_days(args.validity) if args.validity else 7
 
@@ -635,7 +680,15 @@ def _handle_batch_cmd(args):
             "names": names,
             "entity_type": type_map[args.type],
             "valid_days": valid_days,
+            "policy_id": policy_id,
         }
+
+        if project:
+            request_data["project"] = project
+        if fl_server:
+            request_data["fl_server"] = fl_server
+        if cert_service_url:
+            request_data["cert_service"] = cert_service_url
 
         try:
             import requests
@@ -679,40 +732,43 @@ def _handle_batch_cmd(args):
         for item in results[:3]:
             print(f"  {item['name']}: {item['token'][:50]}...")
 
+        # Show next steps
+        _print_batch_next_steps(args.output, len(results))
+
         return
 
     # Local batch generation (requires CA path)
     ca_path = _get_ca_path(args, required=True)
-    policy_path, is_temp_policy = _get_policy_path(args)
 
     try:
         service = TokenService(ca_path)
 
         results = service.batch_generate_tokens(
-            policy_file=policy_path,
             count=args.count or 0,
             name_prefix=args.prefix,
             names=args.names,
             subject_type=type_map[args.type],
+            project=project,
+            fl_server=fl_server,
+            cert_service=cert_service_url,
+            policy_id=policy_id,
             validity=args.validity,
             output_file=args.output,
         )
 
         print(f"\nGenerated {len(results)} tokens")
         print(f"Saved to: {args.output}")
-        if is_temp_policy:
-            print("Policy: (using built-in default)")
 
         print("\nPreview (first 3):")
         for item in results[:3]:
             print(f"  {item['name']}: {item['token'][:50]}...")
 
+        # Show next steps
+        _print_batch_next_steps(args.output, len(results))
+
     except Exception as e:
         print(f"\nError generating tokens: {e}")
         sys.exit(1)
-    finally:
-        if is_temp_policy and os.path.exists(policy_path):
-            os.remove(policy_path)
 
 
 def _handle_info_cmd(args):
@@ -738,10 +794,14 @@ def _handle_info_cmd(args):
             "issuer": payload.get("iss"),
             "issued_at": payload.get("iat"),
             "expires_at": payload.get("exp"),
+            # Metadata claims
+            "project": payload.get("project"),
+            "fl_server": payload.get("fl_server"),
+            "cert_service": payload.get("cert_service"),
+            "policy_id": payload.get("policy_id", "default"),
+            # Optional claims
             "roles": payload.get("roles"),
             "source_ips": payload.get("source_ips"),
-            "policy_project": payload.get("policy", {}).get("metadata", {}).get("project"),
-            "policy_version": payload.get("policy", {}).get("metadata", {}).get("version"),
         }
 
         from datetime import datetime, timezone

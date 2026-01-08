@@ -12,15 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CLI for certificate generation.
+"""CLI for certificate generation (Manual Workflow).
 
 This module provides the `nvflare cert` command for generating:
 - Root CA certificates (init)
 - Site certificates for any participant type (site)
-- API keys for Certificate Service (api-key)
 
-These are used in conjunction with `nvflare package` and `nvflare token`
-for token-based enrollment workflows.
+These are used in the manual workflow where certificates are generated
+locally and distributed to participants.
 
 Manual Workflow:
   1. nvflare cert init -o ./ca                    # Create root CA
@@ -28,11 +27,11 @@ Manual Workflow:
   3. nvflare cert site -n client1 -t client -c ./ca -o ./certs
   4. nvflare cert site -n admin@org.com -t admin -c ./ca -o ./certs
   5. nvflare package -n client1 -e grpc://server1:8002 -t client
+  6. Copy certificates to startup kit's startup/ directory
 """
 
 import json
 import os
-import secrets
 
 from nvflare.lighter.constants import AdminRole, ParticipantType
 from nvflare.lighter.utils import Identity, generate_cert, generate_keys, serialize_cert, serialize_pri_key
@@ -98,28 +97,13 @@ def define_cert_parser(parser):
         help="Role for admin type (default: lead, has job submission permissions)",
     )
 
-    # nvflare cert api-key
-    apikey_parser = subparsers.add_parser("api-key", help="Generate API key for Certificate Service")
-    apikey_parser.add_argument(
-        "-l", "--length", type=int, default=32, help="Key length in bytes (default: 32 = 256 bits)"
-    )
-    apikey_parser.add_argument(
-        "-o", "--output", type=str, default=None, help="Output file path (default: print to stdout)"
-    )
-    apikey_parser.add_argument(
-        "--format",
-        type=str,
-        choices=["hex", "base64", "urlsafe"],
-        default="hex",
-        help="Output format: hex (default), base64, or urlsafe (base64 URL-safe)",
-    )
 
 
 def handle_cert(args):
     """Handle the cert command."""
     if not hasattr(args, "cert_cmd") or args.cert_cmd is None:
-        print("Error: Please specify a subcommand: init, site, or api-key")
-        print("Usage: nvflare cert {init|site|api-key} [options]")
+        print("Error: Please specify a subcommand: init or site")
+        print("Usage: nvflare cert {init|site} [options]")
         return 1
 
     if args.cert_cmd == "init":
@@ -130,8 +114,6 @@ def handle_cert(args):
         # Backward compatibility - redirect to site with type=server
         args.type = ParticipantType.SERVER
         return _handle_site(args)
-    elif args.cert_cmd == "api-key":
-        return _handle_api_key(args)
     else:
         print(f"Error: Unknown subcommand: {args.cert_cmd}")
         return 1
@@ -190,7 +172,7 @@ def _handle_init(args):
         print("\nNext steps:")
         print(f"  1. Generate server certificate: nvflare cert site -n <server> -t server -c {output_dir}")
         print(f"  2. Generate client certificate: nvflare cert site -n <client> -t client -c {output_dir}")
-        print(f"  3. Generate tokens (if using auto-scale): nvflare token generate -s <site> -c {output_dir}")
+        print(f"  3. Generate tokens (if using dynamic workflow): nvflare token generate -s <site> -c {output_dir}")
         return 0
 
     except Exception as e:
@@ -354,55 +336,3 @@ def _load_root_ca(ca_path: str) -> tuple:
     return root_cert_pem, root_key_pem, issuer
 
 
-def _handle_api_key(args):
-    """Handle the 'api-key' subcommand - generate API key for Certificate Service."""
-    import base64
-
-    length = args.length
-    if length < 16:
-        print("Warning: Key length less than 16 bytes (128 bits) is not recommended.")
-    if length > 64:
-        print("Warning: Key length greater than 64 bytes may be excessive.")
-
-    # Generate cryptographically secure random bytes
-    key_bytes = secrets.token_bytes(length)
-
-    # Format the key
-    if args.format == "hex":
-        api_key = key_bytes.hex()
-    elif args.format == "base64":
-        api_key = base64.b64encode(key_bytes).decode("ascii")
-    elif args.format == "urlsafe":
-        api_key = base64.urlsafe_b64encode(key_bytes).decode("ascii").rstrip("=")
-    else:
-        api_key = key_bytes.hex()
-
-    # Output
-    if args.output:
-        output_path = os.path.abspath(args.output)
-        # Note: API key is intentionally stored in clear text, similar to SSH keys
-        # or cloud credential files. Security is provided by file permissions.
-        with open(output_path, "w") as f:
-            f.write(api_key)  # nosec B105 - intentional clear-text storage with restricted permissions
-        # Set restrictive permissions (owner read/write only)
-        os.chmod(output_path, 0o600)
-        print(f"API key saved to: {output_path}")
-        print(f"Key length: {length} bytes ({length * 8} bits)")
-        print(f"Format: {args.format}")
-    else:
-        # Intentional: command's purpose is to output the generated key
-        print(api_key)  # noqa: T201  # nosec B105
-
-    # Show usage instructions (intentionally includes key for copy-paste convenience)
-    print("\n--- Usage Instructions ---")  # noqa: T201
-    print("\n1. Set as environment variable:")  # noqa: T201
-    print(f"   export NVFLARE_API_KEY='{api_key}'")  # noqa: T201  # nosec B105
-    print("\n2. Or add to Certificate Service config (cert_service_config.yaml):")  # noqa: T201
-    print(f'   api_key: "{api_key}"')  # noqa: T201  # nosec B105
-    print("\n3. Use with CLI commands:")  # noqa: T201
-    print(
-        f"   nvflare token generate -n site-1 --cert-service https://... --api-key '{api_key}'"
-    )  # noqa: T201  # nosec B105
-    print(f"   nvflare enrollment list --cert-service https://... --api-key '{api_key}'")
-
-    return 0

@@ -15,7 +15,7 @@
 """NVFLARE Enrollment CLI - Manage pending enrollment requests.
 
 This module provides CLI commands to interact with the Certificate Service
-for managing pending enrollment requests in the Auto-Scale workflow.
+for managing pending enrollment requests in the Dynamic workflow.
 
 Commands:
     nvflare enrollment list       - List pending enrollment requests
@@ -191,6 +191,8 @@ def _handle_approve(args: argparse.Namespace) -> None:
         approved_count = len(approved_count)
 
     print(f"Approved {approved_count} enrollment request(s).")
+    print("\nNote: Approved participants will receive their certificates on next enrollment attempt.")
+    print("      Participants should retry enrollment if they were waiting for approval.")
 
 
 def _handle_reject(args: argparse.Namespace) -> None:
@@ -211,6 +213,8 @@ def _handle_reject(args: argparse.Namespace) -> None:
     _make_request(endpoint, token, method="POST", json_data=data)
 
     print(f"Rejected enrollment request for: {args.name}")
+    print("\nNote: The participant will receive a rejection error on their next enrollment attempt.")
+    print("      A new token may be required for the participant to retry.")
 
 
 def _handle_enrolled(args: argparse.Namespace) -> None:

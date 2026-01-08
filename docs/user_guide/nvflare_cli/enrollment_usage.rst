@@ -20,7 +20,7 @@ Quick Reference
      - Large Scale (10+ sites)
    * - **Workflow**
      - Manual
-     - Auto-Scale
+     - Dynamic
    * - **Certificate Authority**
      - Local (your machine)
      - Certificate Service
@@ -139,7 +139,7 @@ Step 5: Distribute and Start
        cd <package-folder> && ./startup/start.sh
 
 *************************
-Workflow 2: Auto-Scale
+Workflow 2: Dynamic
 *************************
 
 Best for large deployments (10+ sites) or Kubernetes.
@@ -285,7 +285,7 @@ Non-Containerized: pip + requirements.txt
     # Manual workflow
     nvflare package -n hospital-1 -e grpc://server:8002 -t client -w ./workspace
     
-    # Auto-scale workflow (with token)
+    # Dynamic workflow (with token)
     nvflare package -n hospital-1 -e grpc://server:8002 -t client -w ./workspace \
         --cert-service https://cert-service:8443 \
         --token "$TOKEN"
@@ -529,9 +529,9 @@ Command Summary
    * - ``nvflare cert api-key``
      - Generate API key for Certificate Service
    * - ``nvflare token generate``
-     - Generate enrollment token (Auto-Scale)
+     - Generate enrollment token (Dynamic)
    * - ``nvflare token batch``
-     - Generate multiple tokens (Auto-Scale)
+     - Generate multiple tokens (Dynamic)
    * - ``nvflare token info``
      - Inspect token contents
    * - ``nvflare package``
