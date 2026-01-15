@@ -31,6 +31,8 @@ data_bus = DataBus()
 class ClientAPIType(Enum):
     IN_PROCESS_API = "IN_PROCESS_API"
     EX_PROCESS_API = "EX_PROCESS_API"
+    FOX_IN_PROCESS_API = "FOX_IN_PROCESS_API"  # Fox Client API (in-process mode)
+    FOX_SUBPROCESS_API = "FOX_SUBPROCESS_API"  # Fox Client API (subprocess/torchrun mode)
 
 
 class APIContext:
@@ -58,6 +60,17 @@ class APIContext:
             api = data_bus.get_data(CLIENT_API_KEY)
             if not isinstance(api, InProcessClientAPI):
                 raise RuntimeError(f"api {api} is not a valid InProcessClientAPI")
+            return api
+        elif api_type in (ClientAPIType.FOX_IN_PROCESS_API, ClientAPIType.FOX_SUBPROCESS_API):
+            # Fox Client API - instance is set by FoxClientAPI.execute() or FoxWorker
+            from nvflare.client.in_process.fox_client_api_module import get_api
+
+            api = get_api()
+            if api is None:
+                raise RuntimeError(
+                    "Fox Client API not initialized. Make sure the training code is "
+                    "running within FoxRecipe.execute() or Fox simulator."
+                )
             return api
         else:
             return ExProcessClientAPI(config_file=self.config_file)

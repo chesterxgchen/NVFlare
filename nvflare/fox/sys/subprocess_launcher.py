@@ -47,7 +47,6 @@ from .worker import (
     WORKER_CALL_TOPIC,
     WORKER_CHANNEL,
     WORKER_READY_TOPIC,
-    WORKER_SHUTDOWN_TOPIC,
 )
 
 # Default timeout values (can be overridden via constructor)
@@ -358,26 +357,22 @@ class SubprocessLauncher:
         """Stop the worker subprocess."""
         self.logger.info("Stopping worker subprocess")
 
-        # Send shutdown signal if worker is ready
-        if self._ready_event.is_set() and self._worker_fqcn:
-            try:
-                self.parent_cell.send_request(
-                    channel=WORKER_CHANNEL,
-                    topic=WORKER_SHUTDOWN_TOPIC,
-                    target=self._worker_fqcn,
-                    request=Message(payload={}),
-                    timeout=self.shutdown_timeout,
-                )
-            except Exception as e:
-                self.logger.warning(f"Error sending shutdown signal: {e}")
-
-        # Terminate process if still running
+        # Wait for process to exit gracefully, then terminate if needed
         if self._process:
             try:
-                self._process.terminate()
-                self._process.wait(timeout=self.process_wait_timeout)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
+                # First, wait a short time for graceful exit
+                exit_code = self._process.poll()
+                if exit_code is None:
+                    # Process still running, wait a bit more
+                    try:
+                        self._process.wait(timeout=2.0)
+                    except subprocess.TimeoutExpired:
+                        # Still running after wait, terminate
+                        self._process.terminate()
+                        try:
+                            self._process.wait(timeout=self.process_wait_timeout)
+                        except subprocess.TimeoutExpired:
+                            self._process.kill()
             except Exception as e:
                 self.logger.warning(f"Error terminating process: {e}")
 

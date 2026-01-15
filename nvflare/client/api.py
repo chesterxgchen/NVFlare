@@ -60,6 +60,9 @@ def init(rank: Optional[Union[str, int]] = None, config_file: Optional[str] = No
     Returns:
         APIContext
     """
+    import os
+
+    from .api_spec import CLIENT_API_TYPE_KEY
 
     # subsequent logic assumes rank is a string
     if rank is not None:
@@ -70,9 +73,22 @@ def init(rank: Optional[Union[str, int]] = None, config_file: Optional[str] = No
         else:
             raise ValueError(f"rank must be a string or an integer but got {type(rank)}")
 
+    # Check if we're in Fox mode - Fox uses contextvars for proper isolation
+    # so we don't need global caching (which would break multi-client scenarios)
+    api_type = os.environ.get(CLIENT_API_TYPE_KEY, "")
+    is_fox_mode = api_type.startswith("FOX_")
+
     with global_context_lock:
         global context_dict
         global default_context
+
+        if is_fox_mode:
+            # Fox mode: always create fresh context (API is isolated via contextvars)
+            local_ctx = APIContext(rank=rank, config_file=config_file)
+            default_context = local_ctx
+            return local_ctx
+
+        # Standard mode: use caching
         local_ctx = context_dict.get((rank, config_file))
 
         if local_ctx is None:

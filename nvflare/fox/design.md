@@ -190,9 +190,9 @@ def fed_avg(self):
         weights = aggregate(results)
     fox.clients.stop()  # Signal clients to stop
 
-# Client-side (client.py) - runs top-to-bottom, no decorators
-from nvflare.fox.sys.worker import get_client_api
-flare = get_client_api()
+# Client-side (client.py) - SAME import as standard NVFlare Client API!
+import nvflare.client as flare  # Works for Fox and standard FLARE
+
 flare.init()
 
 while flare.is_running():
@@ -203,6 +203,9 @@ while flare.is_running():
     output_model = FLModel(params=new_weights, metrics={"loss": loss})
     flare.send(output_model)
 ```
+
+**Key Feature**: The client training script uses `import nvflare.client as flare` - the **same import**
+as standard NVFlare. The framework automatically routes to `FoxClientAPI` via environment variables.
 
 ---
 
@@ -352,14 +355,23 @@ Client API pattern.
 | **In-Process** | Direct variable storage | Simple simulation, no subprocess |
 | **Subprocess** | Queue-based bridging | Multi-GPU (torchrun), DDP |
 
-**In-Process Mode (Simple Adapter):**
+**In-Process Mode (Simple Adapter with Contextvars):**
 
 ```python
-# No queues, no threading - just variable assignment
+# No queues, no threading - uses contextvars for client isolation
+from contextvars import ContextVar
+
+_current_api: ContextVar = ContextVar("fox_client_api", default=None)
+
 class FoxClientAPI:
     @collab
     def execute(self, fl_model, ...):
         self._current_model = fl_model    # Store for receive()
+        
+        # Set API instance in context variable (per-client isolation)
+        os.environ["CLIENT_API_TYPE"] = "FOX_IN_PROCESS_API"
+        _current_api.set(self)
+        
         self._training_func()             # User code runs here
         return self._result               # Return what send() stored
     
@@ -369,6 +381,10 @@ class FoxClientAPI:
     def send(self, model):
         self._result = model              # Direct storage
 ```
+
+**Why Contextvars?** When running multiple clients in the same process (SimEnv), each client
+needs its own isolated `FoxClientAPI` instance. Python's `contextvars` provides this isolation
+without global state pollution.
 
 **Subprocess Mode (Queue-Based):**
 
@@ -619,6 +635,13 @@ Runs in the subprocess, connects back to parent. Supports two execution modes:
 - For Collab API: Load module, wait for RPC calls
 - For Client API: Instantiate `FoxClientAPI`, run user script
 - Handle DDP rank coordination (only rank 0 communicates)
+
+**Key Implementation Details for DDP:**
+- Rank 0 connects to parent, signals ready, handles RPC calls
+- Non-rank-0 processes run training script but skip FL communication
+- `receive()` returns `None` immediately for non-rank-0 (prevents deadlock)
+- `is_running()` always returns `True` for non-rank-0 (relies on broadcast from rank 0)
+- All ranks must use helper functions (e.g., `receive_with_checkpoint()`) to synchronize
 
 ### Subprocess Architecture
 
@@ -923,6 +946,29 @@ FoxRecipe
 
 ## Execution Modes
 
+### All Supported Combinations
+
+Fox supports 8 execution combinations across two dimensions:
+- **Environment**: SimEnv (simulation) vs PocEnv/ProdEnv (real deployment)
+- **Execution**: In-process vs Subprocess
+- **API Pattern**: Collab API (@fox.collab) vs Client API (receive/send)
+
+| # | Environment | Execution | API Pattern | Code Path |
+|---|-------------|-----------|-------------|-----------|
+| 1 | **SimEnv** | In-process | Client API | FoxSimulator → SimBackend → FoxClientAPI.execute() → contextvars |
+| 2 | **SimEnv** | Subprocess | Client API | FoxSimulator → SubprocessBackend → FoxWorker → `import nvflare.client` |
+| 3 | **SimEnv** | In-process | Collab API | FoxSimulator → SimBackend → direct @fox.collab calls |
+| 4 | **SimEnv** | Subprocess | Collab API | FoxSimulator → SubprocessBackend → FoxWorker → RPC calls |
+| 5 | **PocEnv** | In-process | Client API | FoxExecutor → prepare_for_remote_call → FoxClientAPI.execute() |
+| 6 | **PocEnv** | Subprocess | Client API | FoxExecutor → SubprocessLauncher → FoxWorker → `import nvflare.client` |
+| 7 | **PocEnv** | In-process | Collab API | FoxExecutor → prepare_for_remote_call → direct @fox.collab calls |
+| 8 | **PocEnv** | Subprocess | Collab API | FoxExecutor → SubprocessLauncher → FoxWorker → RPC calls |
+
+**Multi-GPU (DDP) Considerations:**
+- Subprocess modes (2, 4, 6, 8) support multi-GPU via `torchrun`
+- Collab API subprocess (4, 8): Only rank 0 receives RPC calls; must coordinate with other ranks
+- Client API subprocess (2, 6): All ranks run the training script; only rank 0 communicates with server
+
 ### Mode 1: In-Process Simulation (SimEnv)
 
 ```python
@@ -1030,42 +1076,207 @@ nvflare/fox/
 └── examples/              # Examples
     └── pt/
         ├── collab_api/               # Decorator-based (@fox.collab) examples
-        │   ├── in_process/
-        │   │   ├── collab_fedavg_train.py
-        │   │   ├── collab_fedavg_no_class.py
-        │   │   └── simulate_fedavg_train.py
-        │   └── sub_process/
-        │       └── distributed_train.py
+        │   └── in_process/
+        │       ├── collab_fedavg_train.py     # Class-based FedAvg
+        │       ├── collab_fedavg_no_class.py  # Module-based FedAvg
+        │       └── simulate_fedavg_train.py   # Direct simulator usage
         │
         └── client_api/               # Receive/send pattern examples
-            └── sub_process/
-                ├── server.py         # @fox.algo server with execute()/stop()
-                ├── client.py         # Client script using receive()/send()
-                ├── job.py            # FoxRecipe with FoxClientAPI
-                └── sim_distributed_fedavg_train.py  # Standalone DDP simulation
+            ├── in_process/           # In-process Client API
+            │   ├── server.py         # @fox.algo server with execute()/stop()
+            │   ├── client.py         # Training with `import nvflare.client as flare`
+            │   └── job.py            # FoxRecipe with FoxClientAPI + set_training_func
+            │
+            └── sub_process/          # Subprocess Client API (multi-GPU/DDP)
+                ├── server.py         # @fox.algo server
+                ├── client.py         # DDP training with checkpoint sync
+                ├── client_db.py      # DDP training with dist.broadcast sync
+                ├── job.py            # FoxRecipe for checkpoint sync example
+                ├── job_db.py         # FoxRecipe for dist.broadcast example
+                └── ddp_utils.py      # Helper functions for DDP synchronization
 ```
 
 ---
 
 ## Implementation Notes
 
+### Unified Client API Architecture
+
+The Client API uses a single import (`import nvflare.client as flare`) that works across
+all execution modes. This is achieved through environment-based routing:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                    Unified Client API: One Import, Multiple Backends                 │
+│                                                                                      │
+│   User Code:  import nvflare.client as flare                                        │
+│               flare.init() → flare.receive() → flare.send()                         │
+│                                          │                                           │
+│                                          ▼                                           │
+│   ┌──────────────────────────────────────────────────────────────────────────────┐  │
+│   │                         nvflare.client.api.init()                             │  │
+│   │                                                                               │  │
+│   │   Checks CLIENT_API_TYPE environment variable                                 │  │
+│   │                                                                               │  │
+│   │   ┌────────────────────────────────────────────────────────────────────────┐ │  │
+│   │   │                                                                        │ │  │
+│   │   │   IN_PROCESS_API        → InProcessClientAPI (DataBus)                 │ │  │
+│   │   │   EX_PROCESS_API        → ExProcessClientAPI (config file)             │ │  │
+│   │   │   FOX_IN_PROCESS_API    → FoxClientAPI (contextvars)                   │ │  │
+│   │   │   FOX_SUBPROCESS_API    → FoxClientAPI (contextvars)                   │ │  │
+│   │   │                                                                        │ │  │
+│   │   └────────────────────────────────────────────────────────────────────────┘ │  │
+│   └──────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                      │
+│   Fox modes use fox_client_api_module.get_api() which returns the                   │
+│   FoxClientAPI instance set via contextvars (proper per-client isolation)           │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key Files:**
+- `nvflare/client/api.py` - Entry point, routes based on `CLIENT_API_TYPE`
+- `nvflare/client/api_context.py` - `ClientAPIType` enum, `APIContext` creation
+- `nvflare/client/in_process/fox_client_api_module.py` - Contextvars-based global state
+- `nvflare/client/in_process/fox_api.py` - `FoxClientAPI` implementation
+
 ### Client API Mode: Key Implementation Details
 
-1. **`make_client_app()` Method**: Required for Client API mode because `FoxClientAPI` contains
+1. **Unified Import Pattern**: User training scripts use `import nvflare.client as flare` which
+   works for both standard NVFlare and Fox. The framework sets `CLIENT_API_TYPE` environment
+   variable before running user code, routing API calls to the correct implementation.
+
+2. **Contextvars for Isolation**: When multiple clients run in the same process (SimEnv),
+   each client's `FoxClientAPI` instance is stored in a `ContextVar`. This provides proper
+   isolation without global state pollution.
+
+3. **`make_client_app()` Method**: Required for Client API mode because `FoxClientAPI` contains
    unpickleable objects (threading `Queue`, `Lock`). The simulator calls this method to create
    fresh instances for each client instead of using `deepcopy()`.
 
-2. **`get_client_api()` Function**: Enables user scripts to access the `FoxClientAPI` instance
-   created by `FoxWorker`. This bridges the gap between the worker's internal state and the
-   user's training script.
+4. **Subprocess API Setup**: `FoxWorker` in Client API mode:
+   - Creates `FoxClientAPI` instance
+   - Sets `_sys_info["site_name"]` for proper client identification
+   - Sets `CLIENT_API_TYPE=FOX_SUBPROCESS_API`
+   - Calls `fox_client_api_module.set_api(api)` to set contextvars
+   - Runs user script via `runpy.run_module()`
 
-3. **Module Import Handling**: When Python runs with `-m nvflare.fox.sys.worker`, the module
-   may be pre-imported. The worker explicitly updates `sys.modules['nvflare.fox.sys.worker']._client_api`
-   to ensure `get_client_api()` returns the correct instance.
-
-4. **DDP Rank Coordination**: In Client API mode with DDP, only rank 0 communicates with the
+5. **DDP Rank Coordination**: In Client API mode with DDP, only rank 0 communicates with the
    server (via `receive()`/`send()`). Other ranks must participate in collective operations
    (like `dist.broadcast`) but don't directly interact with the FL system.
+
+6. **Non-Rank-0 Behavior in Subprocess Mode**: For subprocess DDP training:
+   - `receive()` returns `None` immediately for non-rank-0 processes (they sync via `dist.broadcast`)
+   - `is_running()` always returns `True` for non-rank-0 (they rely on rank 0 to broadcast stop signal)
+   - This prevents deadlocks where non-rank-0 would block waiting for server communication
+
+### DDP Synchronization Patterns
+
+When using Client API with DDP (subprocess mode), all ranks must participate in collective
+operations, but only rank 0 communicates with the FL server. This creates a synchronization
+challenge that can easily lead to deadlocks.
+
+**The Problem:**
+
+```
+┌───────────────────────────────────────────────────────────────────────────────────────┐
+│                    DDP Deadlock Scenario (What to Avoid)                               │
+│                                                                                        │
+│   Rank 0                              Rank 1, 2, 3...                                 │
+│   ────────                            ────────────────                                │
+│   flare.receive()  ← BLOCKS           Running training code...                        │
+│   waiting for server                  ...                                             │
+│                                       dist.broadcast() ← BLOCKS                       │
+│                                       waiting for rank 0                              │
+│                                                                                        │
+│   DEADLOCK: Rank 0 waits for server, other ranks wait for rank 0                      │
+└───────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**The Solution:**
+
+Fox provides helper functions in `ddp_utils.py` that handle synchronization correctly:
+
+```
+┌───────────────────────────────────────────────────────────────────────────────────────┐
+│                    Correct DDP Pattern with Helper Functions                           │
+│                                                                                        │
+│   Rank 0                              Rank 1, 2, 3...                                 │
+│   ────────                            ────────────────                                │
+│   1. flare.receive() → returns None   1. flare.receive() → returns None immediately  │
+│      or model from server                                                              │
+│                                                                                        │
+│   2. dist.barrier() ←─────────────────── dist.barrier()                               │
+│      (all ranks sync here)                                                             │
+│                                                                                        │
+│   3. Broadcast "continue" signal      3. Receive signal                               │
+│   4. If continuing:                   4. If continuing:                               │
+│      - Save checkpoint                   - Load checkpoint                            │
+│                                                                                        │
+│   5. dist.barrier() ←─────────────────── dist.barrier()                               │
+│                                                                                        │
+│   6. All ranks have model, proceed with DDP training                                  │
+│                                                                                        │
+│   7. Only rank 0 calls flare.send()   7. Other ranks skip send                        │
+└───────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Helper Functions (`nvflare/fox/examples/pt/client_api/sub_process/ddp_utils.py`)
+
+| Function | Description |
+|----------|-------------|
+| `receive_with_checkpoint()` | Uses temp files to sync model across ranks |
+| `receive_with_broadcast()` | Uses `dist.broadcast` to sync model parameters |
+
+**Option 1: Checkpoint-Based Sync**
+
+```python
+from ddp_utils import receive_with_checkpoint
+
+while True:
+    input_model, running = receive_with_checkpoint(rank, net)
+    if not running:
+        break
+    
+    # All ranks have synchronized model
+    ddp_model = DDP(net)
+    # ... training ...
+    
+    if rank == 0:
+        flare.send(output_model)
+```
+
+**Pros:** Simple, works with any model size
+**Cons:** Filesystem I/O overhead, requires shared filesystem
+
+**Option 2: dist.broadcast Sync**
+
+```python
+from ddp_utils import receive_with_broadcast
+
+while True:
+    input_model, running = receive_with_broadcast(rank, net)
+    if not running:
+        break
+    
+    # All ranks have synchronized model
+    ddp_model = DDP(net)
+    # ... training ...
+    
+    if rank == 0:
+        flare.send(output_model)
+```
+
+**Pros:** No filesystem I/O, direct GPU-to-GPU transfer (with NCCL)
+**Cons:** May use more GPU memory for large models
+
+**Choosing a Method:**
+
+| Scenario | Recommended Method |
+|----------|-------------------|
+| Small to medium models, NCCL backend | `receive_with_broadcast()` |
+| Very large models, memory constrained | `receive_with_checkpoint()` |
+| Mixed CPU/GPU, Gloo backend | `receive_with_checkpoint()` |
+| Shared filesystem available | Either works |
 
 ### Key Environment Variables
 
@@ -1075,7 +1286,23 @@ nvflare/fox/
 | `FOX_PARENT_FQCN` | Parent cell's FQCN for message routing |
 | `FOX_SITE_NAME` | Client site name (e.g., `site-1`) |
 | `FOX_WORKER_ID` | Worker ID within the site |
-| `FOX_CLIENT_CLASS` | Client class name (determines execution mode) |
+| `FOX_CLIENT_CLASS` | Client class name (determines FoxWorker mode) |
+| `CLIENT_API_TYPE` | Routes `nvflare.client` to correct implementation |
+
+**CLIENT_API_TYPE Values:**
+
+| Value | Description |
+|-------|-------------|
+| `IN_PROCESS_API` | Standard NVFlare in-process (DataBus-based) |
+| `EX_PROCESS_API` | Standard NVFlare external process (config file) |
+| `FOX_IN_PROCESS_API` | Fox in-process (contextvars-based) |
+| `FOX_SUBPROCESS_API` | Fox subprocess (contextvars-based) |
+
+This environment variable enables the **unified import pattern**:
+```python
+import nvflare.client as flare  # Works for all modes!
+```
+The `nvflare.client.api.init()` function checks `CLIENT_API_TYPE` and routes to the appropriate implementation.
 
 ---
 
@@ -1467,10 +1694,22 @@ class CheckpointManager:
 ### Implementation Checklist
 
 **Client API Enhancements:**
-- [x] Subprocess mode with queue-based bridging (Done)
-- [ ] In-process mode with direct variable adapter (no queues/threading)
-- [ ] `set_training_func()` for registering training callback
-- [ ] Mode auto-detection based on `inprocess` flag
+- [x] Subprocess mode with queue-based bridging
+- [x] In-process mode with direct variable adapter (no queues/threading)
+- [x] `set_training_func()` for registering training callback
+- [x] Mode auto-detection based on `inprocess` flag
+- [x] Contextvars-based API isolation for multiple clients in same process
+- [x] Unified `import nvflare.client as flare` pattern for all modes
+- [x] `CLIENT_API_TYPE` environment variable routing
+- [x] Non-rank-0 `receive()` returns immediately (prevents deadlock)
+- [x] Non-rank-0 `is_running()` always returns True (relies on broadcast)
+
+**DDP Synchronization Helpers:**
+- [x] `receive_with_checkpoint()` - checkpoint file-based model sync
+- [x] `receive_with_broadcast()` - `dist.broadcast` based model sync
+- [x] Site-specific checkpoint paths (avoids multi-client conflicts)
+- [x] Graceful shutdown without `target_unreachable` warnings
+- [x] Worker output visible in terminal (not hidden in debug logs)
 
 **HPC Support:**
 - [ ] `HpcEnv` execution environment

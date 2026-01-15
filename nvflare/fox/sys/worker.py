@@ -380,6 +380,7 @@ class FoxWorker:
                 from nvflare.client.in_process.fox_api import FoxClientAPI
 
                 _client_api = FoxClientAPI()
+                _client_api._sys_info["site_name"] = self.site_name
                 self.training_app = _client_api
 
                 # Create CellNet and register handlers
@@ -401,21 +402,26 @@ class FoxWorker:
                 from nvflare.client.in_process.fox_api import FoxClientAPI
 
                 _client_api = FoxClientAPI()
+                _client_api._sys_info["site_name"] = self.site_name
                 self.logger.info(f"Rank {self.rank}: running training script (will sync with rank 0)")
 
-            # IMPORTANT: When running with -m, this module may be pre-imported into sys.modules
-            # before execution starts. The pre-imported version has _client_api=None.
-            # We need to update the existing module's _client_api attribute so that when
-            # client scripts import it, they get the correct instance.
+            # Set up the unified Client API pattern:
+            # 1. Set environment variable so nvflare.client uses Fox API
+            # 2. Set the global API instance in the Fox client API module
+            os.environ["CLIENT_API_TYPE"] = "FOX_SUBPROCESS_API"
+
+            from nvflare.client.in_process import fox_client_api_module
+
+            fox_client_api_module.set_api(_client_api)
+
+            # Also update the legacy worker module for backward compatibility
             import sys
 
             worker_module_name = "nvflare.fox.sys.worker"
             worker_module = sys.modules.get(worker_module_name)
             if worker_module:
-                # Update the existing module's _client_api attribute
                 worker_module._client_api = _client_api
             else:
-                # Module not in sys.modules yet - register __main__ as the worker module
                 this_module = sys.modules.get("__main__")
                 if this_module:
                     sys.modules[worker_module_name] = this_module
