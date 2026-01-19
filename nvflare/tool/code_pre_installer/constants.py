@@ -15,7 +15,7 @@
 # limitations under the License.
 
 PYTHON_PATH_SHARED_DIR = "/local/custom"
-DEFAULT_APPLICATION_INSTALL_DIR = "/opt/nvflare/apps"
+DEFAULT_APPLICATION_INSTALL_DIR = "/tmp/nvflare/apps"
 CUSTOM_DIR_NAME = "custom"
 APPLICATION_CODE_DIR = "application"
 APPLICATION_SHARED_CODE_DIR = "application-share"

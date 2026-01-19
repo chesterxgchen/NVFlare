@@ -57,10 +57,13 @@ def main():
 
     # Run FL simulation
     env = SimEnv(num_clients=n_clients)
-    run = recipe.execute(env)
+    job_config_dir = f"/tmp/nvflare/jobs/"
+    recipe.export(job_config_dir)
+    # run = recipe.execute(env)
     print()
-    print("Job Status is:", run.get_status())
-    print("Result can be found in :", run.get_result())
+    print(f"{job_config_dir=}")
+    # print("Job Status is:", run.get_status())
+    # print("Result can be found in :", run.get_result())
     print()
 
 

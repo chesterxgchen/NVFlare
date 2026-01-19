@@ -38,9 +38,9 @@ def define_pre_install_parser(cmd_name: str, sub_cmd):
     parser.add_argument("-a", "--application", required=True, help="Path to application code zip file")
     parser.add_argument(
         "-p",
-        "--install-prefix",
+        "--target_dir",
         default=DEFAULT_APPLICATION_INSTALL_DIR,
-        help=f"Installation prefix (default: {DEFAULT_APPLICATION_INSTALL_DIR})",
+        help=f"Destination target path for installation (default: {DEFAULT_APPLICATION_INSTALL_DIR})",
     )
     parser.add_argument("-s", "--site-name", required=True, help="Target site name (e.g., site-1, server)")
     parser.add_argument(
@@ -120,21 +120,22 @@ def _find_app_dirs(application_dir: Path, site_name: str) -> Dict[str, Path]:
     for job_dir in [d for d in application_dir.iterdir() if d.is_dir()]:
         meta_file = job_dir / "meta.json"
         if meta_file.exists():
+            print("site specific folders \n\n")
             matched_apps.update(_process_meta_json(meta_file, site_name, job_dir, job_dir.name))
 
     if not matched_apps:
-        raise ValueError(f"No application directories found for site {site_name}")
+        raise ValueError(f"No application directories found for site {site_name} in {application_dir}.")
 
     return matched_apps
 
 
-def _install_site_specific_code(application_dir: Path, site_name: str, install_prefix: Path):
+def _install_site_specific_code(application_dir: Path, site_name: str, target_dir: Path):
     """Find and install site-specific custom code directories under application_dir.
 
     Args:
         application_dir (Path): Root application directory containing site apps.
         site_name (str): Site name to filter app directories.
-        install_prefix (Path): Destination prefix path for installation.
+        target_dir (Path): Destination target path for installation.
     """
     app_dirs = _find_app_dirs(application_dir, site_name)
 
@@ -144,7 +145,8 @@ def _install_site_specific_code(application_dir: Path, site_name: str, install_p
         if not custom_dir.exists() or not any(custom_dir.iterdir()):
             continue
 
-        install_dir = install_prefix / job_name
+        install_dir = target_dir / job_name
+        print(f"{install_dir =}")
         install_dir.mkdir(parents=True, exist_ok=True)
 
         for item in custom_dir.iterdir():
@@ -177,13 +179,13 @@ def _install_shared_code(shared_dir: Path, target_shared_dir: Path):
 
 
 def install_app_code(
-    app_code_zip: Path, install_prefix: Path, site_name: str, target_shared_dir: str, delete: bool
+    app_code_zip: Path, target_dir: Path, site_name: str, target_shared_dir: str, delete: bool
 ) -> None:
     """Install application code from zip file.
 
     Args:
         app_code_zip: Path to application code zip file
-        install_prefix: Installation prefix directory
+        target_dir: target installation directory
         site_name: Target site name
         target_shared_dir: Target shared directory path
     """
@@ -193,12 +195,13 @@ def install_app_code(
     # Create temp directory for extraction
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
-
+        print("temp_path =", temp_path)
         # Extract zip
         with ZipFile(app_code_zip) as zf:
             zf.extractall(temp_path)
         # Verify structure
         application_dir = temp_path / APPLICATION_CODE_DIR
+        print(f"{application_dir=}")
         shared_dir = temp_path / APPLICATION_SHARED_CODE_DIR
         if not application_dir.exists() and not shared_dir.exists():
             raise ValueError(
@@ -207,7 +210,7 @@ def install_app_code(
 
         # Install site specific code if present
         if application_dir.exists() and any(application_dir.iterdir()):
-            _install_site_specific_code(application_dir, site_name, install_prefix)
+            _install_site_specific_code(application_dir, site_name, target_dir)
 
         # Install shared code if present
         if shared_dir.exists() and any(shared_dir.iterdir()):
@@ -228,7 +231,7 @@ def install(args):
     """Run install command."""
     try:
         install_app_code(
-            Path(args.application), Path(args.install_prefix), args.site_name, args.target_shared_dir, args.delete
+            Path(args.application), Path(args.target_dir), args.site_name, args.target_shared_dir, args.delete
         )
     except Exception as e:
         if args.debug:
