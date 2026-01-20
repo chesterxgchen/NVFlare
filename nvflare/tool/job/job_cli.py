@@ -198,6 +198,32 @@ def remove_pycache_files(custom_dir):
                 shutil.rmtree(os.path.join(root, d))
 
 
+def _clear_custom_folders(job_folder: str, app_names: list) -> None:
+    """Clear all files from custom folders for --no-byoc mode.
+
+    In production mode (--no-byoc), custom code should be pre-installed on
+    remote sites, so we skip including it in the job submission.
+
+    Args:
+        job_folder: Path to the job folder
+        app_names: List of app names in the job
+    """
+    for app_name in app_names:
+        custom_dir = os.path.join(job_folder, app_name, "custom")
+        if os.path.isdir(custom_dir):
+            # Count files before clearing
+            file_count = sum(1 for _ in os.listdir(custom_dir) if os.path.isfile(os.path.join(custom_dir, _)))
+            if file_count > 0:
+                print(f"  Skipping {file_count} file(s) from {app_name}/custom/")
+            # Clear all contents but keep the directory
+            for item in os.listdir(custom_dir):
+                item_path = os.path.join(custom_dir, item)
+                if os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+                else:
+                    os.remove(item_path)
+
+
 def remove_extra_files(config_dir):
     extra_file = [JOB_INFO_MD, JOB_INFO_CONF, "__init__.py", "__pycache__"]
     for ef in extra_file:
@@ -357,6 +383,18 @@ def submit_job(cmd_args):
         app_names = [os.path.basename(f) for f in app_dirs]
         app_names = app_names if app_names else [DEFAULT_APP_NAME]
 
+        # Handle --no-byoc option: skip custom code in production mode
+        no_byoc = getattr(cmd_args, "no_byoc", False)
+        if no_byoc:
+            _clear_custom_folders(temp_job_dir, app_names)
+            print("\n" + "=" * 70)
+            print("WARNING: --no-byoc mode enabled (Production Mode)")
+            print("=" * 70)
+            print("  Custom code will NOT be included in this job submission.")
+            print("  Ensure that code is pre-installed on remote sites.")
+            print("  Job config should reference absolute paths on remote machines.")
+            print("=" * 70 + "\n")
+
         prepare_job_config(cmd_args, app_names, temp_job_dir)
         admin_username, admin_user_dir = find_admin_user_and_dir()
         internal_submit_job(admin_user_dir, admin_username, temp_job_dir)
@@ -452,7 +490,14 @@ def define_submit_job_parser(job_subparser):
                                        If key presents in the preceding config file, the value in the config
                                        file will be overwritten by the new value """,
     )
-
+    submit_parser.add_argument(
+        "--no-byoc",
+        action="store_true",
+        default=False,
+        help="""Production mode: skip including custom code in job submission.
+                                       Use this when code is pre-installed on remote sites.
+                                       Job config should reference absolute paths on remote machines.""",
+    )
     submit_parser.add_argument("-debug", "--debug", action="store_true", help="debug is on")
     job_sub_cmd_parser[CMD_SUBMIT_JOB] = submit_parser
 

@@ -14,8 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-PYTHON_PATH_SHARED_DIR = "/local/custom"
-DEFAULT_APPLICATION_INSTALL_DIR = "/tmp/nvflare/apps"
+# Paths relative to startup kit mounted at /workspace/
+PYTHON_PATH_SHARED_DIR = "/workspace/local/libs"
+DEFAULT_APPLICATION_INSTALL_DIR = "/workspace/local/custom"
 CUSTOM_DIR_NAME = "custom"
 APPLICATION_CODE_DIR = "application"
 APPLICATION_SHARED_CODE_DIR = "application-share"

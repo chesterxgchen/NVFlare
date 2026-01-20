@@ -14,10 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from nvflare.tool.code_pre_installer.install import define_pre_install_parser
-from nvflare.tool.code_pre_installer.install import install as install_run
-from nvflare.tool.code_pre_installer.prepare import define_prepare_parser
-from nvflare.tool.code_pre_installer.prepare import prepare as prepare_run
+from nvflare.tool.code_pre_installer.docker_cmd import define_docker_parser
+from nvflare.tool.code_pre_installer.docker_cmd import docker_build
+from nvflare.tool.code_pre_installer.local_cmd import define_local_parser
+from nvflare.tool.code_pre_installer.local_cmd import local_install
 
 
 def def_pre_install_parser(cmd, sub_cmd):
@@ -26,20 +26,28 @@ def def_pre_install_parser(cmd, sub_cmd):
     # Add subcommands
     pre_install_parser = parser.add_subparsers(title=cmd, dest="pre_install_sub_cmd", help="pre-install subcommand")
 
-    # Add prepare subcommand
-    define_prepare_parser("prepare", pre_install_parser)
+    # Add docker subcommand (build Docker image with pre-installed code)
+    define_docker_parser("docker", pre_install_parser)
 
-    # Add install subcommand
-    define_pre_install_parser("install", pre_install_parser)
+    # Add local subcommand (install locally, no Docker)
+    define_local_parser("local", pre_install_parser)
 
     return {cmd: parser}
 
 
 def handle_pre_install_cmd(args):
     """Handle pre-install commands."""
-    if args.pre_install_sub_cmd == "prepare":
-        prepare_run(args)
-    elif args.pre_install_sub_cmd == "install":
-        install_run(args)
+    if args.pre_install_sub_cmd == "docker":
+        docker_build(args)
+    elif args.pre_install_sub_cmd == "local":
+        local_install(args)
     else:
-        raise RuntimeError("Unknown pre-install subcommand")
+        print("Usage: nvflare pre-install <command>")
+        print()
+        print("Commands:")
+        print("  docker    Build Docker image with pre-installed application code")
+        print("  local     Install application code locally (no Docker)")
+        print()
+        print("Examples:")
+        print("  nvflare pre-install docker -j jobs/fedavg -s site-1")
+        print("  nvflare pre-install local -j jobs/fedavg -s site-1 -p /path/to/local/custom")
