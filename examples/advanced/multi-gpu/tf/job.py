@@ -39,9 +39,12 @@ def main():
     # Create model
     initial_model = TFNet(input_shape=(None, 32, 32, 3))
 
+    # Model can be specified as class instance or dict config
+    # For pre-trained weights: initial_ckpt="/server/path/to/pretrained.h5"
     recipe = FedAvgRecipe(
         name="tf_ddp",
         initial_model=initial_model,
+        # initial_ckpt=initial_ckpt,  # Uncomment to use pre-trained weights
         min_clients=args.n_clients,
         num_rounds=args.num_rounds,
         train_script="client.py",
