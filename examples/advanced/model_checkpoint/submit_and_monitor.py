@@ -62,6 +62,59 @@ def job_monitor_callback(session, job_id, job_meta, *cb_args, **cb_kwargs):
     return True
 
 
+def find_errors_in_log(log_path: str, context_lines: int = 10) -> list:
+    """Find ERROR, Exception, or Traceback lines in log with context."""
+    if not os.path.exists(log_path):
+        return []
+    
+    try:
+        with open(log_path, 'r') as f:
+            lines = f.readlines()
+        
+        error_sections = []
+        error_keywords = ['ERROR', 'Exception', 'Traceback', 'Error:', 'Failed']
+        
+        for i, line in enumerate(lines):
+            if any(keyword in line for keyword in error_keywords):
+                # Get context before and after
+                start = max(0, i - context_lines)
+                end = min(len(lines), i + context_lines + 1)
+                error_sections.append({
+                    'line_num': i + 1,
+                    'context': lines[start:end],
+                    'start_line': start + 1
+                })
+        
+        return error_sections
+    except Exception as e:
+        return []
+
+
+def print_log_errors(log_path: str, context_lines: int = 10):
+    """Print errors found in log with context."""
+    if not os.path.exists(log_path):
+        print(f"  (Log file not found: {log_path})")
+        return False
+    
+    errors = find_errors_in_log(log_path, context_lines)
+    
+    if not errors:
+        # No errors found, show last lines
+        print(f"  No ERROR/Exception found, showing last 50 lines from {log_path}:")
+        print_last_log_lines(log_path, num_lines=50)
+        return False
+    
+    print(f"  Found {len(errors)} error(s) in {log_path}:")
+    for idx, error in enumerate(errors, 1):
+        print(f"\n  --- Error {idx} (around line {error['line_num']}) ---")
+        print("  " + "-" * 76)
+        for line in error['context']:
+            print(f"  {line.rstrip()}")
+        print("  " + "-" * 76)
+    
+    return True
+
+
 def print_last_log_lines(log_path: str, num_lines: int = 30):
     """Print last N lines of a log file."""
     if not os.path.exists(log_path):
@@ -72,7 +125,6 @@ def print_last_log_lines(log_path: str, num_lines: int = 30):
         with open(log_path, 'r') as f:
             lines = f.readlines()
             last_lines = lines[-num_lines:]
-            print(f"\n  Last {len(last_lines)} lines from {log_path}:")
             print("  " + "-" * 76)
             for line in last_lines:
                 print(f"  {line.rstrip()}")
@@ -175,7 +227,7 @@ def submit_and_monitor_job(job_dir: str, startup_kit: str, timeout: float = 300.
                 
                 # Automatically show recent logs to help with debugging
                 if show_logs_on_error:
-                    print("Recent log entries:")
+                    print("Searching for errors in logs...")
                     
                     workspace_parent = os.path.dirname(startup_kit)
                     
@@ -183,24 +235,32 @@ def submit_and_monitor_job(job_dir: str, startup_kit: str, timeout: float = 300.
                     server_workspace = os.path.join(workspace_parent, "server")
                     server_run_dir = find_latest_run_dir(server_workspace)
                     if server_run_dir:
+                        print(f"\n📋 Server JOB logs: {server_run_dir}/log.txt")
                         server_job_log = os.path.join(server_run_dir, "log.txt")
-                        print("\n📋 Server JOB logs (run_* - actual error):")
-                        print_last_log_lines(server_job_log, num_lines=50)
+                        found_errors = print_log_errors(server_job_log, context_lines=15)
+                        
+                        # Also check for stderr/stdout files
+                        stderr_file = os.path.join(server_run_dir, "stderr.log")
+                        stdout_file = os.path.join(server_run_dir, "stdout.log")
+                        if os.path.exists(stderr_file):
+                            print(f"\n📋 Server stderr: {stderr_file}")
+                            print_log_errors(stderr_file, context_lines=10)
+                        if os.path.exists(stdout_file):
+                            print(f"\n📋 Server stdout: {stdout_file}")
+                            print_log_errors(stdout_file, context_lines=10)
                     else:
                         print("\n📋 Server JOB logs: (run_* directory not found)")
-                    
-                    # Server startup logs (for reference)
-                    server_log = os.path.join(server_workspace, "log.txt")
-                    print("\n📋 Server startup logs (for reference):")
-                    print_last_log_lines(server_log, num_lines=15)
+                        server_log = os.path.join(server_workspace, "log.txt")
+                        print(f"  Checking startup log: {server_log}")
+                        print_log_errors(server_log, context_lines=20)
                     
                     # Site-1 JOB logs
                     site1_workspace = os.path.join(workspace_parent, "site-1")
                     site1_run_dir = find_latest_run_dir(site1_workspace)
                     if site1_run_dir:
+                        print(f"\n📋 Site-1 JOB logs: {site1_run_dir}/log.txt")
                         site1_job_log = os.path.join(site1_run_dir, "log.txt")
-                        print("\n📋 Site-1 JOB logs:")
-                        print_last_log_lines(site1_job_log, num_lines=30)
+                        print_log_errors(site1_job_log, context_lines=15)
                     else:
                         print("\n📋 Site-1 JOB logs: (run_* directory not found)")
                 

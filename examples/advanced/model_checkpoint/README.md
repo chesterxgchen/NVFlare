@@ -61,10 +61,27 @@ examples/advanced/model_checkpoint/
 ├── model.py                 # SimpleNetwork model definition
 ├── prepare_data.py          # Generate pre-trained checkpoint
 ├── submit_and_monitor.py    # Submit job and monitor via FLARE API
-├── test.sh                  # Automated test runner using POC CLI
-├── test_interactive.sh      # Interactive test runner with step-by-step verification
-└── README.md                # This file
+├── test_local_poc.py        # TEST 1: Simple local POC (no Docker) - START HERE
+├── test.sh                  # TEST 2: Automated Docker test
+├── test_interactive.sh      # TEST 2: Interactive Docker test
+├── README.md                # This file
+└── RUN_TESTS.md             # Testing strategy guide
 ```
+
+## Quick Start
+
+**Step 1: Test locally first (recommended)**
+```bash
+cd examples/advanced/model_checkpoint
+python test_local_poc.py --use_dict_config --checkpoint /tmp/test_checkpoint.pt
+```
+
+**Step 2: Test with Docker (after Step 1 passes)**
+```bash
+./test.sh
+```
+
+See `RUN_TESTS.md` for detailed testing strategy.
 
 ## Prerequisites
 
