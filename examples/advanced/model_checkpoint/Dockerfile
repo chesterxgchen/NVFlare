@@ -11,7 +11,8 @@ COPY . /nvflare_dev
 
 # Install NVFlare with PyTorch dependencies from local source (development code)
 # The [pt] extra includes torch and torchvision dependencies
-RUN cd /nvflare_dev && pip install --no-cache-dir -e .[pt]
+# Use --root-user-action=ignore to suppress pip root warning in Docker
+RUN cd /nvflare_dev && pip install --no-cache-dir --root-user-action=ignore -e .[pt]
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
@@ -27,5 +28,8 @@ ENV PYTHONUNBUFFERED=1
 # Set working directory to /workspace (will contain mounted startup kit)
 WORKDIR /workspace
 
-# Default command (will be overridden by docker.sh)
+# Default command - this is NOT how POC server starts!
+# When docker.sh runs with -d flag, it overrides CMD with the actual server command:
+# docker run ... /bin/bash -c "python -u -m nvflare.private.fed.app.server.server_train -m /workspace -s fed_server.json ..."
+# The CMD below is just a fallback if you run the container manually without docker.sh
 CMD ["/bin/bash"]

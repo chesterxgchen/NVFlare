@@ -103,7 +103,7 @@ This creates `nvflare-dev-checkpoint-test:latest` with your local NVFlare code.
 
 ```bash
 # Clean existing POC
-nvflare poc clean -y
+nvflare poc clean
 
 # Prepare POC with local Docker image
 nvflare poc prepare -n 2 -d nvflare-dev-checkpoint-test:latest
@@ -251,17 +251,21 @@ ls /tmp/nvflare/poc/example_project/prod_00/site-2/pretrained_model.pt  # Not fo
 nvflare poc stop
 
 # Clean POC workspace
-nvflare poc clean -y
+nvflare poc clean
 
 # Remove generated files
 rm -f pretrained_model.pt
 rm -rf /tmp/nvflare_job
 
-# Remove Docker image (optional)
+# Remove Docker image if you want to rebuild (optional)
+# Only needed if NVFlare code or dependencies changed
 docker rmi nvflare-dev-checkpoint-test:latest
 ```
 
-**Important:** Always use `nvflare poc stop` instead of `docker stop` directly, as it properly cleans up all POC services.
+**Important:** 
+- Always use `nvflare poc stop` instead of `docker stop` directly
+- The Docker image is cached and reused on subsequent runs
+- Only remove/rebuild the image if your NVFlare code changes
 
 ## Troubleshooting
 

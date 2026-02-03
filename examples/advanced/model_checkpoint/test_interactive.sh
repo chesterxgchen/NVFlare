@@ -27,18 +27,40 @@ echo
 
 # Step 0: Build Docker image
 echo -e "${GREEN}=== Step 0: Build Docker image ===${NC}"
-echo "This will build a Docker image with your development code"
-pause_step
-./build_docker.sh
-echo -e "${GREEN}✓ Docker image built${NC}"
+if docker images ${DOCKER_IMAGE} | grep -q nvflare-dev-checkpoint-test; then
+    echo "Docker image ${DOCKER_IMAGE} already exists"
+    echo "Skip rebuild? (y/n) [y]: "
+    read -n 1 -r SKIP_BUILD
+    echo
+    if [[ $SKIP_BUILD =~ ^[Nn]$ ]]; then
+        ./build_docker.sh
+        echo -e "${GREEN}✓ Docker image rebuilt${NC}"
+    else
+        echo -e "${GREEN}✓ Using existing Docker image${NC}"
+    fi
+else
+    echo "This will build a Docker image with your development code"
+    pause_step
+    ./build_docker.sh
+    echo -e "${GREEN}✓ Docker image built${NC}"
+fi
 pause_step
 
 # Step 1: Clean existing POC
 echo -e "${GREEN}=== Step 1: Clean existing POC ===${NC}"
-echo "Cleaning any previous POC environment..."
-pause_step
-nvflare poc clean -y || true
-echo -e "${GREEN}✓ POC cleaned${NC}"
+if [ -d "${POC_WORKSPACE}" ]; then
+    echo "Found existing POC at ${POC_WORKSPACE}"
+    echo "Cleaning..."
+    pause_step
+    if nvflare poc clean; then
+        echo -e "${GREEN}✓ POC cleaned${NC}"
+    else
+        echo "Note: POC clean had issues (continuing anyway)"
+    fi
+else
+    echo "No existing POC found (nothing to clean)"
+    pause_step
+fi
 pause_step
 
 # Step 2: Prepare POC

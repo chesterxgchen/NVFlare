@@ -33,16 +33,29 @@ fi
 echo "✓ Prerequisites OK"
 echo
 
-# Step 0: Build Docker image with dev code
-echo "Step 0: Building Docker image with development code..."
-./build_docker.sh
-echo "✓ Docker image built"
+# Step 0: Build Docker image with dev code (if not exists)
+echo "Step 0: Checking Docker image..."
+if docker images ${DOCKER_IMAGE} | grep -q nvflare-dev-checkpoint-test; then
+    echo "✓ Docker image ${DOCKER_IMAGE} already exists (skipping build)"
+    echo "  To rebuild: docker rmi ${DOCKER_IMAGE} && ./test.sh"
+else
+    echo "Building Docker image with development code..."
+    ./build_docker.sh
+    echo "✓ Docker image built"
+fi
 echo
 
 # Step 1: Clean any existing POC
 echo "Step 1: Cleaning existing POC..."
-nvflare poc clean -y || true
-echo "✓ POC cleaned"
+if [ -d "${POC_WORKSPACE}" ]; then
+    if nvflare poc clean; then
+        echo "✓ POC cleaned"
+    else
+        echo "Note: POC clean had issues (continuing anyway)"
+    fi
+else
+    echo "No existing POC found (nothing to clean)"
+fi
 echo
 
 # Step 2: Prepare POC environment with local Docker image
