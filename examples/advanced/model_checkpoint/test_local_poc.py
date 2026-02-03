@@ -137,30 +137,28 @@ def main():
         print()
         
         # Wait for job to complete and get results (this blocks until job finishes)
-        # Must call this BEFORE getting status, as it waits for completion
+        # NOTE: get_result() calls env.stop() which removes workspace, so we can't call get_status() after
         result = run.get_result(timeout=300.0)  # 5 minute timeout
-        
-        # Now get final status (job should be finished)
-        status = run.get_status()
         
         print()
         print("=" * 80)
         print("Test Completed")
         print("=" * 80)
-        print(f"Job Status: {status}")
-        print(f"Results: {result}")
-        print()
         
-        # Check if successful
-        if "FINISHED:COMPLETED" in status:
+        # Check if successful based on result path
+        # If get_result() returns a path, job finished successfully
+        # If it returns None, job timed out or failed
+        if result is not None:
+            print(f"Results: {result}")
+            print()
             print("✓ Test PASSED")
-            return_code = 0
-        elif "FINISHED" in status and "EXCEPTION" not in status and "ERROR" not in status:
-            print("✓ Test PASSED")
+            print("  Job completed and results downloaded")
             return_code = 0
         else:
+            print("Results: None")
+            print()
             print("✗ Test FAILED")
-            print(f"  Status: {status}")
+            print("  Job timed out or failed to complete")
             return_code = 1
         
         return return_code

@@ -14,6 +14,9 @@ COPY . /nvflare_dev
 # Use --root-user-action=ignore to suppress pip root warning in Docker
 RUN cd /nvflare_dev && pip install --no-cache-dir --root-user-action=ignore -e .[pt]
 
+# Install tensorboard for experiment tracking (required by add_experiment_tracking)
+RUN pip install --no-cache-dir --root-user-action=ignore tensorboard
+
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 

@@ -17,6 +17,7 @@ from nvflare.fuel.flare_api.flare_api import new_secure_session
 def job_monitor_callback(session, job_id, job_meta, *cb_args, **cb_kwargs):
     """Callback to print job progress during monitoring."""
     cb_run_counter = cb_kwargs.get("cb_run_counter", {"count": 0})
+    workspace_parent = cb_kwargs.get("workspace_parent")
     
     # Print header on first call
     if cb_run_counter["count"] == 0:
@@ -31,10 +32,26 @@ def job_monitor_callback(session, job_id, job_meta, *cb_args, **cb_kwargs):
     
     # Print status updates
     if status == "RUNNING":
-        # Show periodic updates instead of just dots
+        # Show periodic updates with recent logs
         if cb_run_counter["count"] % 5 == 0:
             duration = job_meta.get("duration", "N/A")
-            print(f"  [{cb_run_counter['count'] * 2}s] Status: RUNNING, Duration: {duration}")
+            print(f"\n  [{cb_run_counter['count'] * 2}s] Status: RUNNING, Duration: {duration}")
+            
+            # Show last 10 lines from Docker logs every 30 seconds
+            if cb_run_counter["count"] > 0 and cb_run_counter["count"] % 15 == 0:
+                print("  Recent server activity:")
+                try:
+                    import subprocess
+                    result = subprocess.run(
+                        ["docker", "logs", "flserver", "--tail", "10"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        for line in result.stdout.strip().split('\n')[-5:]:
+                            if line.strip():
+                                print(f"    {line}")
+                except:
+                    pass
     elif status.startswith("FINISHED"):
         # Print detailed final status
         print()
@@ -199,13 +216,17 @@ def submit_and_monitor_job(job_dir: str, startup_kit: str, timeout: float = 300.
         
         # Monitor job progress via FLARE API
         print("\nMonitoring job progress via FLARE API...")
+        print("(Will show Docker logs every 30 seconds)")
+        print()
         cb_run_counter = {"count": 0}
+        workspace_parent = os.path.dirname(startup_kit)
         rc, job_meta = sess.monitor_job_and_return_job_meta(
             job_id,
             timeout=timeout,
             poll_interval=2.0,
             cb=job_monitor_callback,
-            cb_run_counter=cb_run_counter
+            cb_run_counter=cb_run_counter,
+            workspace_parent=workspace_parent
         )
         
         print()
