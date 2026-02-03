@@ -189,12 +189,23 @@ JOB_DIR="/tmp/nvflare_job/hello-pt-checkpoint-test"
 echo -e "${GREEN}✓ Job exported to ${JOB_DIR}${NC}"
 pause_step
 
-# Step 11: Submit job
-echo -e "${GREEN}=== Step 11: Submit job ===${NC}"
-echo "Running: nvflare job submit -j ${JOB_DIR}"
+# Step 11: Submit and monitor job
+echo -e "${GREEN}=== Step 11: Submit and monitor job ===${NC}"
+ADMIN_STARTUP="${POC_WORKSPACE}/example_project/prod_00/admin@nvidia.com/startup"
+echo "Running: python submit_and_monitor.py -j ${JOB_DIR} -s ${ADMIN_STARTUP} -t 300"
+echo "This will:"
+echo "  - Submit the job via FLARE API"
+echo "  - Monitor progress until completion"
+echo "  - Download results automatically"
 pause_step
-nvflare job submit -j "${JOB_DIR}"
-echo -e "${GREEN}✓ Job submitted${NC}"
+python submit_and_monitor.py -j "${JOB_DIR}" -s "${ADMIN_STARTUP}" -t 300
+JOB_RESULT=$?
+
+if [ $JOB_RESULT -eq 0 ]; then
+    echo -e "${GREEN}✓ Job completed successfully${NC}"
+else
+    echo -e "${RED}⚠ Job failed or timed out (exit code: $JOB_RESULT)${NC}"
+fi
 pause_step
 
 echo

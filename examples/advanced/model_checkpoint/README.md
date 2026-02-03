@@ -3,6 +3,13 @@
 This example tests the new recipe interface features using NVFlare POC CLI:
 1. **initial_ckpt parameter**: Load pre-trained model weights from a checkpoint file
 2. **Dict model config**: Specify model using `{"path": "module.Class", "args": {...}}`
+3. **Job submission and monitoring via FLARE API**: Proper session lifecycle management
+
+## Key Features Verified
+
+✓ **Dict Model Config**: Job config correctly captures `{"path": "model.SimpleNetwork"}` in persistor  
+✓ **Checkpoint Path**: Server-side checkpoint `/workspace/pretrained_model.pt` properly configured  
+✓ **FLARE API Monitoring**: Using `submit_and_monitor.py` with proper session lifecycle to avoid "cannot schedule new futures after shutdown" errors
 
 ## How It Works
 
@@ -46,14 +53,17 @@ This example tests the new recipe interface features using NVFlare POC CLI:
 ## Files
 
 ```
-examples/model_checkpoint/
-├── Dockerfile          # Dockerfile for local dev image
-├── build_docker.sh     # Build local Docker image with dev code
-├── client.py           # Client training script (wrapper for hello-pt)
-├── job.py              # Recipe configuration with dict config + initial_ckpt
-├── prepare_data.py     # Generate pre-trained checkpoint
-├── test_with_cli.sh    # Automated test runner using POC CLI
-└── README.md           # This file
+examples/advanced/model_checkpoint/
+├── Dockerfile               # Dockerfile for local dev image
+├── build_docker.sh          # Build local Docker image with dev code
+├── client.py                # Client training script (wrapper for hello-pt)
+├── job.py                   # Recipe configuration with dict config + initial_ckpt
+├── model.py                 # SimpleNetwork model definition
+├── prepare_data.py          # Generate pre-trained checkpoint
+├── submit_and_monitor.py    # Submit job and monitor via FLARE API
+├── test.sh                  # Automated test runner using POC CLI
+├── test_interactive.sh      # Interactive test runner with step-by-step verification
+└── README.md                # This file
 ```
 
 ## Prerequisites
@@ -150,8 +160,13 @@ This starts:
 # Use /workspace/pretrained_model.pt (path inside Docker container)
 python job.py --use_dict_config --checkpoint /workspace/pretrained_model.pt --n_clients 2 --num_rounds 2
 
-# Submit to POC (note: recipe.export() creates subdirectory with job name)
-nvflare job submit -j /tmp/nvflare_job/hello-pt-checkpoint-test
+# Submit and monitor job using FLARE API (recommended - handles session lifecycle properly)
+python submit_and_monitor.py -j /tmp/nvflare_job/hello-pt-checkpoint-test \
+    -s /tmp/nvflare/poc/example_project/prod_00/admin@nvidia.com/startup \
+    -t 300
+
+# Alternative: Submit manually via CLI (not recommended - requires manual monitoring)
+# nvflare job submit -j /tmp/nvflare_job/hello-pt-checkpoint-test
 ```
 
 **Path Explanation:**

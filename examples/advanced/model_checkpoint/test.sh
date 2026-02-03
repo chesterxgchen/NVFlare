@@ -146,16 +146,20 @@ JOB_DIR="/tmp/nvflare_job/hello-pt-checkpoint-test"
 echo "✓ Job exported to ${JOB_DIR}"
 echo
 
-# Step 7: Submit job
-echo "Step 7: Submitting job to POC..."
-nvflare job submit -j "${JOB_DIR}"
-echo "✓ Job submitted"
-echo
+# Step 7: Submit and monitor job
+echo "Step 7: Submitting and monitoring job..."
+ADMIN_STARTUP="${POC_WORKSPACE}/example_project/prod_00/admin@nvidia.com/startup"
+python submit_and_monitor.py -j "${JOB_DIR}" -s "${ADMIN_STARTUP}" -t 300
+JOB_RESULT=$?
 
-# Step 8: Monitor job (optional)
-echo "Step 8: Job is running. Check status with:"
-echo "  docker logs flserver"
-echo "  tail -f /tmp/nvflare/poc/example_project/prod_00/server/log.txt"
+if [ $JOB_RESULT -eq 0 ]; then
+    echo
+    echo "✓ Job completed successfully"
+else
+    echo
+    echo "⚠ Job failed or timed out (exit code: $JOB_RESULT)"
+    echo "Check logs for details"
+fi
 echo
 echo "=========================================="
 echo "Test completed!"

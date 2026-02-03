@@ -41,10 +41,13 @@ def main():
     # Choose model configuration based on flag
     if args.use_dict_config:
         print("=" * 80)
-        print("TEST MODE: Using dict model config")
-        print(f"  model = {{'path': 'model.SimpleNetwork'}}")
-        print(f"  initial_ckpt = '{args.checkpoint}'")
+        print("Exporting Job with Dict Model Config")
         print("=" * 80)
+        print(f"Model config: {{'path': 'model.SimpleNetwork'}}")
+        if args.checkpoint:
+            print(f"Checkpoint: {args.checkpoint}")
+        print(f"Clients: {n_clients}")
+        print(f"Rounds: {num_rounds}")
         print()
         
         initial_model = {
@@ -53,10 +56,13 @@ def main():
         }
     else:
         print("=" * 80)
-        print("BASELINE MODE: Using model instance")
-        print("  model = SimpleNetwork()")
-        print(f"  initial_ckpt = '{args.checkpoint}'")
+        print("Exporting Job with Model Instance")
         print("=" * 80)
+        print(f"Model: SimpleNetwork()")
+        if args.checkpoint:
+            print(f"Checkpoint: {args.checkpoint}")
+        print(f"Clients: {n_clients}")
+        print(f"Rounds: {num_rounds}")
         print()
         
         from model import SimpleNetwork
@@ -76,17 +82,22 @@ def main():
     if args.cross_site_eval:
         add_cross_site_evaluation(recipe)
 
-    # Export job for POC submission
-    # Note: Cannot use recipe.execute(PocEnv(docker_image=...)) because it runs
-    # ALL participants in Docker. For server-only Docker, we manually start services.
-    print("Exporting job...")
+    # Export job for external submission
+    # Note: We use recipe.export() instead of recipe.execute(PocEnv()) because:
+    # - PocEnv with docker_image runs ALL participants in Docker
+    # - We want server-only Docker, so we manually start services and submit the exported job
     recipe.export(job_dir="/tmp/nvflare_job")
     
     job_dir = f"/tmp/nvflare_job/{recipe.name}"
-    print()
     print("=" * 80)
-    print(f"Job exported to: {job_dir}")
-    print(f"To submit: nvflare job submit -j {job_dir}")
+    print(f"✓ Job Configuration Exported")
+    print("=" * 80)
+    print(f"Location: {job_dir}")
+    print()
+    print("Next steps:")
+    print(f"  1. Start FL services (server + clients)")
+    print(f"  2. Submit job: python submit_and_monitor.py -j {job_dir}")
+    print(f"     or use CLI: nvflare job submit -j {job_dir}")
     print("=" * 80)
     print()
 
