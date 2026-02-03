@@ -58,12 +58,33 @@ python prepare_data.py
 echo "✓ Data ready"
 echo
 
-# Step 0b: Build Docker image with dev code (if not exists)
+# Step 0b: Build Docker image with dev code (check if rebuild needed)
 echo "Step 0b: Checking Docker image..."
+REBUILD_NEEDED=false
+
 if docker images ${DOCKER_IMAGE} | grep -q nvflare-dev-checkpoint-test; then
-    echo "✓ Docker image ${DOCKER_IMAGE} already exists (skipping build)"
-    echo "  To rebuild: docker rmi ${DOCKER_IMAGE} && ./test.sh"
+    # Image exists, check if Dockerfile changed
+    IMAGE_ID=$(docker images ${DOCKER_IMAGE} --format "{{.ID}}")
+    IMAGE_CREATED=$(docker inspect --format='{{.Created}}' ${IMAGE_ID} 2>/dev/null)
+    DOCKERFILE_MODIFIED=$(stat -c %Y Dockerfile 2>/dev/null || stat -f %m Dockerfile 2>/dev/null)
+    IMAGE_CREATED_TS=$(date -d "$IMAGE_CREATED" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "${IMAGE_CREATED%.*}" +%s 2>/dev/null)
+    
+    if [ ! -z "$DOCKERFILE_MODIFIED" ] && [ ! -z "$IMAGE_CREATED_TS" ]; then
+        if [ $DOCKERFILE_MODIFIED -gt $IMAGE_CREATED_TS ]; then
+            echo "⚠ Dockerfile modified after image was built"
+            REBUILD_NEEDED=true
+        else
+            echo "✓ Docker image ${DOCKER_IMAGE} exists and is up to date"
+        fi
+    else
+        echo "✓ Docker image ${DOCKER_IMAGE} exists (could not verify if up to date)"
+    fi
 else
+    echo "Docker image not found"
+    REBUILD_NEEDED=true
+fi
+
+if [ "$REBUILD_NEEDED" = true ]; then
     echo "Building Docker image with development code..."
     ./build_docker.sh
     echo "✓ Docker image built"
