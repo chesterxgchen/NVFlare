@@ -8,6 +8,7 @@ import argparse
 import os
 import sys
 import time
+from pathlib import Path
 
 from nvflare.fuel.flare_api.api_spec import MonitorReturnCode
 from nvflare.fuel.flare_api.flare_api import new_secure_session
@@ -21,23 +22,66 @@ def job_monitor_callback(session, job_id, job_meta, *cb_args, **cb_kwargs):
     if cb_run_counter["count"] == 0:
         print(f"\nJob ID: {job_id}")
         print(f"Initial Status: {job_meta.get('status', 'UNKNOWN')}")
-        print("Monitoring progress", end="", flush=True)
+        print(f"Submitter: {job_meta.get('submitter_name', 'unknown')}")
+        print(f"Start Time: {job_meta.get('start_time', 'N/A')}")
+        print()
+        print("Monitoring progress...")
     
-    # Print progress dots for RUNNING status
-    if job_meta.get("status") == "RUNNING":
-        print(".", end="", flush=True)
+    status = job_meta.get("status", "UNKNOWN")
+    
+    # Print status updates
+    if status == "RUNNING":
+        # Show periodic updates instead of just dots
+        if cb_run_counter["count"] % 5 == 0:
+            duration = job_meta.get("duration", "N/A")
+            print(f"  [{cb_run_counter['count'] * 2}s] Status: RUNNING, Duration: {duration}")
+    elif status.startswith("FINISHED"):
+        # Print detailed final status
+        print()
+        print("=" * 80)
+        print(f"Final Status: {status}")
+        print(f"Duration: {job_meta.get('duration', 'N/A')}")
+        
+        # Show deployment details
+        deploy_detail = job_meta.get("job_deploy_detail", [])
+        if deploy_detail:
+            print(f"Deployment: {', '.join(deploy_detail)}")
+        
+        # Show schedule history if available
+        schedule_history = job_meta.get("schedule_history", [])
+        if schedule_history:
+            print(f"Schedule History: {', '.join(schedule_history)}")
+        
+        print("=" * 80)
     else:
-        # Print final status
-        print(f"\n\nFinal Job Status: {job_meta.get('status', 'UNKNOWN')}")
-        if "duration" in job_meta:
-            print(f"Duration: {job_meta['duration']}")
+        # Other statuses
+        print(f"  Status changed to: {status}")
     
     cb_run_counter["count"] += 1
     cb_kwargs["cb_run_counter"] = cb_run_counter
     return True
 
 
-def submit_and_monitor_job(job_dir: str, startup_kit: str, timeout: float = 300.0):
+def print_last_log_lines(log_path: str, num_lines: int = 30):
+    """Print last N lines of a log file."""
+    if not os.path.exists(log_path):
+        print(f"  (Log file not found: {log_path})")
+        return
+    
+    try:
+        with open(log_path, 'r') as f:
+            lines = f.readlines()
+            last_lines = lines[-num_lines:]
+            print(f"\n  Last {len(last_lines)} lines from {Path(log_path).name}:")
+            print("  " + "-" * 76)
+            for line in last_lines:
+                print(f"  {line.rstrip()}")
+            print("  " + "-" * 76)
+    except Exception as e:
+        print(f"  (Could not read log: {e})")
+
+
+def submit_and_monitor_job(job_dir: str, startup_kit: str, timeout: float = 300.0, show_logs_on_error: bool = True):
     """
     Submit job and monitor until completion or timeout.
     
@@ -45,6 +89,7 @@ def submit_and_monitor_job(job_dir: str, startup_kit: str, timeout: float = 300.
         job_dir: Path to exported job directory
         startup_kit: Path to admin startup kit directory
         timeout: Max time to wait for job completion (seconds), 0 = no timeout
+        show_logs_on_error: If True, print last lines of server/client logs on error
     
     Returns:
         Tuple of (success: bool, job_id: str, final_status: str)
@@ -58,15 +103,15 @@ def submit_and_monitor_job(job_dir: str, startup_kit: str, timeout: float = 300.
         return False, None, None
     
     print("=" * 80)
-    print("Submitting and Monitoring Job")
+    print("Submitting and Monitoring Job via FLARE API")
     print("=" * 80)
     print(f"Job directory: {job_dir}")
-    print(f"Startup kit: {startup_kit}")
+    print(f"Admin workspace: {startup_kit}")
     print(f"Timeout: {timeout}s (0 = no timeout)")
     print()
     
     # Create session
-    print("Connecting to FLARE...")
+    print("Connecting to FLARE system via API...")
     try:
         sess = new_secure_session(
             username="admin@nvidia.com",
@@ -78,16 +123,16 @@ def submit_and_monitor_job(job_dir: str, startup_kit: str, timeout: float = 300.
     
     job_id = None
     try:
-        # Submit job
-        print("Submitting job...")
+        # Submit job via FLARE API
+        print("Submitting job via FLARE API...")
         job_id = sess.submit_job(job_dir)
         print(f"✓ Job submitted with ID: {job_id}")
         
         # Wait a moment for job to start
         time.sleep(2)
         
-        # Monitor job progress
-        print("\nMonitoring job progress...")
+        # Monitor job progress via FLARE API
+        print("\nMonitoring job progress via FLARE API...")
         cb_run_counter = {"count": 0}
         rc, job_meta = sess.monitor_job_and_return_job_meta(
             job_id,
@@ -99,22 +144,50 @@ def submit_and_monitor_job(job_dir: str, startup_kit: str, timeout: float = 300.
         
         print()
         print("=" * 80)
-        print("Monitoring Result")
+        print("FLARE API Monitoring Result")
         print("=" * 80)
         print(f"Return Code: {rc}")
         
         if rc == MonitorReturnCode.JOB_FINISHED:
             final_status = job_meta.get("status", "UNKNOWN")
-            print(f"✓ Job completed: {final_status}")
             
             # Download results if job finished successfully
             if "EXECUTION_EXCEPTION" in final_status or "ERROR" in final_status:
-                print("\n⚠ Job finished with error status")
+                print("\n" + "=" * 80)
+                print("⚠ JOB FAILED")
+                print("=" * 80)
+                print(f"Status: {final_status}")
+                print()
+                
+                # Automatically show recent logs to help with debugging
+                if show_logs_on_error:
+                    print("Recent log entries:")
+                    
+                    # Server logs
+                    server_log = os.path.join(os.path.dirname(startup_kit), "server", "log.txt")
+                    print("\n📋 Server logs:")
+                    print_last_log_lines(server_log, num_lines=30)
+                    
+                    # Site-1 logs
+                    site1_log = os.path.join(os.path.dirname(startup_kit), "site-1", "log.txt")
+                    print("\n📋 Site-1 logs:")
+                    print_last_log_lines(site1_log, num_lines=20)
+                
+                print("\n" + "=" * 80)
+                print("Common issues to check:")
+                print("  - Model import errors (check model.py path)")
+                print("  - Checkpoint file not found or wrong path")
+                print("  - Client connection issues")
+                print("  - Training script errors")
+                print("=" * 80)
                 return False, job_id, final_status
             else:
-                print("\n✓ Job finished successfully")
+                print("\n" + "=" * 80)
+                print("✓ JOB COMPLETED SUCCESSFULLY")
+                print("=" * 80)
                 result_location = sess.download_job_result(job_id)
                 print(f"Results downloaded to: {result_location}")
+                print("=" * 80)
                 return True, job_id, final_status
                 
         elif rc == MonitorReturnCode.TIMEOUT:
@@ -126,13 +199,13 @@ def submit_and_monitor_job(job_dir: str, startup_kit: str, timeout: float = 300.
             return False, job_id, "UNKNOWN"
             
     except Exception as e:
-        print(f"\nERROR during job submission/monitoring: {e}")
+        print(f"\nERROR during FLARE API job submission/monitoring: {e}")
         import traceback
         traceback.print_exc()
         return False, job_id, "ERROR"
     finally:
-        # Always close session to avoid "cannot schedule new futures" error
-        print("\nClosing session...")
+        # Always close FLARE API session to avoid "cannot schedule new futures" error
+        print("\nClosing FLARE API session...")
         try:
             sess.close()
             print("✓ Session closed")
@@ -154,13 +227,19 @@ def main():
         default=300.0,
         help="Timeout in seconds (0 = no timeout)"
     )
+    parser.add_argument(
+        "--no-logs",
+        action="store_true",
+        help="Don't automatically show logs on error"
+    )
     
     args = parser.parse_args()
     
     success, job_id, status = submit_and_monitor_job(
         args.job_dir,
         args.startup_kit,
-        args.timeout
+        args.timeout,
+        show_logs_on_error=not args.no_logs
     )
     
     # Exit with appropriate code
