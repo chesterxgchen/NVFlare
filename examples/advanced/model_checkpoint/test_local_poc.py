@@ -130,23 +130,31 @@ def main():
     try:
         run = recipe.execute(env)
         
+        # Get status BEFORE cleanup (workspace must exist)
+        status = run.get_status()
+        result = run.get_result()
+        
         print()
         print("=" * 80)
         print("Test Completed")
         print("=" * 80)
-        print(f"Job Status: {run.get_status()}")
-        print(f"Results: {run.get_result()}")
+        print(f"Job Status: {status}")
+        print(f"Results: {result}")
         print()
         
-        # Check if successful
-        status = run.get_status()
-        if "FINISHED" in status and "EXCEPTION" not in status:
+        # Check if successful (do this before cleanup)
+        if "FINISHED:COMPLETED" in status:
             print("✓ Test PASSED")
-            return 0
+            return_code = 0
+        elif "FINISHED" in status and "EXCEPTION" not in status and "ERROR" not in status:
+            print("✓ Test PASSED")
+            return_code = 0
         else:
             print("✗ Test FAILED")
             print(f"  Status: {status}")
-            return 1
+            return_code = 1
+        
+        return return_code
             
     except Exception as e:
         print()
