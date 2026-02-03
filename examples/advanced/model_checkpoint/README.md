@@ -150,8 +150,8 @@ This starts:
 # Use /workspace/pretrained_model.pt (path inside Docker container)
 python job.py --use_dict_config --checkpoint /workspace/pretrained_model.pt --n_clients 2 --num_rounds 2
 
-# Submit to POC
-nvflare poc submit-job /tmp/nvflare_job
+# Submit to POC (note: recipe.export() creates subdirectory with job name)
+nvflare job submit -j /tmp/nvflare_job/hello-pt-checkpoint-test
 ```
 
 **Path Explanation:**
@@ -255,7 +255,7 @@ nvflare poc clean
 
 # Remove generated files
 rm -f pretrained_model.pt
-rm -rf /tmp/nvflare_job
+rm -rf /tmp/nvflare_job/hello-pt-checkpoint-test
 
 # Remove Docker image if you want to rebuild (optional)
 # Only needed if NVFlare code or dependencies changed
@@ -298,7 +298,7 @@ docker rmi nvflare-dev-checkpoint-test:latest
 
 **Problem:** Server can't find model.py for dict config
 - The job.py script should automatically add model.py to job custom folder
-- Verify: `ls /tmp/nvflare_job/app/custom/model.py`
+- Verify: `ls /tmp/nvflare_job/hello-pt-checkpoint-test/app/custom/model.py`
 
 ### Verify Volume Mount
 

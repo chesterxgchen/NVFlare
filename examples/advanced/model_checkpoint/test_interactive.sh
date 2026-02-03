@@ -183,14 +183,15 @@ echo "  - Dict model config: {'path': 'model.SimpleNetwork'}"
 echo "  - Checkpoint: ${CHECKPOINT_PATH}"
 pause_step
 python job.py --use_dict_config --checkpoint "${CHECKPOINT_PATH}" --n_clients ${NUM_CLIENTS} --num_rounds 2
-echo -e "${GREEN}✓ Job exported to /tmp/nvflare_job${NC}"
+JOB_DIR="/tmp/nvflare_job/hello-pt-checkpoint-test"
+echo -e "${GREEN}✓ Job exported to ${JOB_DIR}${NC}"
 pause_step
 
 # Step 11: Submit job
 echo -e "${GREEN}=== Step 11: Submit job ===${NC}"
-echo "Running: nvflare job submit -j /tmp/nvflare_job"
+echo "Running: nvflare job submit -j ${JOB_DIR}"
 pause_step
-nvflare job submit -j /tmp/nvflare_job
+nvflare job submit -j "${JOB_DIR}"
 echo -e "${GREEN}✓ Job submitted${NC}"
 pause_step
 

@@ -140,12 +140,13 @@ echo
 echo "Step 6: Exporting job with dict config + checkpoint path..."
 CHECKPOINT_PATH="/workspace/pretrained_model.pt"
 python job.py --use_dict_config --checkpoint "${CHECKPOINT_PATH}" --n_clients ${NUM_CLIENTS} --num_rounds 2
-echo "✓ Job exported to /tmp/nvflare_job"
+JOB_DIR="/tmp/nvflare_job/hello-pt-checkpoint-test"
+echo "✓ Job exported to ${JOB_DIR}"
 echo
 
 # Step 7: Submit job
 echo "Step 7: Submitting job to POC..."
-nvflare job submit -j /tmp/nvflare_job
+nvflare job submit -j "${JOB_DIR}"
 echo "✓ Job submitted"
 echo
 

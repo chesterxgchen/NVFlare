@@ -82,10 +82,11 @@ def main():
     print("Exporting job...")
     recipe.export(job_dir="/tmp/nvflare_job")
     
+    job_dir = f"/tmp/nvflare_job/{recipe.name}"
     print()
     print("=" * 80)
-    print("Job exported to: /tmp/nvflare_job")
-    print("To submit: nvflare job submit -j /tmp/nvflare_job")
+    print(f"Job exported to: {job_dir}")
+    print(f"To submit: nvflare job submit -j {job_dir}")
     print("=" * 80)
     print()
 
