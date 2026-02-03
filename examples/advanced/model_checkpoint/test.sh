@@ -52,8 +52,14 @@ fi
 echo "✓ Prerequisites OK"
 echo
 
-# Step 0: Build Docker image with dev code (if not exists)
-echo "Step 0: Checking Docker image..."
+# Step 0a: Prepare data (CIFAR10 + checkpoint)
+echo "Step 0a: Preparing data..."
+python prepare_data.py
+echo "✓ Data ready"
+echo
+
+# Step 0b: Build Docker image with dev code (if not exists)
+echo "Step 0b: Checking Docker image..."
 if docker images ${DOCKER_IMAGE} | grep -q nvflare-dev-checkpoint-test; then
     echo "✓ Docker image ${DOCKER_IMAGE} already exists (skipping build)"
     echo "  To rebuild: docker rmi ${DOCKER_IMAGE} && ./test.sh"

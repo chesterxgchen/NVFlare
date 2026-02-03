@@ -44,7 +44,6 @@ def main():
     from nvflare.tool.poc.poc_commands import get_poc_workspace
     poc_workspace = get_poc_workspace()
     
-    # Stop any running Docker containers from previous tests
     print("Checking for running Docker containers...")
     try:
         result = subprocess.run(
@@ -58,6 +57,18 @@ def main():
             print("✓ Docker containers stopped")
     except Exception as e:
         print(f"Warning: Could not check Docker: {e}")
+    print()
+    
+    # Pre-download CIFAR10 dataset and generate checkpoint
+    print("Preparing data (CIFAR10 + checkpoint)...")
+    try:
+        result = subprocess.run(["python", "prepare_data.py"], capture_output=True, text=True, timeout=120)
+        if result.returncode == 0:
+            print("✓ Data ready")
+        else:
+            print(f"Warning: Data preparation had issues: {result.stderr}")
+    except Exception as e:
+        print(f"Warning: Could not prepare data: {e}")
     print()
     
     # Clean up any existing POC workspace to avoid Docker contamination
