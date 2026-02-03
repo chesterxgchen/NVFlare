@@ -239,8 +239,11 @@ def submit_and_monitor_job(job_dir: str, startup_kit: str, timeout: float = 300.
                 # Automatically show recent logs to help with debugging
                 if show_logs_on_error:
                     print("Searching for errors in logs...")
+                    print()
                     
                     workspace_parent = os.path.dirname(startup_kit)
+                    print(f"DEBUG: Looking for logs in: {workspace_parent}")
+                    print()
                     
                     # Server JOB logs (run_* directory - this is where the actual error is)
                     server_workspace = os.path.join(workspace_parent, "server")
@@ -248,6 +251,10 @@ def submit_and_monitor_job(job_dir: str, startup_kit: str, timeout: float = 300.
                     if server_run_dir:
                         print(f"\n📋 Server JOB logs: {server_run_dir}/log.txt")
                         server_job_log = os.path.join(server_run_dir, "log.txt")
+                        if os.path.exists(server_job_log):
+                            print(f"   (File exists, size: {os.path.getsize(server_job_log)} bytes)")
+                        else:
+                            print(f"   (File NOT found!)")
                         found_errors = print_log_errors(server_job_log, context_lines=15)
                         
                         # Also check for stderr/stdout files
