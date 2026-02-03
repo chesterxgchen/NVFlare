@@ -5,10 +5,14 @@ Tests dict model config and checkpoint loading in a basic PocEnv.
 
 This is a simpler test to verify the core functionality works before
 adding Docker complexity.
+
+IMPORTANT: This test uses a separate workspace to avoid Docker contamination.
 """
 
 import argparse
 import os
+import shutil
+import subprocess
 import sys
 
 from model import SimpleNetwork
@@ -33,16 +37,45 @@ def main():
     parser.add_argument("--num_rounds", type=int, default=2, help="Number of rounds")
     parser.add_argument("--use_dict_config", action="store_true", help="Use dict model config")
     parser.add_argument("--checkpoint", type=str, default="", help="Path to checkpoint file")
+    parser.add_argument("--workspace", type=str, default="/tmp/nvflare/local_poc", 
+                       help="POC workspace directory (will be cleaned)")
     
     args = parser.parse_args()
+    
+    # Stop any running Docker containers from previous tests
+    print("Checking for running Docker containers...")
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "--filter", "name=flserver", "--filter", "name=site-", "-q"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.stdout.strip():
+            print("⚠ Found running Docker containers from previous tests. Stopping them...")
+            subprocess.run(["docker", "rm", "-f", "flserver", "site-1", "site-2"], 
+                          capture_output=True, timeout=10)
+            print("✓ Docker containers stopped")
+    except Exception as e:
+        print(f"Warning: Could not check Docker: {e}")
+    print()
+    
+    # Clean up any existing POC workspace to avoid Docker contamination
+    if os.path.exists(args.workspace):
+        print(f"Cleaning existing POC workspace: {args.workspace}")
+        shutil.rmtree(args.workspace)
+        print("✓ Workspace cleaned")
+        print()
     
     print("=" * 80)
     print("Local POC Test (No Docker)")
     print("=" * 80)
+    print(f"Workspace: {args.workspace}")
     print(f"Clients: {args.n_clients}")
     print(f"Rounds: {args.num_rounds}")
     print(f"Dict config: {args.use_dict_config}")
     print(f"Checkpoint: {args.checkpoint if args.checkpoint else 'None'}")
+    print()
+    print("⚠ IMPORTANT: This test should NOT start Docker containers.")
+    print("  If you see Docker starting, stop the test (Ctrl+C) and report the issue.")
     print()
     
     # Generate checkpoint if path provided and file doesn't exist
@@ -74,11 +107,15 @@ def main():
     
     # Run in local POC environment (no Docker)
     print("=" * 80)
-    print("Starting Local POC Environment...")
+    print("Starting Local POC Environment (processes only, no Docker)...")
     print("=" * 80)
     print()
     
-    env = PocEnv(num_clients=args.n_clients)
+    # Explicitly create PocEnv with NO docker_image to ensure local processes only
+    env = PocEnv(
+        num_clients=args.n_clients,
+        workspace=args.workspace
+    )
     
     try:
         run = recipe.execute(env)
