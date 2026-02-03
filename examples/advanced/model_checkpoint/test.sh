@@ -152,20 +152,34 @@ JOB_DIR="/tmp/nvflare_job/hello-pt-checkpoint-test"
 echo "✓ Job exported to ${JOB_DIR}"
 echo
 
-# Step 7: Submit and monitor job
-echo "Step 7: Submitting and monitoring job..."
+# Step 7: Submit and monitor job with live logs
+echo "Step 7: Submitting job and streaming logs..."
 ADMIN_WORKSPACE="${POC_WORKSPACE}/example_project/prod_00/admin@nvidia.com"
+
+# Start streaming Docker logs in background
+echo "Starting Docker log stream..."
+docker logs -f flserver 2>&1 | sed 's/^/[SERVER] /' &
+DOCKER_LOGS_PID=$!
+
+# Wait a moment for log streaming to start
+sleep 2
+
+# Monitor job progress
+echo "Monitoring job progress (streaming server logs above)..."
+echo
 # Increase timeout to 10 minutes for Docker (slower than local)
 python submit_and_monitor.py -j "${JOB_DIR}" -s "${ADMIN_WORKSPACE}" -t 600
 JOB_RESULT=$?
 
+# Stop Docker log streaming
+kill $DOCKER_LOGS_PID 2>/dev/null || true
+wait $DOCKER_LOGS_PID 2>/dev/null || true
+
+echo
 if [ $JOB_RESULT -eq 0 ]; then
-    echo
     echo "✓ Job completed successfully"
 else
-    echo
     echo "⚠ Job failed or timed out (exit code: $JOB_RESULT)"
-    echo "Check logs for details"
 fi
 echo
 echo "=========================================="

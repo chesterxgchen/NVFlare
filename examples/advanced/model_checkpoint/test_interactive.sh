@@ -189,19 +189,34 @@ JOB_DIR="/tmp/nvflare_job/hello-pt-checkpoint-test"
 echo -e "${GREEN}✓ Job exported to ${JOB_DIR}${NC}"
 pause_step
 
-# Step 11: Submit and monitor job
+# Step 11: Submit and monitor job with live logs
 echo -e "${GREEN}=== Step 11: Submit and monitor job ===${NC}"
 ADMIN_WORKSPACE="${POC_WORKSPACE}/example_project/prod_00/admin@nvidia.com"
-echo "Running: python submit_and_monitor.py -j ${JOB_DIR} -s ${ADMIN_WORKSPACE} -t 600"
 echo "This will:"
+echo "  - Start streaming Docker server logs in real-time"
 echo "  - Submit the job via FLARE API"
 echo "  - Monitor progress until completion"
-echo "  - Download results automatically"
 echo "  - Timeout: 10 minutes (Docker is slower than local)"
 pause_step
+
+# Start streaming Docker logs in background
+echo -e "${BLUE}Starting Docker log stream...${NC}"
+docker logs -f flserver 2>&1 | sed "s/^/[SERVER] /" &
+DOCKER_LOGS_PID=$!
+
+# Wait a moment for log streaming to start
+sleep 2
+
+echo -e "${BLUE}Monitoring job progress (logs streaming above)...${NC}"
+echo
 python submit_and_monitor.py -j "${JOB_DIR}" -s "${ADMIN_WORKSPACE}" -t 600
 JOB_RESULT=$?
 
+# Stop Docker log streaming
+kill $DOCKER_LOGS_PID 2>/dev/null || true
+wait $DOCKER_LOGS_PID 2>/dev/null || true
+
+echo
 if [ $JOB_RESULT -eq 0 ]; then
     echo -e "${GREEN}✓ Job completed successfully${NC}"
 else
