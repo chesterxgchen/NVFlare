@@ -155,7 +155,8 @@ echo
 # Step 7: Submit and monitor job
 echo "Step 7: Submitting and monitoring job..."
 ADMIN_WORKSPACE="${POC_WORKSPACE}/example_project/prod_00/admin@nvidia.com"
-python submit_and_monitor.py -j "${JOB_DIR}" -s "${ADMIN_WORKSPACE}" -t 300
+# Increase timeout to 10 minutes for Docker (slower than local)
+python submit_and_monitor.py -j "${JOB_DIR}" -s "${ADMIN_WORKSPACE}" -t 600
 JOB_RESULT=$?
 
 if [ $JOB_RESULT -eq 0 ]; then
