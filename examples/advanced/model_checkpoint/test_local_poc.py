@@ -37,10 +37,12 @@ def main():
     parser.add_argument("--num_rounds", type=int, default=2, help="Number of rounds")
     parser.add_argument("--use_dict_config", action="store_true", help="Use dict model config")
     parser.add_argument("--checkpoint", type=str, default="", help="Path to checkpoint file")
-    parser.add_argument("--workspace", type=str, default="/tmp/nvflare/local_poc", 
-                       help="POC workspace directory (will be cleaned)")
     
     args = parser.parse_args()
+    
+    # Get POC workspace location
+    from nvflare.tool.poc.poc_commands import get_poc_workspace
+    poc_workspace = get_poc_workspace()
     
     # Stop any running Docker containers from previous tests
     print("Checking for running Docker containers...")
@@ -59,16 +61,16 @@ def main():
     print()
     
     # Clean up any existing POC workspace to avoid Docker contamination
-    if os.path.exists(args.workspace):
-        print(f"Cleaning existing POC workspace: {args.workspace}")
-        shutil.rmtree(args.workspace)
+    if os.path.exists(poc_workspace):
+        print(f"Cleaning existing POC workspace: {poc_workspace}")
+        shutil.rmtree(poc_workspace)
         print("✓ Workspace cleaned")
         print()
     
     print("=" * 80)
     print("Local POC Test (No Docker)")
     print("=" * 80)
-    print(f"Workspace: {args.workspace}")
+    print(f"Workspace: {poc_workspace}")
     print(f"Clients: {args.n_clients}")
     print(f"Rounds: {args.num_rounds}")
     print(f"Dict config: {args.use_dict_config}")
@@ -111,11 +113,8 @@ def main():
     print("=" * 80)
     print()
     
-    # Explicitly create PocEnv with NO docker_image to ensure local processes only
-    env = PocEnv(
-        num_clients=args.n_clients,
-        workspace=args.workspace
-    )
+    # Create PocEnv without docker_image (local processes only)
+    env = PocEnv(num_clients=args.n_clients)
     
     try:
         run = recipe.execute(env)
