@@ -217,8 +217,19 @@ def submit_and_monitor_job(job_dir: str, startup_kit: str, timeout: float = 300.
         if rc == MonitorReturnCode.JOB_FINISHED:
             final_status = job_meta.get("status", "UNKNOWN")
             
-            # Download results if job finished successfully
-            if "EXECUTION_EXCEPTION" in final_status or "ERROR" in final_status:
+            # Check if job completed successfully
+            # FINISHED:COMPLETED = success
+            # FINISHED:EXECUTION_EXCEPTION, FINISHED:ABORTED, etc. = failure
+            if final_status == "FINISHED:COMPLETED":
+                print("\n" + "=" * 80)
+                print("✓ JOB COMPLETED SUCCESSFULLY")
+                print("=" * 80)
+                result_location = sess.download_job_result(job_id)
+                print(f"Results downloaded to: {result_location}")
+                print("=" * 80)
+                return True, job_id, final_status
+            else:
+                # Job finished but not successfully
                 print("\n" + "=" * 80)
                 print("⚠ JOB FAILED")
                 print("=" * 80)
@@ -272,14 +283,6 @@ def submit_and_monitor_job(job_dir: str, startup_kit: str, timeout: float = 300.
                 print("  - Training script errors")
                 print("=" * 80)
                 return False, job_id, final_status
-            else:
-                print("\n" + "=" * 80)
-                print("✓ JOB COMPLETED SUCCESSFULLY")
-                print("=" * 80)
-                result_location = sess.download_job_result(job_id)
-                print(f"Results downloaded to: {result_location}")
-                print("=" * 80)
-                return True, job_id, final_status
                 
         elif rc == MonitorReturnCode.TIMEOUT:
             print(f"⚠ Job monitoring timed out after {timeout}s")
