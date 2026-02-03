@@ -8,6 +8,23 @@ POC_WORKSPACE="/tmp/nvflare/poc"
 NUM_CLIENTS=2
 DOCKER_IMAGE="nvflare-dev-checkpoint-test:latest"
 
+# Cleanup function called on error or exit
+cleanup_on_error() {
+    echo
+    echo "Error occurred! Cleaning up..."
+    
+    # Stop POC services
+    nvflare poc stop 2>/dev/null || true
+    
+    # Force remove any lingering containers
+    docker rm -f flserver site-1 site-2 2>/dev/null || true
+    
+    echo "Cleanup completed"
+}
+
+# Register cleanup function to run on error
+trap cleanup_on_error ERR
+
 echo "=========================================="
 echo "Checkpoint + Dict Config Test (POC CLI)"
 echo "=========================================="
@@ -119,13 +136,23 @@ echo "Waiting for services to initialize..."
 sleep 5
 echo
 
-# Step 6: Run the job with POC environment
-echo "Step 6: Running job with dict config + checkpoint path..."
-# The checkpoint path inside Docker container
-# docker.sh mounts server/ to /workspace/, so server/pretrained_model.pt -> /workspace/pretrained_model.pt
+# Step 6: Export the job
+echo "Step 6: Exporting job with dict config + checkpoint path..."
 CHECKPOINT_PATH="/workspace/pretrained_model.pt"
 python job.py --use_dict_config --checkpoint "${CHECKPOINT_PATH}" --n_clients ${NUM_CLIENTS} --num_rounds 2
+echo "✓ Job exported to /tmp/nvflare_job"
+echo
 
+# Step 7: Submit job
+echo "Step 7: Submitting job to POC..."
+nvflare job submit -j /tmp/nvflare_job
+echo "✓ Job submitted"
+echo
+
+# Step 8: Monitor job (optional)
+echo "Step 8: Job is running. Check status with:"
+echo "  docker logs flserver"
+echo "  tail -f /tmp/nvflare/poc/example_project/prod_00/server/log.txt"
 echo
 echo "=========================================="
 echo "Test completed!"

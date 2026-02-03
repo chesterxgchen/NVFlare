@@ -12,7 +12,7 @@ import argparse
 from model import SimpleNetwork
 
 from nvflare.app_opt.pt.recipes.fedavg import FedAvgRecipe
-from nvflare.recipe import PocEnv, add_experiment_tracking
+from nvflare.recipe import add_experiment_tracking
 from nvflare.recipe.utils import add_cross_site_evaluation
 
 
@@ -76,15 +76,16 @@ def main():
     if args.cross_site_eval:
         add_cross_site_evaluation(recipe)
 
-    # Run FL with POC environment (Docker server + local clients)
-    print("Executing recipe with POC environment...")
-    env = PocEnv(num_clients=n_clients)
-    run = recipe.execute(env)
+    # Export job for POC submission
+    # Note: Cannot use recipe.execute(PocEnv(docker_image=...)) because it runs
+    # ALL participants in Docker. For server-only Docker, we manually start services.
+    print("Exporting job...")
+    recipe.export(job_dir="/tmp/nvflare_job")
     
     print()
     print("=" * 80)
-    print("Job Status is:", run.get_status())
-    print("Result can be found in:", run.get_result())
+    print("Job exported to: /tmp/nvflare_job")
+    print("To submit: nvflare job submit -j /tmp/nvflare_job")
     print("=" * 80)
     print()
 

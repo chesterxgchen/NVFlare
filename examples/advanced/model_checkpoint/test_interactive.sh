@@ -14,6 +14,23 @@ BLUE='\033[0;34m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Cleanup function called on error or exit
+cleanup_on_error() {
+    echo
+    echo -e "${RED}Error occurred! Cleaning up...${NC}"
+    
+    # Stop POC services
+    nvflare poc stop 2>/dev/null || true
+    
+    # Force remove any lingering containers
+    docker rm -f flserver site-1 site-2 2>/dev/null || true
+    
+    echo "Cleanup completed"
+}
+
+# Register cleanup function to run on error
+trap cleanup_on_error ERR
+
 function pause_step() {
     echo
     echo -e "${BLUE}Press Enter to continue to next step (or Ctrl+C to exit)...${NC}"
@@ -157,16 +174,25 @@ sleep 5
 echo -e "${GREEN}✓ Services initialized${NC}"
 pause_step
 
-# Step 10: Run the job
-echo -e "${GREEN}=== Step 10: Run the job ===${NC}"
+# Step 10: Export and submit the job
+echo -e "${GREEN}=== Step 10: Export the job ===${NC}"
 CHECKPOINT_PATH="/workspace/pretrained_model.pt"
 echo "Running: python job.py --use_dict_config --checkpoint ${CHECKPOINT_PATH}"
-echo "This will:"
-echo "  - Use dict model config: {'path': 'model.SimpleNetwork'}"
-echo "  - Load checkpoint from: ${CHECKPOINT_PATH}"
-echo "  - Execute with PocEnv (starts job automatically)"
+echo "This will export a job with:"
+echo "  - Dict model config: {'path': 'model.SimpleNetwork'}"
+echo "  - Checkpoint: ${CHECKPOINT_PATH}"
 pause_step
 python job.py --use_dict_config --checkpoint "${CHECKPOINT_PATH}" --n_clients ${NUM_CLIENTS} --num_rounds 2
+echo -e "${GREEN}✓ Job exported to /tmp/nvflare_job${NC}"
+pause_step
+
+# Step 11: Submit job
+echo -e "${GREEN}=== Step 11: Submit job ===${NC}"
+echo "Running: nvflare job submit -j /tmp/nvflare_job"
+pause_step
+nvflare job submit -j /tmp/nvflare_job
+echo -e "${GREEN}✓ Job submitted${NC}"
+pause_step
 
 echo
 echo "=========================================="
@@ -178,7 +204,8 @@ echo "  docker logs flserver"
 echo
 echo "To cleanup:"
 echo "  nvflare poc stop"
-echo "  nvflare poc clean -y"
+echo "  docker rm -f flserver site-1 site-2  # Force remove containers if needed"
+echo "  nvflare poc clean"
 echo "  rm -f pretrained_model.pt"
 echo "  docker rmi ${DOCKER_IMAGE}"
 echo
