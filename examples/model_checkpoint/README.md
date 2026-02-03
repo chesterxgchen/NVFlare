@@ -1,0 +1,322 @@
+# Checkpoint and Dict Config Test
+
+This example tests the new recipe interface features using NVFlare POC CLI:
+1. **initial_ckpt parameter**: Load pre-trained model weights from a checkpoint file
+2. **Dict model config**: Specify model using `{"path": "module.Class", "args": {...}}`
+
+## How It Works
+
+### POC Docker Integration
+
+1. **POC generates `docker.sh`** at `server/startup/docker.sh`:
+   ```bash
+   DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+   # $DIR = /tmp/nvflare/poc/example_project/prod_00/server/startup
+   
+   NETARG="--net=host"  # Uses host network for localhost communication
+   docker run -d --rm --name=$svr_name \
+       -v $DIR/..:/workspace/ \    # Mounts server/ to /workspace/
+       -w /workspace \
+       --net=host \
+       $DOCKER_IMAGE /bin/bash -c "..."
+   ```
+
+2. **Volume mount:**
+   - Host: `/tmp/nvflare/poc/example_project/prod_00/server/`
+   - Container: `/workspace/`
+   - Result: `server/pretrained_model.pt` → `/workspace/pretrained_model.pt`
+
+3. **Network configuration:**
+   - `--net=host`: Container shares host's network namespace
+   - Server binds to localhost:8002 (fed learn) and localhost:8003 (admin)
+   - Clients on host connect to localhost:8002
+   - No port mapping needed
+
+4. **Starting the server:**
+   ```bash
+   nvflare poc start
+   ```
+   This runs `docker.sh` which starts the container with your dev code
+
+5. **Checkpoint access:**
+   - Only in server workspace (not accessible to clients)
+   - Server: `/workspace/pretrained_model.pt`
+   - Clients: Cannot access this file
+
+## Files
+
+```
+examples/model_checkpoint/
+├── Dockerfile          # Dockerfile for local dev image
+├── build_docker.sh     # Build local Docker image with dev code
+├── client.py           # Client training script (wrapper for hello-pt)
+├── job.py              # Recipe configuration with dict config + initial_ckpt
+├── prepare_data.py     # Generate pre-trained checkpoint
+├── test_with_cli.sh    # Automated test runner using POC CLI
+└── README.md           # This file
+```
+
+## Prerequisites
+
+```bash
+# Ensure NVFlare CLI is installed
+nvflare --version
+
+# Ensure Docker is running (required for server container)
+docker ps
+
+# Navigate to this directory
+cd examples/model_checkpoint
+```
+
+## Quick Start
+
+Run the automated test:
+
+```bash
+./test_with_cli.sh
+```
+
+This will:
+1. **Build local Docker image** with development code from `2.7_recipe_interface_part2_stage` branch
+2. Clean existing POC environment
+3. Prepare POC with 2 clients **and local Docker image**
+4. Generate checkpoint `pretrained_model.pt`
+5. Copy checkpoint to **server Docker container workspace** (not to clients)
+6. Start POC services (server in Docker with dev code, clients as processes)
+7. Export and submit job with dict config + checkpoint
+8. Monitor job execution
+
+## Manual Steps
+
+### Step 0: Build Local Docker Image
+
+Build a Docker image with the current development code:
+
+```bash
+./build_docker.sh
+```
+
+This creates `nvflare-dev-checkpoint-test:latest` with your local NVFlare code.
+
+### Step 1: Prepare POC Environment with Local Docker Image
+
+```bash
+# Clean existing POC
+nvflare poc clean -y
+
+# Prepare POC with local Docker image
+nvflare poc prepare -n 2 -d nvflare-dev-checkpoint-test:latest
+```
+
+This will:
+- Create server that runs in Docker container **with your dev code**
+- Create 2 client processes (run locally with dev code)
+- Generate startup scripts including `docker.sh`
+
+### Step 2: Generate and Place Checkpoint
+
+```bash
+# Generate checkpoint
+python prepare_data.py
+
+# Copy to SERVER workspace only
+# docker.sh mounts server/ directory to /workspace/ in the container
+# So server/pretrained_model.pt becomes /workspace/pretrained_model.pt
+cp pretrained_model.pt /tmp/nvflare/poc/example_project/prod_00/server/
+```
+
+**Important:** 
+- Checkpoint is placed in `/tmp/nvflare/poc/example_project/prod_00/server/`
+- `docker.sh` script runs from `server/startup/` and mounts `server/` to `/workspace/`
+- Inside Docker, the path becomes `/workspace/pretrained_model.pt`
+- Do NOT copy to client workspaces (site-1, site-2, etc.)
+
+### Step 3: Start POC Services (with Docker)
+
+```bash
+nvflare poc start
+```
+
+This starts:
+- **Server in Docker container** (localhost:8002/8003)
+- Clients as local processes
+- Admin console
+
+### Step 4: Create and Submit Job
+
+```bash
+# Create job with dict config
+# Use /workspace/pretrained_model.pt (path inside Docker container)
+python job.py --use_dict_config --checkpoint /workspace/pretrained_model.pt --n_clients 2 --num_rounds 2
+
+# Submit to POC
+nvflare poc submit-job /tmp/nvflare_job
+```
+
+**Path Explanation:**
+- On host: `/tmp/nvflare/poc/example_project/prod_00/server/pretrained_model.pt`
+- `docker.sh` mounts: `server/` → `/workspace/`
+- In Docker: `/workspace/pretrained_model.pt`
+
+### Step 5: Monitor Job
+
+```bash
+# Check POC status
+nvflare poc status
+
+# View server logs
+tail -f /tmp/nvflare/poc/example_project/prod_00/server/log.txt
+```
+
+## Test Variations
+
+### Test 1: Dict Config + Checkpoint (Primary Test)
+
+```bash
+python job.py --use_dict_config --checkpoint pretrained_model.pt
+```
+
+Tests:
+- ✓ Dict model config: `{"path": "model.SimpleNetwork"}`
+- ✓ Checkpoint loading on server
+- ✓ Dynamic model instantiation in PTFileModelPersistor
+
+### Test 2: Model Instance + Checkpoint (Baseline)
+
+```bash
+python job.py --checkpoint pretrained_model.pt
+```
+
+Tests:
+- ✓ Traditional model instance approach
+- ✓ Checkpoint loading on server
+
+### Test 3: Dict Config Only (No Checkpoint)
+
+```bash
+python job.py --use_dict_config --checkpoint ""
+```
+
+Tests:
+- ✓ Dict config with random initialization
+- ✓ No checkpoint file needed
+
+## Expected Behavior
+
+### Server Logs
+
+```
+Loading model from checkpoint: /workspace/pretrained_model.pt
+Model config detected as dict, will dynamically instantiate model
+Instantiating model from: model.SimpleNetwork
+Successfully loaded checkpoint
+```
+
+### Client Logs
+
+```
+site = site-1, current_round=1
+Received model from server (initialized from checkpoint)
+```
+
+### Checkpoint Location Verification
+
+```bash
+# Should exist (server workspace on host)
+ls /tmp/nvflare/poc/example_project/prod_00/server/pretrained_model.pt
+
+# Inside Docker container, accessible at:
+# /workspace/pretrained_model.pt
+# Because docker.sh mounts server/ directory to /workspace/
+
+# Should NOT exist (client workspaces)
+ls /tmp/nvflare/poc/example_project/prod_00/site-1/pretrained_model.pt  # Not found
+ls /tmp/nvflare/poc/example_project/prod_00/site-2/pretrained_model.pt  # Not found
+```
+
+**Volume Mount by docker.sh:**
+```bash
+# docker.sh is at: server/startup/docker.sh
+# It runs: docker run -v $DIR/..:/workspace/
+# Where $DIR = server/startup/
+# So $DIR/.. = server/
+# Result: server/ → /workspace/
+```
+
+## Cleanup
+
+```bash
+# Stop POC (this stops the Docker container and all services)
+nvflare poc stop
+
+# Clean POC workspace
+nvflare poc clean -y
+
+# Remove generated files
+rm -f pretrained_model.pt
+rm -rf /tmp/nvflare_job
+
+# Remove Docker image (optional)
+docker rmi nvflare-dev-checkpoint-test:latest
+```
+
+**Important:** Always use `nvflare poc stop` instead of `docker stop` directly, as it properly cleans up all POC services.
+
+## Troubleshooting
+
+### Network Issues
+
+**Problem:** Clients can't connect to server
+- Cause: Server not using `--net=host`
+- Solution: Verify NETARG in docker.sh:
+  ```bash
+  grep "NETARG" /tmp/nvflare/poc/example_project/prod_00/server/startup/docker.sh
+  ```
+  Should see: `NETARG="--net=host"`
+
+**Problem:** Port already in use
+- Cause: Previous POC instance still running
+- Solution: `nvflare poc stop` (don't use `docker stop` directly)
+
+**Problem:** Server starts but clients timeout
+- Solution: Verify ports are listening:
+  ```bash
+  netstat -an | grep 8002  # Fed learn port
+  netstat -an | grep 8003  # Admin port
+  ```
+
+### Volume Mount Issues
+
+**Problem:** Checkpoint not found on server
+- Verify: `ls /tmp/nvflare/poc/example_project/prod_00/server/pretrained_model.pt`
+- Ensure you copied it AFTER `nvflare poc prepare`
+
+**Problem:** Server can't find model.py for dict config
+- The job.py script should automatically add model.py to job custom folder
+- Verify: `ls /tmp/nvflare_job/app/custom/model.py`
+
+### Verify Volume Mount
+
+After `nvflare poc prepare`, check the generated docker.sh:
+```bash
+cat /tmp/nvflare/poc/example_project/prod_00/server/startup/docker.sh
+```
+
+Look for the volume mount line:
+```bash
+docker run -d --rm --name=$svr_name -v $DIR/..:/workspace/ -w /workspace
+```
+
+**File mapping:**
+```
+Host: /tmp/nvflare/poc/.../server/pretrained_model.pt  → Container: /workspace/pretrained_model.pt
+Host: /tmp/nvflare/poc/.../server/startup/              → Container: /workspace/startup/
+```
+
+## Notes
+
+- This test is **NOT intended for git check-in**
+- Tests the branch `2.7_recipe_interface_part2_stage`
+- Uses POC mode (not production deployment)
+- Checkpoint is server-only by design (tests realistic scenario)
