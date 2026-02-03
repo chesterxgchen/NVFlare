@@ -8,7 +8,7 @@ import sys
 import torch
 
 # Add the hello-pt directory to the path
-sys.path.insert(0, '../hello-world/hello-pt')
+sys.path.insert(0, '../../hello-world/hello-pt')
 
 from model import SimpleNetwork
 
