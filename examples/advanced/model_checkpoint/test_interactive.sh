@@ -46,22 +46,48 @@ echo
 
 # Step 0: Build Docker image
 echo -e "${GREEN}=== Step 0: Build Docker image ===${NC}"
+REBUILD_NEEDED=false
+
 if docker images ${DOCKER_IMAGE} | grep -q nvflare-dev-checkpoint-test; then
-    echo "Docker image ${DOCKER_IMAGE} already exists"
-    echo "Skip rebuild? (y/n) [y]: "
-    read -n 1 -r SKIP_BUILD
-    echo
-    if [[ $SKIP_BUILD =~ ^[Nn]$ ]]; then
-        ./build_docker.sh
-        echo -e "${GREEN}✓ Docker image rebuilt${NC}"
-    else
-        echo -e "${GREEN}✓ Using existing Docker image${NC}"
+    echo "Docker image ${DOCKER_IMAGE} exists"
+    
+    # Check if Dockerfile changed
+    IMAGE_ID=$(docker images ${DOCKER_IMAGE} --format "{{.ID}}")
+    IMAGE_CREATED=$(docker inspect --format='{{.Created}}' ${IMAGE_ID} 2>/dev/null)
+    DOCKERFILE_MODIFIED=$(stat -c %Y Dockerfile 2>/dev/null || stat -f %m Dockerfile 2>/dev/null)
+    IMAGE_CREATED_TS=$(date -d "$IMAGE_CREATED" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "${IMAGE_CREATED%.*}" +%s 2>/dev/null)
+    
+    if [ ! -z "$DOCKERFILE_MODIFIED" ] && [ ! -z "$IMAGE_CREATED_TS" ]; then
+        if [ $DOCKERFILE_MODIFIED -gt $IMAGE_CREATED_TS ]; then
+            echo -e "${BLUE}⚠ Dockerfile modified after image was built${NC}"
+            echo "Rebuild recommended. Rebuild? (y/n) [y]: "
+            read -n 1 -r DO_REBUILD
+            echo
+            if [[ ! $DO_REBUILD =~ ^[Nn]$ ]]; then
+                REBUILD_NEEDED=true
+            fi
+        else
+            echo "Image is up to date with Dockerfile"
+            echo "Force rebuild anyway? (y/n) [n]: "
+            read -n 1 -r FORCE_REBUILD
+            echo
+            if [[ $FORCE_REBUILD =~ ^[Yy]$ ]]; then
+                REBUILD_NEEDED=true
+            fi
+        fi
     fi
 else
-    echo "This will build a Docker image with your development code"
+    echo "Docker image not found, will build"
+    REBUILD_NEEDED=true
+fi
+
+if [ "$REBUILD_NEEDED" = true ]; then
+    echo "Building Docker image with your development code..."
     pause_step
     ./build_docker.sh
     echo -e "${GREEN}✓ Docker image built${NC}"
+else
+    echo -e "${GREEN}✓ Using existing Docker image${NC}"
 fi
 pause_step
 
