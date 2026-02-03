@@ -248,14 +248,17 @@ def submit_and_monitor_job(job_dir: str, startup_kit: str, timeout: float = 300.
                     # Server JOB logs (run_* directory - this is where the actual error is)
                     server_workspace = os.path.join(workspace_parent, "server")
                     server_run_dir = find_latest_run_dir(server_workspace)
+                    
+                    logs_found = False
                     if server_run_dir:
                         print(f"\n📋 Server JOB logs: {server_run_dir}/log.txt")
                         server_job_log = os.path.join(server_run_dir, "log.txt")
                         if os.path.exists(server_job_log):
                             print(f"   (File exists, size: {os.path.getsize(server_job_log)} bytes)")
+                            found_errors = print_log_errors(server_job_log, context_lines=15)
+                            logs_found = True
                         else:
-                            print(f"   (File NOT found!)")
-                        found_errors = print_log_errors(server_job_log, context_lines=15)
+                            print(f"   (File NOT found - may be in Docker container)")
                         
                         # Also check for stderr/stdout files
                         stderr_file = os.path.join(server_run_dir, "stderr.log")
@@ -270,9 +273,32 @@ def submit_and_monitor_job(job_dir: str, startup_kit: str, timeout: float = 300.
                         print("\n📋 Server JOB logs: (run_* directory not found)")
                         server_log = os.path.join(server_workspace, "log.txt")
                         print(f"  Checking startup log: {server_log}")
-                        print_log_errors(server_log, context_lines=20)
+                        if os.path.exists(server_log):
+                            print_log_errors(server_log, context_lines=20)
+                            logs_found = True
                     
-                    # Site-1 JOB logs
+                    # If server logs not accessible (Docker), try docker logs command
+                    if not logs_found:
+                        print("\n📋 Trying Docker container logs (server may be in Docker):")
+                        print("  Running: docker logs flserver --tail 100")
+                        try:
+                            import subprocess
+                            result = subprocess.run(
+                                ["docker", "logs", "flserver", "--tail", "100"],
+                                capture_output=True, text=True, timeout=10
+                            )
+                            if result.returncode == 0:
+                                print("  " + "-" * 76)
+                                for line in result.stdout.split('\n'):
+                                    if line.strip():
+                                        print(f"  {line}")
+                                print("  " + "-" * 76)
+                            else:
+                                print(f"  Could not get Docker logs: {result.stderr}")
+                        except Exception as e:
+                            print(f"  Could not run docker logs: {e}")
+                    
+                    # Site-1 JOB logs (these are on host, should be accessible)
                     site1_workspace = os.path.join(workspace_parent, "site-1")
                     site1_run_dir = find_latest_run_dir(site1_workspace)
                     if site1_run_dir:
