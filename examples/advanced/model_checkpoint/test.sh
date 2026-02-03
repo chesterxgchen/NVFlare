@@ -9,21 +9,23 @@ NUM_CLIENTS=2
 DOCKER_IMAGE="nvflare-dev-checkpoint-test:latest"
 
 # Cleanup function called on error or exit
-cleanup_on_error() {
+cleanup_services() {
     echo
-    echo "Error occurred! Cleaning up..."
+    echo "Cleaning up services..."
     
     # Stop POC services
+    echo "  Stopping POC services..."
     nvflare poc stop 2>/dev/null || true
     
     # Force remove any lingering containers
+    echo "  Removing Docker containers..."
     docker rm -f flserver site-1 site-2 2>/dev/null || true
     
     echo "Cleanup completed"
 }
 
-# Register cleanup function to run on error
-trap cleanup_on_error ERR
+# Register cleanup function to run on error AND normal exit
+trap cleanup_services EXIT
 
 echo "=========================================="
 echo "Checkpoint + Dict Config Test (POC CLI)"
@@ -159,16 +161,16 @@ echo "=========================================="
 echo "Test completed!"
 echo "=========================================="
 echo
-echo "To view results:"
-echo "  cd ${POC_WORKSPACE}/example_project/prod_00/server/run_*/workspace"
+echo "Results location:"
+echo "  ${POC_WORKSPACE}/example_project/prod_00/server/run_*/workspace"
 echo
-echo "To view server logs:"
-echo "  docker logs <container_id>"
-echo "  tail -f ${POC_WORKSPACE}/example_project/prod_00/server/log.txt"
+echo "Log files:"
+echo "  Server: ${POC_WORKSPACE}/example_project/prod_00/server/log.txt"
+echo "  Site-1: ${POC_WORKSPACE}/example_project/prod_00/site-1/log.txt"
+echo "  Site-2: ${POC_WORKSPACE}/example_project/prod_00/site-2/log.txt"
 echo
-echo "To cleanup:"
-echo "  nvflare poc stop       # Stops Docker container and all services"
-echo "  nvflare poc clean -y"
+echo "Note: Services will be cleaned up automatically on exit"
+echo "To manually clean POC workspace:"
+echo "  nvflare poc clean"
 echo "  rm -f pretrained_model.pt"
-echo "  docker rmi ${DOCKER_IMAGE}"
 echo

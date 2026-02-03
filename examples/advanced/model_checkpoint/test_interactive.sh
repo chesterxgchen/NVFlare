@@ -15,21 +15,23 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 # Cleanup function called on error or exit
-cleanup_on_error() {
+cleanup_services() {
     echo
-    echo -e "${RED}Error occurred! Cleaning up...${NC}"
+    echo -e "${BLUE}Cleaning up services...${NC}"
     
     # Stop POC services
+    echo "  Stopping POC services..."
     nvflare poc stop 2>/dev/null || true
     
     # Force remove any lingering containers
+    echo "  Removing Docker containers..."
     docker rm -f flserver site-1 site-2 2>/dev/null || true
     
-    echo "Cleanup completed"
+    echo -e "${GREEN}Cleanup completed${NC}"
 }
 
-# Register cleanup function to run on error
-trap cleanup_on_error ERR
+# Register cleanup function to run on error AND normal exit
+trap cleanup_services EXIT
 
 function pause_step() {
     echo
@@ -200,13 +202,16 @@ echo "=========================================="
 echo "Test completed!"
 echo "=========================================="
 echo
-echo "To view server logs:"
-echo "  docker logs flserver"
+echo "Results location:"
+echo "  ${POC_WORKSPACE}/example_project/prod_00/server/run_*/workspace"
 echo
-echo "To cleanup:"
-echo "  nvflare poc stop"
-echo "  docker rm -f flserver site-1 site-2  # Force remove containers if needed"
+echo "Log files:"
+echo "  Server: ${POC_WORKSPACE}/example_project/prod_00/server/log.txt"
+echo "  Site-1: ${POC_WORKSPACE}/example_project/prod_00/site-1/log.txt"
+echo "  Site-2: ${POC_WORKSPACE}/example_project/prod_00/site-2/log.txt"
+echo
+echo "Note: Services will be cleaned up automatically on exit"
+echo "To manually clean POC workspace:"
 echo "  nvflare poc clean"
 echo "  rm -f pretrained_model.pt"
-echo "  docker rmi ${DOCKER_IMAGE}"
 echo
