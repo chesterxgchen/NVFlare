@@ -72,13 +72,27 @@ def print_last_log_lines(log_path: str, num_lines: int = 30):
         with open(log_path, 'r') as f:
             lines = f.readlines()
             last_lines = lines[-num_lines:]
-            print(f"\n  Last {len(last_lines)} lines from {Path(log_path).name}:")
+            print(f"\n  Last {len(last_lines)} lines from {log_path}:")
             print("  " + "-" * 76)
             for line in last_lines:
                 print(f"  {line.rstrip()}")
             print("  " + "-" * 76)
     except Exception as e:
         print(f"  (Could not read log: {e})")
+
+
+def find_latest_run_dir(workspace_dir: str) -> str:
+    """Find the latest run_* directory in a workspace."""
+    if not os.path.exists(workspace_dir):
+        return None
+    
+    run_dirs = [d for d in os.listdir(workspace_dir) if d.startswith('run_')]
+    if not run_dirs:
+        return None
+    
+    # Sort by modification time, newest first
+    run_dirs.sort(key=lambda d: os.path.getmtime(os.path.join(workspace_dir, d)), reverse=True)
+    return os.path.join(workspace_dir, run_dirs[0])
 
 
 def submit_and_monitor_job(job_dir: str, startup_kit: str, timeout: float = 300.0, show_logs_on_error: bool = True):
@@ -163,15 +177,32 @@ def submit_and_monitor_job(job_dir: str, startup_kit: str, timeout: float = 300.
                 if show_logs_on_error:
                     print("Recent log entries:")
                     
-                    # Server logs
-                    server_log = os.path.join(os.path.dirname(startup_kit), "server", "log.txt")
-                    print("\n📋 Server logs:")
-                    print_last_log_lines(server_log, num_lines=30)
+                    workspace_parent = os.path.dirname(startup_kit)
                     
-                    # Site-1 logs
-                    site1_log = os.path.join(os.path.dirname(startup_kit), "site-1", "log.txt")
-                    print("\n📋 Site-1 logs:")
-                    print_last_log_lines(site1_log, num_lines=20)
+                    # Server JOB logs (run_* directory - this is where the actual error is)
+                    server_workspace = os.path.join(workspace_parent, "server")
+                    server_run_dir = find_latest_run_dir(server_workspace)
+                    if server_run_dir:
+                        server_job_log = os.path.join(server_run_dir, "log.txt")
+                        print("\n📋 Server JOB logs (run_* - actual error):")
+                        print_last_log_lines(server_job_log, num_lines=50)
+                    else:
+                        print("\n📋 Server JOB logs: (run_* directory not found)")
+                    
+                    # Server startup logs (for reference)
+                    server_log = os.path.join(server_workspace, "log.txt")
+                    print("\n📋 Server startup logs (for reference):")
+                    print_last_log_lines(server_log, num_lines=15)
+                    
+                    # Site-1 JOB logs
+                    site1_workspace = os.path.join(workspace_parent, "site-1")
+                    site1_run_dir = find_latest_run_dir(site1_workspace)
+                    if site1_run_dir:
+                        site1_job_log = os.path.join(site1_run_dir, "log.txt")
+                        print("\n📋 Site-1 JOB logs:")
+                        print_last_log_lines(site1_job_log, num_lines=30)
+                    else:
+                        print("\n📋 Site-1 JOB logs: (run_* directory not found)")
                 
                 print("\n" + "=" * 80)
                 print("Common issues to check:")
