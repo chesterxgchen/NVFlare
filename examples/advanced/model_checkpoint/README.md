@@ -1,9 +1,28 @@
 # Checkpoint and Dict Config Test
 
-This example tests the new recipe interface features using NVFlare POC CLI:
+This example tests the new recipe interface features:
 1. **initial_ckpt parameter**: Load pre-trained model weights from a checkpoint file
 2. **Dict model config**: Specify model using `{"path": "module.Class", "args": {...}}`
 3. **Job submission and monitoring via FLARE API**: Proper session lifecycle management
+
+## Quick Start
+
+**Step 1: Test locally first (recommended)**
+```bash
+cd examples/advanced/model_checkpoint
+python test_local_poc.py --use_dict_config --checkpoint /tmp/test_checkpoint.pt
+```
+This runs a simple local POC without Docker to verify dict config and checkpoint work correctly.
+
+**Step 2: Test with Docker (after Step 1 passes)**
+```bash
+./test.sh
+```
+This runs the full Docker-based test with server in container.
+
+**For detailed testing strategy, see:** `RUN_TESTS.md`
+
+---
 
 ## Key Features Verified
 
@@ -11,9 +30,9 @@ This example tests the new recipe interface features using NVFlare POC CLI:
 ✓ **Checkpoint Path**: Server-side checkpoint `/workspace/pretrained_model.pt` properly configured  
 ✓ **FLARE API Monitoring**: Using `submit_and_monitor.py` with proper session lifecycle to avoid "cannot schedule new futures after shutdown" errors
 
-## How It Works
+---
 
-### POC Docker Integration
+## How Docker Integration Works (for reference)
 
 1. **POC generates `docker.sh`** at `server/startup/docker.sh`:
    ```bash
