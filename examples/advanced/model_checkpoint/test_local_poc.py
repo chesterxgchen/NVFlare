@@ -130,9 +130,18 @@ def main():
     try:
         run = recipe.execute(env)
         
-        # Get status BEFORE cleanup (workspace must exist)
+        print()
+        print("=" * 80)
+        print("Waiting for job to complete...")
+        print("=" * 80)
+        print()
+        
+        # Wait for job to complete and get results (this blocks until job finishes)
+        # Must call this BEFORE getting status, as it waits for completion
+        result = run.get_result(timeout=300.0)  # 5 minute timeout
+        
+        # Now get final status (job should be finished)
         status = run.get_status()
-        result = run.get_result()
         
         print()
         print("=" * 80)
@@ -142,7 +151,7 @@ def main():
         print(f"Results: {result}")
         print()
         
-        # Check if successful (do this before cleanup)
+        # Check if successful
         if "FINISHED:COMPLETED" in status:
             print("✓ Test PASSED")
             return_code = 0
