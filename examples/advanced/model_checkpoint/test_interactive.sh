@@ -191,14 +191,14 @@ pause_step
 
 # Step 11: Submit and monitor job
 echo -e "${GREEN}=== Step 11: Submit and monitor job ===${NC}"
-ADMIN_STARTUP="${POC_WORKSPACE}/example_project/prod_00/admin@nvidia.com/startup"
-echo "Running: python submit_and_monitor.py -j ${JOB_DIR} -s ${ADMIN_STARTUP} -t 300"
+ADMIN_WORKSPACE="${POC_WORKSPACE}/example_project/prod_00/admin@nvidia.com"
+echo "Running: python submit_and_monitor.py -j ${JOB_DIR} -s ${ADMIN_WORKSPACE} -t 300"
 echo "This will:"
 echo "  - Submit the job via FLARE API"
 echo "  - Monitor progress until completion"
 echo "  - Download results automatically"
 pause_step
-python submit_and_monitor.py -j "${JOB_DIR}" -s "${ADMIN_STARTUP}" -t 300
+python submit_and_monitor.py -j "${JOB_DIR}" -s "${ADMIN_WORKSPACE}" -t 300
 JOB_RESULT=$?
 
 if [ $JOB_RESULT -eq 0 ]; then

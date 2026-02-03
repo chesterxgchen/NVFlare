@@ -145,8 +145,8 @@ def main():
     parser.add_argument("-j", "--job_dir", required=True, help="Path to exported job directory")
     parser.add_argument(
         "-s", "--startup_kit",
-        default="/tmp/nvflare/poc/example_project/prod_00/admin@nvidia.com/startup",
-        help="Path to admin startup kit directory"
+        default="/tmp/nvflare/poc/example_project/prod_00/admin@nvidia.com",
+        help="Path to admin workspace directory (contains startup/ folder)"
     )
     parser.add_argument(
         "-t", "--timeout",

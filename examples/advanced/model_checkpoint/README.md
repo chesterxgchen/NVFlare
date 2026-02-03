@@ -162,7 +162,7 @@ python job.py --use_dict_config --checkpoint /workspace/pretrained_model.pt --n_
 
 # Submit and monitor job using FLARE API (recommended - handles session lifecycle properly)
 python submit_and_monitor.py -j /tmp/nvflare_job/hello-pt-checkpoint-test \
-    -s /tmp/nvflare/poc/example_project/prod_00/admin@nvidia.com/startup \
+    -s /tmp/nvflare/poc/example_project/prod_00/admin@nvidia.com \
     -t 300
 
 # Alternative: Submit manually via CLI (not recommended - requires manual monitoring)
