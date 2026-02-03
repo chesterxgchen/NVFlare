@@ -18,9 +18,64 @@ This runs a simple local POC without Docker to verify dict config and checkpoint
 ```bash
 ./test.sh
 ```
-This runs the full Docker-based test with server in container.
+This runs the full Docker-based test with server in container and real-time log streaming.
 
-**For detailed testing strategy, see:** `RUN_TESTS.md`
+---
+
+## Testing Strategy
+
+This directory contains multiple test approaches. **Start simple and add complexity incrementally.**
+
+### Test 1: Local POC (Recommended First)
+
+**Purpose**: Verify dict config and checkpoint work in basic POC without Docker complexity.
+
+**Run:**
+```bash
+# Test with dict config + checkpoint
+python test_local_poc.py --use_dict_config --checkpoint /tmp/test_checkpoint.pt
+
+# Test with dict config only (no checkpoint)
+python test_local_poc.py --use_dict_config
+
+# Test with model instance + checkpoint (baseline)
+python test_local_poc.py --checkpoint /tmp/test_checkpoint.pt
+```
+
+**What it tests:**
+- ✓ Dict model config: `{"path": "model.SimpleNetwork"}`
+- ✓ Checkpoint loading: `initial_ckpt` parameter
+- ✓ All processes run locally (no containers)
+- ✓ Quick feedback (< 1 minute)
+
+**Expected outcome:**
+- Job completes with `FINISHED:COMPLETED` status
+- No `EXECUTION_EXCEPTION`
+- Results directory created in `/tmp/nvflare/poc`
+
+### Test 2: Docker POC (After Test 1 passes)
+
+**Purpose**: Test with server in Docker container (production-like setup).
+
+**Run:**
+```bash
+./test.sh
+```
+
+**What it tests:**
+- ✓ Everything from Test 1
+- ✓ Server runs in Docker with dev code
+- ✓ Clients run locally
+- ✓ Checkpoint accessible only in server container
+- ✓ Volume mounts and networking
+- ✓ FLARE API job submission and monitoring
+- ✓ Real-time Docker log streaming
+
+**Expected outcome:**
+- Docker container starts successfully
+- Job completes with `FINISHED:COMPLETED` status
+- Automatic log display on error
+- Server logs streamed in real-time with `[SERVER]` prefix
 
 ---
 
@@ -83,57 +138,10 @@ examples/advanced/model_checkpoint/
 ├── test_local_poc.py        # TEST 1: Simple local POC (no Docker) - START HERE
 ├── test.sh                  # TEST 2: Automated Docker test
 ├── test_interactive.sh      # TEST 2: Interactive Docker test
-├── README.md                # This file
-└── RUN_TESTS.md             # Testing strategy guide
+└── README.md                # This file
 ```
 
-## Quick Start
-
-**Step 1: Test locally first (recommended)**
-```bash
-cd examples/advanced/model_checkpoint
-python test_local_poc.py --use_dict_config --checkpoint /tmp/test_checkpoint.pt
-```
-
-**Step 2: Test with Docker (after Step 1 passes)**
-```bash
-./test.sh
-```
-
-See `RUN_TESTS.md` for detailed testing strategy.
-
-## Prerequisites
-
-```bash
-# Ensure NVFlare CLI is installed
-nvflare --version
-
-# Ensure Docker is running (required for server container)
-docker ps
-
-# Navigate to this directory
-cd examples/model_checkpoint
-```
-
-## Quick Start
-
-Run the automated test:
-
-```bash
-./test_with_cli.sh
-```
-
-This will:
-1. **Build local Docker image** with development code from `2.7_recipe_interface_part2_stage` branch
-2. Clean existing POC environment
-3. Prepare POC with 2 clients **and local Docker image**
-4. Generate checkpoint `pretrained_model.pt`
-5. Copy checkpoint to **server Docker container workspace** (not to clients)
-6. Start POC services (server in Docker with dev code, clients as processes)
-7. Export and submit job with dict config + checkpoint
-8. Monitor job execution
-
-## Manual Steps
+## Manual Steps (Docker Test)
 
 ### Step 0: Build Local Docker Image
 
@@ -371,7 +379,8 @@ Host: /tmp/nvflare/poc/.../server/startup/              → Container: /workspac
 
 ## Notes
 
-- This test is **NOT intended for git check-in**
 - Tests the branch `2.7_recipe_interface_part2_stage`
 - Uses POC mode (not production deployment)
 - Checkpoint is server-only by design (tests realistic scenario)
+- Docker image is cached and auto-rebuilds only when Dockerfile changes
+- Always run Test 1 (local) before Test 2 (Docker) to isolate issues
