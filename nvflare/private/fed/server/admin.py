@@ -89,9 +89,8 @@ def check_client_replies(replies: List[ClientReply], client_sites: List[str], co
         replies_by_client = {r.client_name: r for r in replies}
         missing_clients = [c for c in client_sites if c not in replies_by_client]
         if missing_clients:
-            display_missing = ", ".join(missing_clients)
             raise RuntimeError(
-                f"Failed to {command} to the clients {display_sites}: missing replies from {display_missing}."
+                f"Failed to {command} to the clients {display_sites}: missing replies from {missing_clients}."
             )
 
         for client_name in client_sites:
@@ -109,8 +108,10 @@ def check_client_replies(replies: List[ClientReply], client_sites: List[str], co
             if isinstance(r.reply.body, str) and ERROR_MSG_PREFIX in r.reply.body:
                 error_msg += f"	{client_name}: {r.reply.body}\n"
     else:
-        for r, client_name in zip(replies, client_sites):
-            if r.reply and ERROR_MSG_PREFIX in r.reply.body:
+        replies_by_client = {r.client_name: r for r in replies}
+        for client_name in client_sites:
+            r = replies_by_client.get(client_name)
+            if r and r.reply and isinstance(r.reply.body, str) and r.reply.body.startswith(ERROR_MSG_PREFIX):
                 error_msg += f"	{client_name}: {r.reply.body}\n"
 
     if error_msg != "":
