@@ -113,6 +113,48 @@ class TestSystemStatus:
 
         mock_sess.check_status.assert_called_once_with("all", None)
 
+    def test_get_system_session_warns_when_target_defaults_to_poc(self):
+        from nvflare.tool.system import system_cli
+
+        args = MagicMock()
+        args.target = None
+        args.startup_kit = None
+
+        with patch("nvflare.utils.cli_utils.get_startup_kit_dir_for_target", return_value="/tmp/startup"):
+            with patch("os.path.isdir", return_value=True):
+                with patch("nvflare.fuel.utils.config_factory.ConfigFactory.load_config") as mock_load:
+                    mock_load.return_value = MagicMock(to_dict=lambda: {"admin": {"username": "admin@nvidia.com"}})
+                    with patch("nvflare.tool.cli_output.print_human") as mock_print:
+                        with patch("nvflare.tool.cli_output.get_connect_timeout", return_value=4.0):
+                            with patch("nvflare.tool.cli_session.new_cli_session", return_value=MagicMock()):
+                                system_cli._get_system_session(args)
+
+        mock_print.assert_called_once_with("No --target specified; defaulting to the POC startup kit.")
+
+    def test_get_system_session_resolves_startup_kit_once(self):
+        from nvflare.tool.system import system_cli
+
+        args = MagicMock()
+        args.target = "prod"
+        args.startup_kit = None
+
+        with patch("nvflare.utils.cli_utils.get_startup_kit_dir_for_target", return_value="/tmp/startup") as mock_get:
+            with patch("os.path.isdir", return_value=True):
+                with patch("nvflare.fuel.utils.config_factory.ConfigFactory.load_config") as mock_load:
+                    mock_load.return_value = MagicMock(to_dict=lambda: {"admin": {"username": "admin@nvidia.com"}})
+                    with patch("nvflare.tool.cli_output.get_connect_timeout", return_value=4.0):
+                        with patch("nvflare.tool.cli_session.new_cli_session", return_value=MagicMock()):
+                            system_cli._get_system_session(args)
+
+        mock_get.assert_called_once_with(startup_kit_dir=None, target="prod")
+
+    def test_system_session_none_guard_when_get_system_session_returns_none(self):
+        from nvflare.tool.system import system_cli
+
+        with patch("nvflare.tool.system.system_cli._get_system_session", return_value=None):
+            with system_cli._system_session():
+                pass
+
 
 class TestSystemResources:
     """Tests for nvflare system resources command."""

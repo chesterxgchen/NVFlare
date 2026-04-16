@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nvflare.fuel.flare_api.api_spec import NoConnection
 from nvflare.tool import cli_output
 
 
@@ -75,6 +76,14 @@ class TestSystemResources:
             with pytest.raises(SystemExit) as exc_info:
                 cmd_system_resources(args)
         assert exc_info.value.code == 2
+
+    def test_resources_propagates_no_connection(self):
+        from nvflare.tool.system.system_cli import cmd_system_resources
+
+        args = self._make_args()
+        with patch("nvflare.tool.system.system_cli._get_system_session", side_effect=NoConnection()):
+            with pytest.raises(NoConnection):
+                cmd_system_resources(args)
 
     def test_resources_default_target_is_all(self, capsys):
         """When target is None, defaults to 'all'."""

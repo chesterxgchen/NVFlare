@@ -49,11 +49,17 @@ def test_job_get_session_uses_connect_timeout_env(monkeypatch):
 def test_system_get_session_uses_connect_timeout_env(monkeypatch):
     from nvflare.tool.system import system_cli
 
-    with patch("nvflare.utils.cli_utils.get_hidden_config", return_value=(None, {})):
-        with patch("nvflare.utils.cli_utils.get_startup_kit_dir_for_target", return_value="/tmp/startup"):
-            with patch("nvflare.tool.cli_output.get_connect_timeout", return_value=4.0):
-                with patch("nvflare.tool.cli_session.new_cli_session") as mock_session:
-                    system_cli._get_system_session()
+    args = MagicMock()
+    args.target = "poc"
+    args.startup_kit = None
+
+    with patch("nvflare.utils.cli_utils.get_startup_kit_dir_for_target", return_value="/tmp/startup"):
+        with patch("os.path.isdir", return_value=True):
+            with patch("nvflare.fuel.utils.config_factory.ConfigFactory.load_config") as mock_load:
+                mock_load.return_value = MagicMock(to_dict=lambda: {"admin": {"username": "admin@nvidia.com"}})
+                with patch("nvflare.tool.cli_output.get_connect_timeout", return_value=4.0):
+                    with patch("nvflare.tool.cli_session.new_cli_session") as mock_session:
+                        system_cli._get_system_session(args)
 
     _, kwargs = mock_session.call_args
     assert kwargs["timeout"] == 4.0

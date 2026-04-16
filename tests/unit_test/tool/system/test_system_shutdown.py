@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nvflare.fuel.flare_api.api_spec import AuthenticationError
 from nvflare.tool import cli_output
 
 
@@ -105,3 +106,11 @@ class TestSystemShutdown:
             with pytest.raises(SystemExit) as exc_info:
                 cmd_system_shutdown(args)
         assert exc_info.value.code == 2
+
+    def test_shutdown_propagates_authentication_error(self):
+        from nvflare.tool.system.system_cli import cmd_system_shutdown
+
+        args = self._make_args(force=True)
+        with patch("nvflare.tool.system.system_cli._get_system_session", side_effect=AuthenticationError("bad cert")):
+            with pytest.raises(AuthenticationError, match="bad cert"):
+                cmd_system_shutdown(args)

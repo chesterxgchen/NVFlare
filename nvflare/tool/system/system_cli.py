@@ -18,6 +18,7 @@ import sys
 import time
 from contextlib import contextmanager
 
+from nvflare.fuel.flare_api.api_spec import AuthenticationError, NoConnection
 from nvflare.tool.cli_output import output_error, output_ok, output_usage_error
 
 CMD_SYSTEM_STATUS = "status"
@@ -118,36 +119,54 @@ def resolve_log_config(level_str, config_str):
     return level_str
 
 
-def _get_system_session():
+def _get_system_session(args=None):
     """Create a secure session using the startup kit."""
+    from nvflare.fuel.utils.config_factory import ConfigFactory
+    from nvflare.tool.cli_output import get_connect_timeout, print_human
     from nvflare.tool.cli_session import new_cli_session
-    from nvflare.utils.cli_utils import get_hidden_config, get_startup_kit_dir_for_target
+    from nvflare.utils.cli_utils import get_startup_kit_dir_for_target
 
     try:
-        from nvflare.tool.job.job_cli import find_admin_user_and_dir
+        startup_target = getattr(args, "target", None) or "poc"
+        startup_override = getattr(args, "startup_kit", None)
+        if getattr(args, "target", None) is None and startup_override is None:
+            print_human("No --target specified; defaulting to the POC startup kit.")
 
-        username, startup = find_admin_user_and_dir()
-    except Exception:
-        _, nvflare_config = get_hidden_config()
-        startup = nvflare_config.get("poc.startup_kit", None) if nvflare_config else None
-        username = None
+        startup = get_startup_kit_dir_for_target(startup_kit_dir=startup_override, target=startup_target)
+        if os.path.basename(startup) == "startup":
+            admin_user_dir = os.path.dirname(startup)
+            startup_dir = startup
+        else:
+            admin_user_dir = startup
+            startup_dir = os.path.join(admin_user_dir, "startup")
 
-    if not startup:
-        startup = get_startup_kit_dir_for_target(target="poc")
+        if not os.path.isdir(startup_dir):
+            raise ValueError(
+                f"startup kit directory '{startup}' must be an admin startup kit directory "
+                f"or its 'startup' subdirectory"
+            )
 
-    from nvflare.tool.cli_output import get_connect_timeout
+        fed_admin_config = ConfigFactory.load_config("fed_admin.json", [startup_dir])
+        if not fed_admin_config:
+            raise ValueError(f"Unable to locate fed_admin configuration from startup kit location {startup}")
+
+        username = fed_admin_config.to_dict()["admin"].get("username", None)
+        startup = admin_user_dir
+    except ValueError as e:
+        output_error("STARTUP_KIT_MISSING", exit_code=2, detail=str(e))
 
     timeout = get_connect_timeout()
     return new_cli_session(username=username, startup_kit_location=startup, timeout=timeout)
 
 
 @contextmanager
-def _system_session():
-    sess = _get_system_session()
+def _system_session(args=None):
+    sess = _get_system_session(args)
     try:
         yield sess
     finally:
-        sess.close()
+        if sess is not None:
+            sess.close()
 
 
 def _fmt_ts(ts):
@@ -277,7 +296,7 @@ def cmd_system_status(args):
     client_names = getattr(args, "client_names", [])
 
     try:
-        with _system_session() as sess:
+        with _system_session(args) as sess:
             result = sess.check_status(target_type, client_names if client_names else None)
     except Exception as e:
         output_error(
@@ -306,8 +325,10 @@ def cmd_system_resources(args):
     client_names = getattr(args, "client_names", [])
 
     try:
-        with _system_session() as sess:
+        with _system_session(args) as sess:
             result = sess.report_resources(target_type, client_names if client_names else None)
+    except (AuthenticationError, NoConnection):
+        raise
     except Exception as e:
         output_error("CONNECTION_FAILED", exit_code=2, detail=str(e))
         return
@@ -337,8 +358,10 @@ def cmd_system_shutdown(args):
     _confirm_or_force(f"Really shutdown {target}?", args)
 
     try:
-        with _system_session() as sess:
+        with _system_session(args) as sess:
             sess.shutdown(target, client_names if client_names else None)
+    except (AuthenticationError, NoConnection):
+        raise
     except Exception as e:
         output_error("CONNECTION_FAILED", exit_code=2, detail=str(e))
         return
@@ -362,8 +385,10 @@ def cmd_system_restart(args):
     _confirm_or_force(f"Really restart {target}?", args)
 
     try:
-        with _system_session() as sess:
+        with _system_session(args) as sess:
             result = sess.restart(target, client_names if client_names else None)
+    except (AuthenticationError, NoConnection):
+        raise
     except Exception as e:
         output_error("CONNECTION_FAILED", exit_code=2, detail=str(e))
         return
@@ -393,7 +418,7 @@ def cmd_system_version(args):
     target_type = "all" if site == "all" else "server" if site == "server" else "client"
 
     try:
-        with _system_session() as sess:
+        with _system_session(args) as sess:
             sys_info = sess.get_system_info()
             known_sites = ["server"] + [client.name for client in sys_info.client_info]
 
@@ -404,6 +429,8 @@ def cmd_system_version(args):
 
             targets = [site] if target_type == "client" else None
             raw_versions = sess.report_version(target_type, targets)
+    except (AuthenticationError, NoConnection):
+        raise
     except Exception as e:
         output_error("CONNECTION_FAILED", exit_code=2, detail=str(e))
         return
@@ -471,8 +498,10 @@ def cmd_system_log(args):
         return
 
     try:
-        with _system_session() as sess:
+        with _system_session(args) as sess:
             sess.configure_site_log(log_config, target=site)
+    except (AuthenticationError, NoConnection):
+        raise
     except Exception as e:
         output_error("CONNECTION_FAILED", exit_code=2, detail=str(e))
         return

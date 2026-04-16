@@ -12,7 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 from nvflare import cli as cli_mod
+from nvflare.fuel.flare_api.api_spec import AuthenticationError
 
 
 def test_auth_hint_for_unknown_study():
@@ -35,3 +42,19 @@ def test_auth_hint_for_invalid_study_name():
 
 def test_auth_hint_defaults_to_credentials():
     assert cli_mod._auth_hint_from_detail("Incorrect user name or password") == "Check startup kit credentials."
+
+
+def test_run_outputs_cert_auth_hint_in_json_mode(capsys):
+    args = SimpleNamespace(sub_command="system", version=False, out_format="json", connect_timeout=5.0, debug=False)
+
+    with patch.object(cli_mod, "parse_args", return_value=(MagicMock(), args, {"system": MagicMock()})):
+        with patch.object(
+            cli_mod, "handlers", {"system": MagicMock(side_effect=AuthenticationError("certificate validation failed"))}
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                cli_mod.run("nvflare")
+
+    assert exc_info.value.code == 2
+    envelope = json.loads(capsys.readouterr().out)
+    assert envelope["error_code"] == "AUTH_FAILED"
+    assert envelope["hint"] == "Check startup kit credentials."

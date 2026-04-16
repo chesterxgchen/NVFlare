@@ -23,6 +23,7 @@ from nvflare.utils.cli_utils import (
     get_hidden_nvflare_config_path,
     get_hidden_nvflare_dir,
     get_startup_kit_dir_for_target,
+    load_hidden_config,
     migrate_config_to_v2,
 )
 
@@ -44,8 +45,9 @@ class TestCLIUtils:
                 mock1.return_value = True
                 prev_conf = CF.parse_string(
                     """
-                        poc_workspace {
-                            path = "/tmp/nvflare/poc"
+                        version = 2
+                        poc {
+                            workspace = "/tmp/nvflare/poc"
                         }
                     """
                 )
@@ -105,6 +107,24 @@ class TestCLIUtils:
             with patch("nvflare.utils.cli_utils.check_startup_dir"):
                 assert "/tmp/nvflare/poc/prod_00" == get_startup_kit_dir_for_target(target="poc")
                 assert "/tmp/nvflare/prod/admin@nvidia.com" == get_startup_kit_dir_for_target(target="prod")
+
+    def test_load_hidden_config_skips_migration_for_pure_v2(self):
+        config = CF.parse_string(
+            """
+                version = 2
+                poc {
+                    startup_kit = "/tmp/nvflare/poc/prod_00"
+                    workspace = "/tmp/nvflare/poc"
+                }
+            """
+        )
+        with patch("nvflare.utils.cli_utils.get_or_create_hidden_nvflare_dir", return_value=Path.home() / ".nvflare"):
+            with patch("nvflare.utils.cli_utils.load_config", return_value=config):
+                with patch("nvflare.utils.cli_utils.migrate_config_to_v2") as mock_migrate:
+                    loaded = load_hidden_config()
+
+        assert loaded is config
+        mock_migrate.assert_not_called()
 
     @pytest.mark.parametrize(
         "inputs, result", [(([], "a"), ["a"]), ((["a"], "a"), ["a"]), ((["a", "b"], "b"), ["a", "b"])]

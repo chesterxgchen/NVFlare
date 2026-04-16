@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nvflare.fuel.flare_api.api_spec import AuthenticationError
 from nvflare.tool import cli_output
 
 
@@ -191,6 +192,17 @@ class TestSystemLog:
             with pytest.raises(SystemExit) as exc_info:
                 cmd_system_log(args)
         assert exc_info.value.code == 2
+
+    def test_log_level_propagates_authentication_error(self):
+        from nvflare.tool.system.system_cli import cmd_system_log
+
+        args = self._make_args(level="INFO")
+
+        with patch(
+            "nvflare.tool.system.system_cli._get_system_session", side_effect=AuthenticationError("certificate issue")
+        ):
+            with pytest.raises(AuthenticationError, match="certificate issue"):
+                cmd_system_log(args)
 
     def test_log_level_site_passed_to_session(self):
         """--site value is forwarded to sess.configure_site_log as target kwarg."""
