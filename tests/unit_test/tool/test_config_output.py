@@ -127,3 +127,19 @@ class TestConfigOutput:
         data = json.loads(captured.out)
         assert data["data"]["poc_startup_kit_dir"] == "/path/to/poc-startup"
         assert data["data"]["prod_startup_kit_dir"] is None
+
+    def test_invalid_config_value_does_not_save_partial_config(self):
+        from nvflare.cli import handle_config_cmd
+
+        args = self._make_args(startup_kit_dir="/bad/startup")
+        mock_config = MagicMock()
+
+        with patch("nvflare.cli.get_hidden_config", return_value=("/fake/config.conf", mock_config)):
+            with patch("nvflare.cli.create_startup_kit_config", side_effect=ValueError("bad startup kit")):
+                with patch("nvflare.cli.save_config") as mock_save:
+                    with patch("nvflare.tool.cli_schema.handle_schema_flag"):
+                        with pytest.raises(SystemExit) as exc_info:
+                            handle_config_cmd(args)
+
+        assert exc_info.value.code == 4
+        mock_save.assert_not_called()
