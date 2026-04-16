@@ -298,6 +298,8 @@ def cmd_system_status(args):
     try:
         with _system_session(args) as sess:
             result = sess.check_status(target_type, client_names if client_names else None)
+    except (AuthenticationError, NoConnection):
+        raise
     except Exception as e:
         output_error(
             "CONNECTION_FAILED",

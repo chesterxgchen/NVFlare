@@ -87,9 +87,6 @@ def check_packages(args):
         }
     )
 
-    if not overall_pass:
-        sys.exit(1)
-
 
 def main():
     parser = argparse.ArgumentParser("nvflare preflight check")

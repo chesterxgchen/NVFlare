@@ -833,6 +833,14 @@ class TestLoadSingleSiteYaml:
             _load_single_site_yaml(path)
         assert exc_info.value.code == 2
 
+    def test_invalid_type_exits_4(self, tmp_path):
+        from nvflare.tool.cert.cert_commands import _load_single_site_yaml
+
+        path = self._write_yaml(tmp_path, "name: h1\norg: ACME\ntype: gpu\n")
+        with pytest.raises(SystemExit) as exc_info:
+            _load_single_site_yaml(path)
+        assert exc_info.value.code == 4
+
 
 # ---------------------------------------------------------------------------
 # handle_cert_csr --project-file tests

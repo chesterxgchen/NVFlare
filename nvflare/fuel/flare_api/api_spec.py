@@ -25,7 +25,7 @@ class MonitorReturnCode(int, enum.Enum):
     ENDED_BY_CB = 2
 
 
-class NoConnection(Exception):
+class NoConnection(ConnectionError):
     pass
 
 

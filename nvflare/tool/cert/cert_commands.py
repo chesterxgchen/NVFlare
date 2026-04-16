@@ -38,6 +38,8 @@ from nvflare.lighter.utils import (
 from nvflare.tool.cli_output import output_error, output_ok, output_usage_error
 from nvflare.tool.cli_schema import handle_schema_flag
 
+_VALID_CERT_TYPES = {"client", "server", "org_admin", "lead", "member"}
+
 # ---------------------------------------------------------------------------
 # cert init
 # ---------------------------------------------------------------------------
@@ -231,6 +233,15 @@ def _load_single_site_yaml(path: str) -> dict:
     cert_type = data.get("type")
     if not name or not org or not cert_type:
         output_error("INVALID_ARGS", exit_code=2, detail="site yaml must contain: name, org, type")
+    if cert_type not in _VALID_CERT_TYPES:
+        output_error(
+            "INVALID_ARGS",
+            exit_code=4,
+            detail=(
+                f"invalid cert type '{cert_type}' in site yaml; "
+                f"must be one of: {', '.join(sorted(_VALID_CERT_TYPES))}"
+            ),
+        )
     return {"name": name, "org": org, "cert_type": cert_type}
 
 
@@ -517,7 +528,6 @@ def handle_cert_sign(args):
         output_error("INVALID_CSR", path=csr_path)
 
     # 6. Resolve cert type: -t is authoritative when given; otherwise read from CSR UNSTRUCTURED_NAME.
-    _VALID_CERT_TYPES = {"client", "server", "org_admin", "lead", "member"}
     cert_type = getattr(args, "cert_type", None)
     if not cert_type:
         # Read proposed role from CSR subject UNSTRUCTURED_NAME (set by 'cert csr -t')

@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nvflare.fuel.flare_api.api_spec import InternalError, InvalidJobDefinition
+from nvflare.fuel.flare_api.api_spec import InternalError, InvalidJobDefinition, NoConnection
 from nvflare.fuel.flare_api.flare_api import Session
 from nvflare.fuel.hci.client.api import APIStatus, ResultKey
 from nvflare.fuel.hci.proto import MetaKey, MetaStatusValue
@@ -65,3 +65,7 @@ def test_do_command_includes_syntax_error_details():
 
     with pytest.raises(InternalError, match=r"protocol error: ERROR_SYNTAX: usage: submit_job job_folder"):
         session._do_command("submit_job /tmp/job", enforce_meta=False)
+
+
+def test_no_connection_is_connection_error():
+    assert issubclass(NoConnection, ConnectionError)
