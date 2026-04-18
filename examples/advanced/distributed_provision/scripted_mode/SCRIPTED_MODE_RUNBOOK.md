@@ -2,6 +2,11 @@
 
 Minimal scripted flow. JSON on stdout via `--out-format json`.
 
+## Requirements
+- `nvflare`
+- `jq`
+- `openssl` if you want to verify the `rootCA.pem` SHA256 fingerprint before packaging and startup
+
 ## Inputs
 - One **single-site** `site.yml` per participant (server and clients).
 - Each `site.yml` must contain: `name`, `org`, `type`.

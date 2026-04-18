@@ -25,6 +25,12 @@ The resulting startup kits are structurally identical to those produced by
 
 .. note::
 
+   Install ``openssl`` on the Project Admin and Site Admin machines if you want
+   to verify the SHA256 fingerprint of ``rootCA.pem`` through a trusted
+   out-of-band channel before packaging and startup.
+
+.. note::
+
    Distributed provisioning uses mTLS as the sole trust anchor. No ``signature.json``
    is generated. The ``require_signed_jobs`` policy is always enabled on the server.
 

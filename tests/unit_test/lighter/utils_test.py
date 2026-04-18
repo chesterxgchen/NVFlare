@@ -13,10 +13,12 @@
 # limitations under the License.
 
 import datetime
+import io
 import json
 import os
 import shutil
 import tempfile
+from unittest.mock import patch
 
 import pytest
 from cryptography import x509
@@ -25,9 +27,12 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
+import nvflare.lighter.utils as lighter_utils
 from nvflare.lighter.impl.cert import serialize_cert
 from nvflare.lighter.tool_consts import NVFLARE_SIG_FILE
-from nvflare.lighter.utils import load_yaml, sign_folders, verify_folder_signature
+from nvflare.lighter.utils import Identity
+from nvflare.lighter.utils import generate_cert as generate_lighter_cert
+from nvflare.lighter.utils import load_private_key_file, load_yaml, sign_folders, verify_folder_signature
 
 folders = ["folder1", "folder2"]
 files = ["file1", "file2"]
@@ -277,3 +282,48 @@ class TestVerifyFolderSignature:
         assert (
             verify_folder_signature(folder, root_ca_path, single_signer=False, signature_file=custom_sig_file) is True
         )
+
+
+def test_generate_cert_uses_timezone_aware_now(monkeypatch):
+    class FakeDateTime(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz == datetime.timezone.utc
+            return cls(2026, 1, 2, 3, 4, 5, tzinfo=datetime.timezone.utc)
+
+        @classmethod
+        def utcnow(cls):
+            raise AssertionError("generate_cert should not call utcnow()")
+
+    monkeypatch.setattr(lighter_utils.datetime, "datetime", FakeDateTime)
+
+    issuer_key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
+    subject_key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
+    issuer = Identity("issuer", "org")
+    subject = Identity("subject", "org")
+
+    cert = generate_lighter_cert(subject, issuer, issuer_key, subject_key.public_key(), valid_days=30)
+    expected_now = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=datetime.timezone.utc)
+
+    if hasattr(cert, "not_valid_before_utc"):
+        assert cert.not_valid_before_utc == expected_now
+        assert cert.not_valid_after_utc == expected_now + datetime.timedelta(days=30)
+
+
+def test_load_private_key_file_reads_binary_pem():
+    pem_bytes = b"-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n"
+    expected_key = object()
+
+    def fake_open(path, mode):
+        assert path == "test.key"
+        assert mode == "rb"
+        return io.BytesIO(pem_bytes)
+
+    with (
+        patch("builtins.open", side_effect=fake_open),
+        patch("nvflare.lighter.utils.serialization.load_pem_private_key", return_value=expected_key) as mock_load,
+    ):
+        key = load_private_key_file("test.key")
+
+    assert key is expected_key
+    mock_load.assert_called_once_with(pem_bytes, password=None, backend=default_backend())

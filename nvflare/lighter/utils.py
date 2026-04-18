@@ -51,6 +51,7 @@ def generate_cert(
     if isinstance(server_additional_hosts, str):
         server_additional_hosts = [server_additional_hosts]
 
+    now = datetime.datetime.now(datetime.timezone.utc)
     x509_subject = x509_name(subject.name, subject.org, subject.role)
     x509_issuer = x509_name(issuer.name, issuer.org, issuer.role)
 
@@ -60,8 +61,8 @@ def generate_cert(
         .issuer_name(x509_issuer)
         .public_key(subject_pub_key)
         .serial_number(x509.random_serial_number())
-        .not_valid_before(datetime.datetime.utcnow())
-        .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=valid_days))
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=valid_days))
         .add_extension(
             x509.SubjectKeyIdentifier.from_public_key(subject_pub_key),
             critical=False,
@@ -216,8 +217,8 @@ def load_private_key(data: str):
 
 
 def load_private_key_file(file_path):
-    with open(file_path, "rt") as f:
-        return load_private_key(f.read())
+    with open(file_path, "rb") as f:
+        return serialization.load_pem_private_key(f.read(), password=None, backend=default_backend())
 
 
 def sign_folders(folder, signing_pri_key, crt_path=None, max_depth=9999, signature_file=NVFLARE_SIG_FILE):
