@@ -78,9 +78,9 @@ def generate_cert(
             x509.KeyUsage(
                 digital_signature=True,
                 content_commitment=True,
-                key_encipherment=True,
-                data_encipherment=True,
-                key_agreement=True,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
                 key_cert_sign=True,
                 crl_sign=True,
                 encipher_only=False,

@@ -102,6 +102,27 @@ def test_cert_to_dict_serial_number_is_hex_string():
     assert cert_dict["serial_number"].startswith("0x")
 
 
+def test_generate_cert_ca_key_usage_is_restricted():
+    root_pri_key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
+    root_pub_key = root_pri_key.public_key()
+
+    cert = generate_lighter_cert(
+        subject=Identity("root", "nvidia"),
+        issuer=Identity("root", "nvidia"),
+        signing_pri_key=root_pri_key,
+        subject_pub_key=root_pub_key,
+        ca=True,
+    )
+
+    key_usage = cert.extensions.get_extension_for_class(x509.KeyUsage).value
+    assert key_usage.key_cert_sign is True
+    assert key_usage.crl_sign is True
+    assert key_usage.digital_signature is True
+    assert key_usage.key_encipherment is False
+    assert key_usage.data_encipherment is False
+    assert key_usage.key_agreement is False
+
+
 def create_folder():
     tmp_dir = tempfile.TemporaryDirectory().name
     for folder in folders:

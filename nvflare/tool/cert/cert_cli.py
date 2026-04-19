@@ -31,6 +31,17 @@ def _name_type(value: str) -> str:
     return value
 
 
+def _positive_int(value: str) -> int:
+    """Argparse type function: validate integer values that must be >= 1."""
+    try:
+        parsed = int(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e))
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("value must be >= 1")
+    return parsed
+
+
 def _def_cert_init_parser(cert_sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
     global _cert_init_parser
     p = cert_sub.add_parser(
@@ -195,9 +206,16 @@ def _def_cert_sign_parser(cert_sub: argparse._SubParsersAction) -> argparse.Argu
         help="Cert type to issue. Authoritative — embedded in signed cert UNSTRUCTURED_NAME.",
     )
     p.add_argument(
+        "--accept-csr-role",
+        action="store_true",
+        default=False,
+        dest="accept_csr_role",
+        help="Accept the certificate type embedded in the CSR instead of overriding it with -t/--type.",
+    )
+    p.add_argument(
         "--valid-days",
         required=False,
-        type=int,
+        type=_positive_int,
         default=1095,
         dest="valid_days",
         help="Certificate validity in days. Default: 1095 (3 years).",
