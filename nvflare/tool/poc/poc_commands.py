@@ -838,15 +838,17 @@ def _clean_poc(poc_workspace: str):
 
     if os.path.isdir(poc_workspace):
         project_config, service_config = setup_service_config(poc_workspace)
-        if project_config is not None:
-            if is_poc_ready(poc_workspace, service_config, project_config):
-                if not is_poc_running(poc_workspace, service_config, project_config):
-                    shutil.rmtree(poc_workspace, ignore_errors=True)
-                    print(f"{poc_workspace} is removed")
-                else:
-                    print("system is still running, please stop the system first.")
+        if project_config is None:
+            raise CLIException(f"{poc_workspace} is not valid poc directory")
+        if is_poc_ready(poc_workspace, service_config, project_config):
+            if not is_poc_running(poc_workspace, service_config, project_config):
+                shutil.rmtree(poc_workspace, ignore_errors=True)
+                print(f"{poc_workspace} is removed")
+                return True
             else:
-                raise CLIException(f"{poc_workspace} is not valid poc directory")
+                raise CLIException("system is still running, please stop the system first.")
+        else:
+            raise CLIException(f"{poc_workspace} is not valid poc directory")
     else:
         raise CLIException(f"{poc_workspace} is not valid poc directory")
 
