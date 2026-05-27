@@ -287,7 +287,7 @@ def output_ok(
             recovery_category=recovery_category,
             suggested_skill=suggested_skill,
         )
-        print(json.dumps(payload))
+        print(json.dumps(payload), flush=True)
     else:
         _render_table(safe_output_data)
     if exit_code != 0:
