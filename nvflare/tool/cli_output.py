@@ -287,7 +287,7 @@ def output_ok(
             recovery_category=recovery_category,
             suggested_skill=suggested_skill,
         )
-        print(json.dumps(payload), flush=True)
+        print(json.dumps(payload))
     else:
         _render_table(safe_output_data)
     if exit_code != 0:
@@ -325,7 +325,6 @@ def output_error(
             "status": "error",
             "exit_code": exit_code,
             "error_code": error_code,
-            "code": error_code,
             "message": safe_error_message,
             "hint": safe_error_hint,
         }
@@ -391,7 +390,6 @@ def output_error_message(
             "status": "error",
             "exit_code": exit_code,
             "error_code": error_code,
-            "code": error_code,
             "message": safe_error_message,
             "hint": safe_error_hint,
         }
