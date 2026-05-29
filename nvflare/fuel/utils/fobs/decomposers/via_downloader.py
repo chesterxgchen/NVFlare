@@ -553,8 +553,10 @@ class ViaDownloaderDecomposer(fobs.Decomposer, ABC):
 
         self.logger.debug(f"trying to get item for {item_id=} from {type(items)=}")
 
+        supports_contains = hasattr(items, "__contains__")
+
         make_lazy_ref_fn = getattr(items, "make_lazy_ref", None)
-        if callable(make_lazy_ref_fn) and item_id in items:
+        if callable(make_lazy_ref_fn) and supports_contains and item_id in items:
             item = make_lazy_ref_fn(item_id)
             self.logger.debug(f"{tid=} created lazy ref for {item_id}")
             return item
@@ -564,13 +566,16 @@ class ViaDownloaderDecomposer(fobs.Decomposer, ABC):
             self.logger.error(f"downloaded data for {item_id} does not support get(): {type(items)}")
             raise RuntimeError(f"FOBS download data has invalid type for item {item_id}")
 
-        if hasattr(items, "__contains__") and item_id not in items:
+        if supports_contains and item_id not in items:
             self.logger.error(f"cannot find item {item_id} from loaded data")
             raise RuntimeError(f"FOBS download data is incomplete: item {item_id} is missing")
 
         item = items.get(item_id)
         self.logger.debug(f"{tid=} found item {item_id}: {type(item)}")
         if item is None:
+            if not supports_contains:
+                self.logger.error(f"downloaded item {item_id} is missing or None")
+                raise RuntimeError(f"FOBS download data is incomplete: item {item_id} is missing or None")
             self.logger.error(f"downloaded item {item_id} is None")
             raise RuntimeError(f"FOBS download data is incomplete: item {item_id} is None")
         return item

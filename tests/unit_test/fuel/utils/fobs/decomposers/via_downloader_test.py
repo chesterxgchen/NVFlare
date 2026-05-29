@@ -74,6 +74,11 @@ class _ItemsWithCallableLazyRef:
         return f"get_{item_id}"
 
 
+class _ItemsWithoutContains:
+    def get(self, item_id):
+        return None
+
+
 class TestViaDownloaderRecomposeLazyRefGuard:
     def test_non_callable_make_lazy_ref_falls_back_to_get(self):
         decomposer = _DummyViaDownloader()
@@ -110,4 +115,11 @@ class TestViaDownloaderRecomposeLazyRefGuard:
         manager = SimpleNamespace(fobs_ctx={decomposer.items_key: {"T0": None}})
 
         with pytest.raises(RuntimeError, match="item T0 is None"):
+            decomposer.recompose({EncKey.TYPE: EncType.REF, EncKey.DATA: "T0"}, manager)
+
+    def test_none_from_container_without_contains_reports_ambiguous_state(self):
+        decomposer = _DummyViaDownloader()
+        manager = SimpleNamespace(fobs_ctx={decomposer.items_key: _ItemsWithoutContains()})
+
+        with pytest.raises(RuntimeError, match="item T0 is missing or None"):
             decomposer.recompose({EncKey.TYPE: EncType.REF, EncKey.DATA: "T0"}, manager)
