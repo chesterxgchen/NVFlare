@@ -69,6 +69,19 @@ def test_build_skill_manifest_reports_invalid_skill_findings(tmp_path):
     assert manifest["findings"][0]["issues"][0]["code"] == "skill-frontmatter-field-required"
 
 
+def test_build_skill_manifest_skips_shared_reference_dirs(tmp_path):
+    _write_skill(tmp_path, "nvflare-test-skill")
+    shared_dir = tmp_path / "_shared"
+    shared_dir.mkdir()
+    shared_dir.joinpath("reference.md").write_text("shared guidance\n", encoding="utf-8")
+
+    manifest = build_skill_manifest(tmp_path, source_type="editable", nvflare_version="2.8.0")
+
+    assert manifest["findings"] == []
+    assert [skill["name"] for skill in manifest["skills"]] == ["nvflare-test-skill"]
+    assert [skill["relative_path"] for skill in manifest["skills"]] == ["nvflare-test-skill"]
+
+
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks are not supported on this platform")
 def test_build_skill_manifest_rejects_skill_symlinks(tmp_path):
     skill_dir = _write_skill(tmp_path, "nvflare-test-skill")

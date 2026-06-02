@@ -16,6 +16,9 @@ skills/
     BENCHMARK.md
 ```
 
+Directories whose names start with `_`, such as `_shared/`, are reference-only
+support content. They are not installable skills and do not contain `SKILL.md`.
+
 Required `SKILL.md` frontmatter fields:
 
 ```yaml

@@ -211,6 +211,20 @@ def test_run_v1_lints_supports_check_selection(tmp_path):
     assert result["summary"]["skill_count"] == 2
 
 
+def test_run_v1_lints_skips_shared_reference_dirs(tmp_path):
+    _write_skill(tmp_path / "skills", "nvflare-valid-skill")
+    shared_dir = tmp_path / "skills" / "_shared"
+    shared_dir.mkdir()
+    shared_dir.joinpath("reference.md").write_text("shared guidance\n", encoding="utf-8")
+    docs_root = _write_design_docs(tmp_path, ["nvflare-valid-skill"])
+
+    result = run_v1_lints(tmp_path / "skills", docs_root=docs_root)
+
+    assert result["status"] == "ok"
+    assert result["summary"]["skill_count"] == 1
+    assert result["findings"] == []
+
+
 def test_run_v1_lints_records_doc_dependent_overlap_skip(tmp_path):
     _write_skill(tmp_path / "skills", "nvflare-valid-skill")
 

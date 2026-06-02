@@ -120,10 +120,15 @@ def validate_skills_root(skills_root: Path | str) -> list[SkillValidationResult]
 
     results = []
     for child in sorted(root.iterdir(), key=lambda p: p.name):
-        if child.name.startswith(".") or not child.is_dir():
+        if should_skip_skill_dir(child):
             continue
         results.append(validate_skill_dir(child))
     return results
+
+
+def should_skip_skill_dir(path: Path) -> bool:
+    """Return whether a skills-root child is metadata/reference-only."""
+    return path.name.startswith(".") or path.name.startswith("_") or not path.is_dir()
 
 
 def _find_closing_delimiter(lines: list[str]) -> Optional[int]:

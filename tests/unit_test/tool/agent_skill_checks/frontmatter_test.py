@@ -187,6 +187,7 @@ def test_validate_skills_root_skips_non_skill_files(tmp_path):
     _write_skill(tmp_path, "nvflare-valid-one")
     (tmp_path / "README.md").write_text("not a skill\n", encoding="utf-8")
     (tmp_path / ".hidden-dir").mkdir()
+    (tmp_path / "_shared").mkdir()
 
     results = validate_skills_root(tmp_path)
 
