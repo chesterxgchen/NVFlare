@@ -25,12 +25,15 @@ debugging that does not ask for FLARE conversion.
 1. Run `nvflare agent inspect <path> --format json` before editing.
 2. Identify the model definition, training loop, data loading, metrics, and
    checkpoint behavior.
-3. Convert training exchange to the FLARE Client API: initialize FLARE, receive
+3. Run `nvflare recipe list --framework pytorch --format json` and select the
+   recipe from the requested FL workflow, not from PyTorch alone. Use FedAvg
+   only for standard horizontal model-parameter aggregation.
+4. Convert training exchange to the FLARE Client API: initialize FLARE, receive
    an `FLModel`, load `params` into the PyTorch model, train or evaluate, and
    send an `FLModel` with updated `params`, metrics, and useful metadata.
-4. Add or update a `job.py` that uses an appropriate PyTorch recipe or job API
+5. Add or update a `job.py` that uses the selected PyTorch recipe or job API
    path for local simulation and export.
-5. Validate locally with `python job.py` and export with
+6. Validate locally with `python job.py` and export with
    `python job.py --export --export-dir <dir>` using the FedJob system
    arguments.
 
@@ -45,5 +48,6 @@ debugging that does not ask for FLARE conversion.
 - Must not generate Python solely to wrap `nvflare` CLI commands or scrape
   human CLI output.
 
-Load `references/pytorch-client-api-conversion.md` for conversion details and
+Load `references/recipe-selection.md` before creating `job.py`,
+`references/pytorch-client-api-conversion.md` for conversion details, and
 `references/job-validation.md` for validation and export guidance.

@@ -12,6 +12,8 @@
       "assertions": [
         "The agent runs nvflare agent inspect before editing.",
         "The agent edits only training, model, job, or small config files.",
+        "The agent checks nvflare recipe list --framework pytorch --format json before selecting the job recipe.",
+        "The agent selects FedAvg only when the requested workflow is standard horizontal model-parameter aggregation.",
         "The generated training code uses nvflare.client receive/send and FLModel for model exchange.",
         "The agent runs python job.py for local validation when dependencies are available.",
         "The agent does not submit to POC or production without explicit approval."
@@ -26,6 +28,14 @@
           {
             "id": "scoped-edits",
             "description": "edits only training, model, job, or small config files"
+          },
+          {
+            "id": "discover-pytorch-recipes",
+            "description": "checks nvflare recipe list --framework pytorch --format json before selecting the job recipe"
+          },
+          {
+            "id": "select-recipe-from-fl-intent",
+            "description": "selects the PyTorch recipe from the requested FL workflow instead of assuming every PyTorch job is FedAvg"
           },
           {
             "id": "use-client-api-for-training-exchange",
