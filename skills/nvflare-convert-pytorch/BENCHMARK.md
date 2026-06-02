@@ -10,6 +10,7 @@ FLARE version: 2.8.0 minimum
 | Check | Status | Notes |
 | --- | --- | --- |
 | Positive trigger | Draft | `pytorch-convert-basic` covers natural PyTorch-to-FL conversion with FedAvg simulation settings. |
+| POC handoff trigger | Draft | `pytorch-approved-poc-handoff` covers explicit post-simulation POC approval with a provided workspace. |
 | Adjacent negative trigger | Draft | Lightning prompt routes away from this skill. |
 | Global negative trigger | Draft | Kubernetes deployment prompt routes away from this skill. |
 | Mandatory behavior | Draft | Behavior IDs cover inspect-first, natural request parsing, recipe discovery, recipe selection from FL intent, scoped edits, Client API exchange, local validation, validation evidence reporting, and failed-validation eval records. |
