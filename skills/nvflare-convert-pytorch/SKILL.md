@@ -81,6 +81,18 @@ record dataset source/version details, follow the existing `download_data` and
 unless asked to tune them, rerun validation, and report measured results and any
 download, license, size, or preprocessing blocker.
 
+Users may ask to generate synthetic data for each site. Treat this as a
+data-generation and prepare/split step, not as a hidden change to training.
+Follow the existing `download_data`/`prepare_data` structure or hello-world
+conventions, make generation deterministic with seed and site count, write
+per-site outputs explicitly, and report generated-data schema and counts.
+
+Users may ask to simulate site heterogeneity such as different training speed,
+learning rate, batch size, epochs, or local workload per site. Prefer per-site
+arguments or per-site config in `job.py` over copying the whole training script.
+Create site-specific scripts only when the behavior cannot be represented by
+arguments/config, and keep the shared training logic factored to avoid drift.
+
 ## Requirements
 
 - Must keep edits scoped to training, model, job, and small config files.
@@ -111,6 +123,10 @@ download, license, size, or preprocessing blocker.
 - For dataset-replacement experiments, record dataset source details, validate
   access/download assumptions, follow existing data-prep structure, and rerun
   with comparable settings.
+- For synthetic-data experiments, add deterministic generation and per-site
+  prepare outputs that follow existing data-prep conventions.
+- For site-heterogeneity experiments, prefer site-specific args/config over
+  duplicate scripts and report each site's settings.
 - Export and inspect the exported job folder when export is requested.
 - Submit to POC only when the user explicitly asks for POC after conversion or
   provides a POC workspace and asks for submission.

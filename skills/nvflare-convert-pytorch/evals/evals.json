@@ -268,6 +268,70 @@
       }
     },
     {
+      "id": "pytorch-synthetic-site-data",
+      "prompt": "Use synthetic data for each site, generate deterministic data for 3 sites, then run the training again and show the result.",
+      "expected_output": "The agent treats this as a synthetic per-site data generation task, follows existing download_data or prepare_data structure, records seed/schema/site counts/output paths, runs validation when feasible, and reports generation and training evidence.",
+      "files": [
+        "evals/files/hello-pt/train.py",
+        "evals/files/hello-pt/model.py"
+      ],
+      "assertions": [
+        "The agent creates or extends a deterministic data generation or prepare_data step.",
+        "The agent follows existing data-prep structure or hello-world conventions.",
+        "The agent writes explicit per-site outputs and reports seed, schema, and site counts.",
+        "The agent reruns validation and reports command, status, metric, and result path."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-convert-pytorch",
+        "mandatory_behavior": [
+          {
+            "id": "deterministic-synthetic-data",
+            "description": "generates synthetic site data deterministically with seed, schema, site count, and sample counts"
+          },
+          {
+            "id": "follow-data-prep-structure",
+            "description": "follows existing download_data and prepare_data helpers or hello-world data-prep conventions"
+          },
+          {
+            "id": "report-synthetic-data-evidence",
+            "description": "reports generation command, seed, schema, per-site counts, validation status, and result path"
+          }
+        ]
+      }
+    },
+    {
+      "id": "pytorch-site-specific-training",
+      "prompt": "Simulate that sites train at different speeds and use different learning rates and batch sizes. Change the generated job and run it again.",
+      "expected_output": "The agent treats this as site-specific training heterogeneity, prefers per-site args or config over duplicate scripts, reruns validation when feasible, and reports per-site settings, commands, status, metrics, and result paths.",
+      "files": [
+        "evals/files/hello-pt/train.py",
+        "evals/files/hello-pt/model.py"
+      ],
+      "assertions": [
+        "The agent prefers per-site args or config in job.py over copying the training script.",
+        "The agent creates site-specific scripts only when args/config cannot express the behavior.",
+        "The agent keeps shared model and training helpers common if scripts are split.",
+        "The agent reports each site's learning rate, batch size, speed simulation, command, status, metric, and result path."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-convert-pytorch",
+        "mandatory_behavior": [
+          {
+            "id": "prefer-site-specific-args",
+            "description": "uses per-site args or config for site-specific training settings before duplicating scripts"
+          },
+          {
+            "id": "avoid-script-drift",
+            "description": "keeps shared model and training logic common when site-specific scripts are unavoidable"
+          },
+          {
+            "id": "report-site-heterogeneity",
+            "description": "reports per-site settings, commands, status, metrics, and result paths"
+          }
+        ]
+      }
+    },
+    {
       "id": "pytorch-negative-lightning",
       "prompt": "Convert my PyTorch Lightning Trainer and LightningModule to an NVFLARE workflow.",
       "expected_output": "The PyTorch conversion skill should not be the lead; route to the Lightning conversion skill when available.",
