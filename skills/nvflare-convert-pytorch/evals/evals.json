@@ -118,6 +118,156 @@
       }
     },
     {
+      "id": "pytorch-iterative-rerun",
+      "prompt": "Change the batch size to 64, increase the training to 5 rounds, switch from FedAvg to SCAFFOLD, and run it again.",
+      "expected_output": "The agent treats this as a scoped update to an existing generated PyTorch FL job, inspects the SCAFFOLD recipe metadata, updates only affected job or training arguments, reruns local validation, exports again if export remains in scope, and reports updated settings and validation evidence.",
+      "files": [
+        "evals/files/hello-pt/train.py",
+        "evals/files/hello-pt/model.py"
+      ],
+      "assertions": [
+        "The agent treats hyperparameter and recipe changes as scoped updates.",
+        "The agent runs nvflare recipe show scaffold-pt --format json before switching recipes.",
+        "The agent updates only affected job or training arguments.",
+        "The agent reruns local validation and reports updated settings and evidence."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-convert-pytorch",
+        "mandatory_behavior": [
+          {
+            "id": "iterative-job-update",
+            "description": "applies requested hyperparameter, round-count, min-client, site-count, or recipe changes to the existing generated job"
+          },
+          {
+            "id": "recipe-change-show",
+            "description": "runs nvflare recipe show for the target recipe before switching recipes"
+          },
+          {
+            "id": "local-validation",
+            "description": "reruns local validation after the scoped job update when dependencies are available"
+          }
+        ]
+      }
+    },
+    {
+      "id": "pytorch-recipe-search",
+      "prompt": "Find the best recipe among the available PyTorch recipes and give me the best accuracy for this training code.",
+      "expected_output": "The agent treats this as bounded experiment planning, asks for missing metric or run budget when needed, lists compatible PyTorch recipes, inspects selected recipe metadata, runs comparable experiments only when authorized and feasible, and reports measured results without claiming a best recipe without evidence.",
+      "files": [
+        "evals/files/hello-pt/train.py",
+        "evals/files/hello-pt/model.py"
+      ],
+      "assertions": [
+        "The agent does not claim the best recipe without measured evidence.",
+        "The agent asks for target metric or run budget when missing.",
+        "The agent uses nvflare recipe list --framework pytorch --format json to find candidates.",
+        "The agent keeps dataset split, site count, rounds, and metric comparable across runs."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-convert-pytorch",
+        "mandatory_behavior": [
+          {
+            "id": "bounded-recipe-search",
+            "description": "treats best-recipe requests as bounded experiment planning and execution"
+          },
+          {
+            "id": "no-unmeasured-best-claim",
+            "description": "does not claim a best recipe or best accuracy without measured evidence"
+          },
+          {
+            "id": "comparable-recipe-runs",
+            "description": "keeps dataset split, site count, rounds, and metric comparable across recipe runs"
+          }
+        ]
+      }
+    },
+    {
+      "id": "pytorch-data-distribution-rerun",
+      "prompt": "Split the dataset differently to represent IID and heterogeneous non-IID site distributions, train the model again, and show me the result.",
+      "expected_output": "The agent treats this as a data-partition experiment, defines IID and non-IID split strategies, keeps recipe and training budget comparable, avoids copying private data into generated artifacts, reruns validation for each split when feasible, and reports measured metrics, commands, status, and result paths.",
+      "files": [
+        "evals/files/hello-pt/train.py",
+        "evals/files/hello-pt/model.py"
+      ],
+      "assertions": [
+        "The agent defines concrete IID and non-IID split strategies before editing.",
+        "The agent keeps recipe, rounds, epochs, batch size, seed, and metric comparable unless asked to tune them.",
+        "The agent avoids copying private data into generated artifacts.",
+        "The agent reports measured metrics, commands, status, and result paths for each split."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-convert-pytorch",
+        "mandatory_behavior": [
+          {
+            "id": "define-data-split-strategies",
+            "description": "defines concrete IID and non-IID split strategies before running data-distribution experiments"
+          },
+          {
+            "id": "comparable-data-split-runs",
+            "description": "keeps recipe and training budget comparable across data split experiments"
+          },
+          {
+            "id": "report-distribution-results",
+            "description": "reports metrics, commands, status, and result paths for each data split"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-user-data-copy",
+            "description": "does not copy private site data into generated artifacts"
+          }
+        ]
+      }
+    },
+    {
+      "id": "pytorch-dataset-url-rerun",
+      "prompt": "I want to use a different dataset and repeat the experiment. Here is the URL for the dataset: https://example.com/datasets/new-image-data.zip",
+      "expected_output": "The agent treats this as a dataset-replacement experiment, records the dataset URL and source details, validates download and preprocessing assumptions, keeps recipe and training settings comparable unless asked to tune them, reruns validation when feasible, and reports metrics, commands, status, result path, and blockers.",
+      "files": [
+        "evals/files/hello-pt/train.py",
+        "evals/files/hello-pt/model.py"
+      ],
+      "assertions": [
+        "The agent records dataset URL and source details.",
+        "The agent validates download and preprocessing assumptions before rerunning.",
+        "The agent follows the existing download_data and prepare_data structure instead of inventing a parallel data-prep layout.",
+        "The agent references hello-world data-prep examples when adding new helpers.",
+        "The agent keeps recipe, site count, rounds, split policy, and metric comparable unless asked to tune them.",
+        "The agent reports metrics, commands, status, result path, dataset source, and blockers."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-convert-pytorch",
+        "mandatory_behavior": [
+          {
+            "id": "record-dataset-source",
+            "description": "records dataset URL, source details, local path, and known version or access constraints"
+          },
+          {
+            "id": "validate-dataset-access",
+            "description": "validates dataset download, preprocessing, schema, and label assumptions before rerunning"
+          },
+          {
+            "id": "follow-data-prep-structure",
+            "description": "follows existing download_data and prepare_data helpers or the established NVFLARE separate download/prepare convention"
+          },
+          {
+            "id": "reference-hello-world-data-prep",
+            "description": "uses hello-world data-prep examples as convention references when adding new helpers"
+          },
+          {
+            "id": "comparable-dataset-rerun",
+            "description": "keeps recipe and training settings comparable across dataset replacement experiments unless asked to tune them"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-silent-dataset-substitution",
+            "description": "does not silently substitute a different dataset if the requested URL is unavailable"
+          }
+        ]
+      }
+    },
+    {
       "id": "pytorch-negative-lightning",
       "prompt": "Convert my PyTorch Lightning Trainer and LightningModule to an NVFLARE workflow.",
       "expected_output": "The PyTorch conversion skill should not be the lead; route to the Lightning conversion skill when available.",

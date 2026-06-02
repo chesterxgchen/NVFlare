@@ -11,6 +11,10 @@ FLARE version: 2.8.0 minimum
 | --- | --- | --- |
 | Positive trigger | Draft | `pytorch-convert-basic` covers natural PyTorch-to-FL conversion with FedAvg simulation settings. |
 | POC handoff trigger | Draft | `pytorch-approved-poc-handoff` covers explicit post-simulation POC approval with a provided workspace. |
+| Iterative rerun trigger | Draft | `pytorch-iterative-rerun` covers scoped hyperparameter and recipe changes followed by validation. |
+| Recipe search trigger | Draft | `pytorch-recipe-search` covers bounded recipe comparison without unmeasured best-recipe claims. |
+| Data distribution trigger | Draft | `pytorch-data-distribution-rerun` covers IID/non-IID split experiments with comparable result reporting. |
+| Dataset URL rerun trigger | Draft | `pytorch-dataset-url-rerun` covers repeating experiments with a user-provided dataset URL. |
 | Adjacent negative trigger | Draft | Lightning prompt routes away from this skill. |
 | Global negative trigger | Draft | Kubernetes deployment prompt routes away from this skill. |
 | Mandatory behavior | Draft | Behavior IDs cover inspect-first, natural request parsing, recipe discovery, recipe selection from FL intent, scoped edits, Client API exchange, local validation, validation evidence reporting, and failed-validation eval records. |
