@@ -53,6 +53,34 @@ validate the exported job path, use the supplied or created POC workspace, submi
 the job, wait or monitor as requested, and report job ID, status, logs or result
 paths, and any failure evidence.
 
+Users may iterate on a generated job, for example: "Change the batch size to 64
+and run it again", "Use 5 rounds", "Set min clients to 4", or "Switch from
+FedAvg to SCAFFOLD and rerun." Treat hyperparameter and recipe changes as scoped
+job updates. For recipe changes, rerun `nvflare recipe show <recipe-name>
+--format json`, update `job.py` and client exchange only as required by the new
+recipe, then rerun local validation and export if requested.
+
+Users may ask for the "best" recipe or highest accuracy across available
+recipes. Treat this as bounded experiment planning and execution, not as a
+guarantee. Ask for the target metric and budget if missing, compare only
+compatible PyTorch recipes from `nvflare recipe list --framework pytorch
+--format json`, keep dataset split and training budget comparable, run requested
+experiments, and report measured results, not claims without evidence.
+
+Users may ask to rerun with different data distributions, for example: "Split
+the dataset differently to represent IID and heterogeneous non-IID sites, train
+again, and show me the result." Treat this as a data-partition experiment. Define
+the split strategies, keep recipe and training budget comparable, avoid copying
+private data into generated artifacts, rerun validation for each split, and
+report measured metrics and result paths.
+
+Users may ask to repeat an experiment with a different dataset from a URL. Treat
+the URL as a user-provided data source, validate the download or access plan,
+record dataset source/version details, follow the existing `download_data` and
+`prepare_data` structure, preserve comparable recipe and training settings
+unless asked to tune them, rerun validation, and report measured results and any
+download, license, size, or preprocessing blocker.
+
 ## Requirements
 
 - Must keep edits scoped to training, model, job, and small config files.
@@ -74,6 +102,15 @@ paths, and any failure evidence.
 - Explain the selected recipe when the user's algorithm intent is ambiguous.
 - Convert Client API model exchange and generate or update `job.py`.
 - Run local validation when dependencies and safe data are available.
+- Apply requested hyperparameter, site-count, round-count, min-client, or recipe
+  changes to the existing generated job and rerun validation.
+- For recipe-search requests, define the metric, compatible recipes, run budget,
+  and comparison plan before executing experiments.
+- For data-distribution experiments, define IID/non-IID split strategies and
+  compare measured results under the same recipe and training budget.
+- For dataset-replacement experiments, record dataset source details, validate
+  access/download assumptions, follow existing data-prep structure, and rerun
+  with comparable settings.
 - Export and inspect the exported job folder when export is requested.
 - Submit to POC only when the user explicitly asks for POC after conversion or
   provides a POC workspace and asks for submission.
