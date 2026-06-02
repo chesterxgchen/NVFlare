@@ -59,6 +59,32 @@
       }
     },
     {
+      "id": "orient-diagnosis-handoff",
+      "prompt": "My FLARE job finished with EXECUTION_EXCEPTION and the client logs look suspicious. Which skill should diagnose it?",
+      "expected_output": "The orientation skill routes the request to nvflare-diagnose-job rather than conversion or job generation.",
+      "files": [],
+      "assertions": [
+        "The selected follow-up skill is nvflare-diagnose-job.",
+        "The orientation step stays read-only.",
+        "The agent does not continue into broad generic advice once the diagnosis skill is clear."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-diagnose-job",
+        "mandatory_behavior": [
+          {
+            "id": "diagnosis-handoff",
+            "description": "routes failed or suspicious FLARE jobs to nvflare-diagnose-job"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-diagnosis-implementation-during-routing",
+            "description": "does not perform diagnosis while acting as the orientation router"
+          }
+        ]
+      }
+    },
+    {
       "id": "orient-global-negative-web-app",
       "prompt": "Build a React landing page for a bakery.",
       "expected_output": "No FLARE skill should trigger.",

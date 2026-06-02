@@ -17,8 +17,8 @@ turn project evidence and user intent into one narrow next action.
   `nvflare-convert-pytorch`.
 - Generic "help me use FLARE here" with no clear workflow: inspect first, then
   recommend the narrowest skill.
-- Existing FLARE job that fails or produces suspicious logs: diagnosis workflow,
-  not conversion.
+- Existing FLARE job that fails or produces suspicious logs:
+  `nvflare-diagnose-job`, not conversion.
 - POC startup, production submission, Kubernetes deployment, or identity setup:
   route to the corresponding operations or deployment skill when available.
 - Non-FLARE Python, web, data science, or generic ML questions: no FLARE skill.

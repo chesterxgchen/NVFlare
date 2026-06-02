@@ -11,13 +11,13 @@ FLARE version: 2.8.0 minimum
 | --- | --- | --- |
 | Positive trigger | Draft | `orient-ambiguous-project` defines the initial routing prompt. |
 | Adjacent negative trigger | Draft | PyTorch conversion routes to `nvflare-convert-pytorch`. |
+| Diagnosis handoff trigger | Draft | Failed or suspicious FLARE jobs route to `nvflare-diagnose-job`. |
 | Global negative trigger | Draft | Non-FLARE web-app prompt routes to no skill. |
-| Mandatory behavior | Draft | Behavior IDs cover inspect-first, read-only routing, and single lead skill. |
-| Prohibited behavior | Draft | Behavior IDs prohibit file edits and production actions. |
+| Mandatory behavior | Draft | Behavior IDs cover inspect-first, read-only routing, single lead skill, and diagnosis handoff. |
+| Prohibited behavior | Draft | Behavior IDs prohibit file edits, production actions, and implementing diagnosis during routing. |
 
 ## Known Gaps
 
 - Runtime agent-performance scoring has not been run yet.
-- `nvflare-diagnose-job` is intentionally deferred from this seed pass.
 - Orientation routing will need new adjacent negatives as more workflow skills
   are added.
