@@ -31,7 +31,8 @@ debugging that does not ask for FLARE conversion.
 4. Add or update a `job.py` that uses an appropriate PyTorch recipe or job API
    path for local simulation and export.
 5. Validate locally with `python job.py` and export with
-   `python job.py --export --export-dir <dir>` when the job supports export.
+   `python job.py --export --export-dir <dir>` using the FedJob system
+   arguments.
 
 ## Requirements
 

@@ -20,6 +20,6 @@ FLARE version: 2.8.0 minimum
 - Runtime agent-performance scoring has not been run yet.
 - The seed skill targets standard PyTorch loops only, not Lightning,
   Hugging Face Trainer, TensorFlow, XGBoost, sklearn, or custom NumPy loops.
-- Export validation is optional until a generated job file exposes export
-  arguments.
+- Export validation uses FedJob system arguments; no job-local export argument
+  definition is required.
 - `nvflare-diagnose-job` is intentionally deferred from this seed pass.
