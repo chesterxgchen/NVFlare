@@ -52,7 +52,7 @@ def build_skill_manifest(skills_root: Path | str, *, source_type: str, nvflare_v
     findings = []
     if root.is_dir():
         for child in sorted(root.iterdir(), key=lambda p: p.name):
-            if child.name.startswith(".") or not child.is_dir():
+            if _should_skip_skill_dir(child):
                 continue
             result = _validate_skill_dir(child)
             if not result.ok:
@@ -86,6 +86,10 @@ def build_skill_manifest(skills_root: Path | str, *, source_type: str, nvflare_v
         "skills": skills,
         "findings": findings,
     }
+
+
+def _should_skip_skill_dir(path: Path) -> bool:
+    return path.name.startswith(".") or path.name.startswith("_") or not path.is_dir()
 
 
 def write_manifest(manifest: dict, manifest_path: Path | str) -> None:

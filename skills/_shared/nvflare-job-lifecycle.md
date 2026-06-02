@@ -1,0 +1,77 @@
+# Shared NVFLARE Job Lifecycle Guidance
+
+Use this reference for framework-agnostic conversion, validation, export, and
+POC handoff behavior. Framework skills should combine it with framework-specific
+model, training-loop, and aggregation guidance.
+
+## Natural Request Parsing
+
+Users may describe work in product terms, for example: "Here is my training
+code. Convert it to FLARE FL code, run it with 3 simulated sites on this
+dataset, split the dataset evenly, use FedAvg, and train for 3 rounds."
+
+Extract recipe intent, site count, rounds, dataset path, split policy, training
+arguments, validation intent, and approval boundaries before asking follow-up
+questions. Ask only when a missing value changes the generated job or runtime
+behavior.
+
+## Local Validation
+
+- Use `python job.py` for local recipe or SimEnv validation when the generated
+  job file supports direct execution.
+- Prefer synthetic data flags or small fixtures when the original dataset is
+  unavailable.
+- Report command, status, result directory, and dependency or data blockers.
+
+## Export
+
+- Use `python job.py --export --export-dir <dir>` to export a FedJob. These are
+  FedJob system arguments and do not need to be declared by the job file.
+- Inspect the exported folder for server/client app folders and expected config
+  files before recommending submission.
+
+## Validation Evidence
+
+Before calling a generated job correct, report:
+
+- selected recipe and the `nvflare recipe show` command used to inspect it;
+- changed files and why they were changed;
+- local validation command and pass/fail status;
+- export command, export directory, and exported folder inspection result when
+  export is in scope;
+- unresolved blockers such as unavailable data, missing dependencies, or
+  required user approval.
+
+If `python job.py` cannot run, the conversion may still be saved as a draft, but
+report it as unvalidated and name the concrete blocker.
+
+## POC Handoff
+
+Users may approve a runtime handoff after simulation, for example: "Simulation
+looks good. Start POC and submit the exported job" or "I have a POC workspace
+here; submit the job to it."
+
+Treat this as explicit POC approval. Validate the exported job folder first,
+then use the supplied POC workspace or start POC as requested, submit the job,
+and wait or monitor if requested.
+
+Report the POC workspace, submitted job folder, job ID, final status or current
+status, command evidence, and log/result paths. If the POC run fails, record the
+failure as evaluation evidence.
+
+## Approval Boundary
+
+POC or production submission is outside a conversion skill's default action.
+Ask for explicit user approval before using submit or runtime-start commands.
+
+## Evaluation Records
+
+When a generated job does not run as expected, keep the failure as evaluation
+evidence instead of treating it as a one-off note. Record the user request,
+selected recipe, files changed, validation command, failure output summary,
+root-cause hypothesis, and follow-up fix or blocker.
+
+If the failure represents a repeatable skill gap, add or update an eval case,
+benchmark gap, fixture, or reference note so future skill runs are tested
+against the same scenario.
+

@@ -21,7 +21,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
-from nvflare.tool.agent_skill_checks.frontmatter import SKILL_FILE_NAME, parse_skill_frontmatter, validate_skill_dir
+from nvflare.tool.agent_skill_checks.frontmatter import (
+    SKILL_FILE_NAME,
+    parse_skill_frontmatter,
+    should_skip_skill_dir,
+    validate_skill_dir,
+)
 
 V1_LINT_IDS = (
     "skill-frontmatter-lint",
@@ -316,7 +321,7 @@ def _load_skill_records(skills_root: Path, findings: list[LintFinding]) -> list[
 
     records = []
     for child in sorted(skills_root.iterdir(), key=lambda p: p.name):
-        if child.name.startswith(".") or not child.is_dir():
+        if should_skip_skill_dir(child):
             continue
         skill_file = child / SKILL_FILE_NAME
         text = skill_file.read_text(encoding="utf-8-sig") if skill_file.is_file() else ""
