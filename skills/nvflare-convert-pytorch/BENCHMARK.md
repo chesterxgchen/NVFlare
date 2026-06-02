@@ -15,6 +15,8 @@ FLARE version: 2.8.0 minimum
 | Recipe search trigger | Draft | `pytorch-recipe-search` covers bounded recipe comparison without unmeasured best-recipe claims. |
 | Data distribution trigger | Draft | `pytorch-data-distribution-rerun` covers IID/non-IID split experiments with comparable result reporting. |
 | Dataset URL rerun trigger | Draft | `pytorch-dataset-url-rerun` covers repeating experiments with a user-provided dataset URL. |
+| Synthetic data trigger | Draft | `pytorch-synthetic-site-data` covers deterministic synthetic per-site generation and validation. |
+| Site heterogeneity trigger | Draft | `pytorch-site-specific-training` covers per-site speed and hyperparameter simulation. |
 | Adjacent negative trigger | Draft | Lightning prompt routes away from this skill. |
 | Global negative trigger | Draft | Kubernetes deployment prompt routes away from this skill. |
 | Mandatory behavior | Draft | Behavior IDs cover inspect-first, natural request parsing, recipe discovery, recipe selection from FL intent, scoped edits, Client API exchange, local validation, validation evidence reporting, and failed-validation eval records. |

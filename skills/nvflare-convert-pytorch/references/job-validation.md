@@ -105,6 +105,32 @@ blocker. If the URL is unavailable or the dataset cannot be downloaded in the
 current environment, report the experiment as blocked rather than substituting a
 different dataset silently.
 
+## Synthetic Per-Site Data
+
+When the user asks for synthetic data per site, add a deterministic data
+generation step that records seed, site count, sample counts, feature shape,
+label distribution, and output directory. Prefer extending existing
+`prepare_data.py`, `prepare_data.sh`, or equivalent helpers. If a separate
+generator is needed, keep it under the same data-prep structure and call it from
+the prepare step.
+
+Generated site data should be written to explicit per-site outputs that the job
+can pass as site-specific data paths. Report the generation command, seed,
+schema, per-site counts, and validation command.
+
+## Site-Specific Training Heterogeneity
+
+When the user asks to simulate different site speeds or training hyperparameters,
+prefer per-site arguments or per-site config in `job.py`. Examples include
+per-site learning rate, batch size, local epochs, sleep/delay for speed
+simulation, dataset shard, or workload size.
+
+Only create site-specific training scripts when arguments/config cannot express
+the requested behavior. If scripts are split, keep shared model and training
+helpers common and report why script splitting was necessary. Report a table of
+site name, args/config, expected behavior, command, status, metric, and result
+path.
+
 ## Evaluation Records
 
 When a generated job does not run as expected, keep the failure as evaluation
