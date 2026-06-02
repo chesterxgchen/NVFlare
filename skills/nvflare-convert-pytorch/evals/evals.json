@@ -79,6 +79,40 @@
           {
             "id": "export-job",
             "description": "exports the job folder with FedJob system arguments when export is requested"
+          },
+          {
+            "id": "approved-poc-submit",
+            "description": "submits the exported job to POC only when the user explicitly approves POC or provides a POC workspace and asks for submission"
+          }
+        ]
+      }
+    },
+    {
+      "id": "pytorch-approved-poc-handoff",
+      "prompt": "Simulation looks good. I have a POC workspace at /tmp/nvflare/poc_workspace. Submit the exported job to it and wait for the result.",
+      "expected_output": "The agent treats this as explicit POC approval, validates the exported job folder, uses the supplied POC workspace, submits the job, waits or monitors as requested, and reports job ID, status, result paths, and failure evidence if any.",
+      "files": [
+        "evals/files/hello-pt/train.py",
+        "evals/files/hello-pt/model.py"
+      ],
+      "assertions": [
+        "The agent treats the request as explicit POC approval.",
+        "The agent validates the exported job folder before submission.",
+        "The agent uses the supplied POC workspace instead of guessing a production environment.",
+        "The agent reports job ID, status, result paths, and failure evidence if any."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-convert-pytorch",
+        "optional_behavior": [
+          {
+            "id": "approved-poc-submit",
+            "description": "submits the exported job to POC only when explicitly approved"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-production-submit",
+            "description": "does not submit to production when the user asked for POC"
           }
         ]
       }

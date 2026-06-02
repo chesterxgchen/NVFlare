@@ -46,6 +46,13 @@ rounds." Extract recipe, site count, rounds, dataset path, split policy,
 training args, validation intent, and approval boundaries from this wording
 before asking follow-up questions.
 
+Users may also approve a runtime handoff after simulation, for example:
+"Simulation looks good. Start POC and submit the exported job" or "I have a POC
+workspace here; submit the job to it." Treat this as explicit POC approval, then
+validate the exported job path, use the supplied or created POC workspace, submit
+the job, wait or monitor as requested, and report job ID, status, logs or result
+paths, and any failure evidence.
+
 ## Requirements
 
 - Must keep edits scoped to training, model, job, and small config files.
@@ -68,6 +75,8 @@ before asking follow-up questions.
 - Convert Client API model exchange and generate or update `job.py`.
 - Run local validation when dependencies and safe data are available.
 - Export and inspect the exported job folder when export is requested.
+- Submit to POC only when the user explicitly asks for POC after conversion or
+  provides a POC workspace and asks for submission.
 - Report commands run, status, result paths, failed checks, and user actions
   needed for unresolved blockers.
 

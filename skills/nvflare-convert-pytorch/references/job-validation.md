@@ -50,6 +50,18 @@ the same scenario.
 POC or production submission is outside this skill's default action. Ask for
 explicit user approval before using any submit or runtime-start command.
 
+## POC Handoff
+
+When the user explicitly approves POC after simulation, or provides a POC
+workspace and asks for submission, validate the exported job folder first. Then
+use the supplied POC workspace or start POC as requested, submit the exported
+job, and wait or monitor if requested.
+
+Report the POC workspace, submitted job folder, job ID, final status or current
+status, command evidence, and any log/result paths. If the POC run fails, record
+the failure as evaluation evidence using the same rule as local validation
+failures.
+
 ## Common Gaps To Report
 
 - The source training script has side effects at import time.
