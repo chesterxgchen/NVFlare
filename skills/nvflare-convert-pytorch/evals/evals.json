@@ -277,8 +277,11 @@
       ],
       "assertions": [
         "The agent creates or extends a deterministic data generation or prepare_data step.",
+        "The agent infers schema from model, transforms, loss, and data loader only when clear.",
+        "The agent asks for a generation spec or approved generator/library when task, shape, labels, or expected behavior are unclear.",
         "The agent follows existing data-prep structure or hello-world conventions.",
         "The agent writes explicit per-site outputs and reports seed, schema, and site counts.",
+        "The agent treats synthetic validation as a smoke test unless the user provides meaningful expected metrics.",
         "The agent reruns validation and reports command, status, metric, and result path."
       ],
       "nvflare": {
@@ -289,12 +292,22 @@
             "description": "generates synthetic site data deterministically with seed, schema, site count, and sample counts"
           },
           {
+            "id": "require-synthetic-data-spec",
+            "description": "asks for a data generation spec or approved generator when task, shape, labels, or expected behavior are unclear"
+          },
+          {
             "id": "follow-data-prep-structure",
             "description": "follows existing download_data and prepare_data helpers or hello-world data-prep conventions"
           },
           {
             "id": "report-synthetic-data-evidence",
             "description": "reports generation command, seed, schema, per-site counts, validation status, and result path"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-invented-synthetic-schema",
+            "description": "does not invent synthetic labels, features, class balance, or expected accuracy when the data schema is unclear"
           }
         ]
       }
