@@ -1,0 +1,75 @@
+{
+  "skill_name": "nvflare-orient",
+  "evals": [
+    {
+      "id": "orient-ambiguous-project",
+      "prompt": "I have a local training repo and want to know how to start using NVFLARE.",
+      "expected_output": "The agent inspects the project, checks local readiness when needed, and recommends the next specific NVFLARE workflow skill.",
+      "files": [],
+      "assertions": [
+        "The agent runs nvflare agent inspect before recommending a workflow.",
+        "The agent keeps the routing step read-only.",
+        "The agent recommends one lead skill or says no FLARE skill should trigger."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-orient",
+        "mandatory_behavior": [
+          {
+            "id": "inspect-before-routing",
+            "description": "runs static inspection before routing ambiguous project requests"
+          },
+          {
+            "id": "read-only-routing",
+            "description": "does not mutate files or runtime systems during orientation"
+          },
+          {
+            "id": "single-lead-skill",
+            "description": "recommends one lead skill when a FLARE workflow is appropriate"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-file-edits",
+            "description": "does not edit project files during orientation"
+          },
+          {
+            "id": "no-production-action",
+            "description": "does not submit jobs or start production systems during orientation"
+          }
+        ],
+        "optional_behavior": [
+          {
+            "id": "doctor-readiness",
+            "description": "runs doctor when the prompt asks about local readiness"
+          }
+        ]
+      }
+    },
+    {
+      "id": "orient-negative-pytorch-conversion",
+      "prompt": "Convert this PyTorch training script into an NVFLARE federated job.",
+      "expected_output": "The orientation skill should not be the lead; the PyTorch conversion skill should handle the request.",
+      "files": [],
+      "assertions": [
+        "The selected skill is nvflare-convert-pytorch, not nvflare-orient."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-convert-pytorch",
+        "negative_for": "nvflare-orient"
+      }
+    },
+    {
+      "id": "orient-global-negative-web-app",
+      "prompt": "Build a React landing page for a bakery.",
+      "expected_output": "No FLARE skill should trigger.",
+      "files": [],
+      "assertions": [
+        "The selected skill is none."
+      ],
+      "nvflare": {
+        "expected_skill": null,
+        "negative_for": "*"
+      }
+    }
+  ]
+}
