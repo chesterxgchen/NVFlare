@@ -8,8 +8,12 @@ skill_version: "0.1.0"
 
 # NVFLARE Orient
 
+## Use When
+
 Use when the user asks where to start with NVFLARE, how a local project maps to
 FLARE workflows, or which FLARE skill should handle an ambiguous request.
+
+## Do Not Use When
 
 Do not use when the user already names a specific workflow such as PyTorch
 conversion, job submission, production deployment, Kubernetes setup, or log
@@ -27,13 +31,13 @@ diagnosis. Route to the narrower skill instead.
 5. Recommend one lead skill and only mention supporting skills when the next
    step clearly needs them.
 
-## Checklist
+## Requirements
 
-- Keep the work read-only.
-- Report the evidence used for routing.
-- Prefer a specific workflow skill over broad FLARE advice.
-- Say when no FLARE skill should trigger.
-- Do not edit files, start POC systems, submit jobs, or read private keys.
+- Must keep the work read-only.
+- Must report the evidence used for routing.
+- Must prefer a specific workflow skill over broad FLARE advice.
+- Must say when no FLARE skill should trigger.
+- Must not edit files, start POC systems, submit jobs, or read private keys.
 
 Load `references/orientation-routing.md` when routing is ambiguous or when the
 inspect output names multiple possible workflow families.
