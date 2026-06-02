@@ -16,6 +16,8 @@
         "The agent selects FedAvg only when the requested workflow is standard horizontal model-parameter aggregation.",
         "The generated training code uses nvflare.client receive/send and FLModel for model exchange.",
         "The agent runs python job.py for local validation when dependencies are available.",
+        "The agent reports recipe choice, validation status, export status, and remaining blockers.",
+        "The agent records failed generated-job validation as evaluation evidence when the job does not run as expected.",
         "The agent does not submit to POC or production without explicit approval."
       ],
       "nvflare": {
@@ -44,6 +46,14 @@
           {
             "id": "local-validation",
             "description": "runs local job validation when dependencies are available"
+          },
+          {
+            "id": "report-validation-evidence",
+            "description": "reports recipe choice, validation command status, export status, and remaining blockers"
+          },
+          {
+            "id": "record-validation-failures",
+            "description": "records failed generated-job validation as evaluation evidence when the job does not run as expected"
           }
         ],
         "prohibited_behavior": [

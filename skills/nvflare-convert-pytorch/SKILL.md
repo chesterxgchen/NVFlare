@@ -44,9 +44,28 @@ debugging that does not ask for FLARE conversion.
   them.
 - Must prefer synthetic or fixture data for validation when the original dataset is
   unavailable.
+- Must report recipe choice, validation commands, export status, and remaining
+  blockers before calling the conversion complete.
 - Must not submit to POC or production without explicit user approval.
 - Must not generate Python solely to wrap `nvflare` CLI commands or scrape
   human CLI output.
+
+## Agent Responsibilities
+
+- Run project inspection and recipe discovery before selecting a recipe.
+- Explain the selected recipe when the user's algorithm intent is ambiguous.
+- Convert Client API model exchange and generate or update `job.py`.
+- Run local validation when dependencies and safe data are available.
+- Export and inspect the exported job folder when export is requested.
+- Report commands run, status, result paths, failed checks, and user actions
+  needed for unresolved blockers.
+
+## User Input And Approval
+
+- Ask the user to clarify FL workflow intent when recipe selection is uncertain.
+- Ask before changing private data paths, replacing dataset access, or using
+  non-fixture data for validation.
+- Ask before POC, production, or startup-kit based runtime submission.
 
 Load `references/recipe-selection.md` before creating `job.py`,
 `references/pytorch-client-api-conversion.md` for conversion details, and
