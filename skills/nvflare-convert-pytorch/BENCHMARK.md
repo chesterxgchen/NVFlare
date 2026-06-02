@@ -9,10 +9,10 @@ FLARE version: 2.8.0 minimum
 
 | Check | Status | Notes |
 | --- | --- | --- |
-| Positive trigger | Draft | `pytorch-convert-basic` covers standard PyTorch training conversion. |
+| Positive trigger | Draft | `pytorch-convert-basic` covers natural PyTorch-to-FL conversion with FedAvg simulation settings. |
 | Adjacent negative trigger | Draft | Lightning prompt routes away from this skill. |
 | Global negative trigger | Draft | Kubernetes deployment prompt routes away from this skill. |
-| Mandatory behavior | Draft | Behavior IDs cover inspect-first, recipe discovery, recipe selection from FL intent, scoped edits, Client API exchange, local validation, validation evidence reporting, and failed-validation eval records. |
+| Mandatory behavior | Draft | Behavior IDs cover inspect-first, natural request parsing, recipe discovery, recipe selection from FL intent, scoped edits, Client API exchange, local validation, validation evidence reporting, and failed-validation eval records. |
 | Prohibited behavior | Draft | Behavior IDs prohibit production submit, private data copying, and CLI-wrapper Python. |
 
 ## Known Gaps

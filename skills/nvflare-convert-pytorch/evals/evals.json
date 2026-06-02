@@ -3,8 +3,8 @@
   "evals": [
     {
       "id": "pytorch-convert-basic",
-      "prompt": "Convert this PyTorch training script into an NVFLARE federated training job and validate it locally.",
-      "expected_output": "A FLARE-compatible PyTorch Client API training integration, a runnable job.py, local validation evidence, and an export attempt when supported.",
+      "prompt": "Here is my PyTorch training code. Convert it to FLARE FL code, run the converted job with 3 simulated sites using this dataset, split the dataset evenly for the 3 sites, use FedAvg, and train for 3 rounds.",
+      "expected_output": "A FLARE-compatible PyTorch Client API training integration, a runnable job.py using FedAvg with 3 simulated sites and 3 rounds, local validation evidence, and an export attempt when supported.",
       "files": [
         "evals/files/hello-pt/train.py",
         "evals/files/hello-pt/model.py"
@@ -12,6 +12,7 @@
       "assertions": [
         "The agent runs nvflare agent inspect before editing.",
         "The agent edits only training, model, job, or small config files.",
+        "The agent translates the natural request into recipe, site-count, dataset, split, training, validation, and export settings.",
         "The agent checks nvflare recipe list --framework pytorch --format json before selecting the job recipe.",
         "The agent selects FedAvg only when the requested workflow is standard horizontal model-parameter aggregation.",
         "The generated training code uses nvflare.client receive/send and FLModel for model exchange.",
@@ -30,6 +31,10 @@
           {
             "id": "scoped-edits",
             "description": "edits only training, model, job, or small config files"
+          },
+          {
+            "id": "derive-config-from-natural-request",
+            "description": "translates natural user requests into recipe, site-count, dataset, split, training, validation, and export settings"
           },
           {
             "id": "discover-pytorch-recipes",

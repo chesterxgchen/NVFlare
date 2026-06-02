@@ -37,11 +37,22 @@ debugging that does not ask for FLARE conversion.
    `python job.py --export --export-dir <dir>` using the FedJob system
    arguments.
 
+## Natural User Requests
+
+Users may describe the conversion in product terms, for example: "Here is my
+PyTorch training code. Convert it to FLARE FL code, run it with 3 simulated
+sites on this dataset, split the dataset evenly, use FedAvg, and train for 3
+rounds." Extract recipe, site count, rounds, dataset path, split policy,
+training args, validation intent, and approval boundaries from this wording
+before asking follow-up questions.
+
 ## Requirements
 
 - Must keep edits scoped to training, model, job, and small config files.
 - Must preserve user data paths and require user confirmation before changing
   them.
+- Must translate natural user requests into concrete recipe, site-count,
+  dataset, split, training, validation, and export settings.
 - Must prefer synthetic or fixture data for validation when the original dataset is
   unavailable.
 - Must report recipe choice, validation commands, export status, and remaining
