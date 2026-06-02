@@ -214,7 +214,11 @@ def test_run_v1_lints_supports_check_selection(tmp_path):
 def test_run_v1_lints_records_doc_dependent_overlap_skip(tmp_path):
     _write_skill(tmp_path / "skills", "nvflare-valid-skill")
 
-    result = run_v1_lints(tmp_path / "skills", checks=[LINT_SKILL_TRIGGER_OVERLAP])
+    result = run_v1_lints(
+        tmp_path / "skills",
+        docs_root=tmp_path / "missing-docs",
+        checks=[LINT_SKILL_TRIGGER_OVERLAP],
+    )
 
     assert result["status"] == "ok"
     assert result["skipped_checks"] == [{"id": LINT_SKILL_TRIGGER_OVERLAP, "reason": "docs root is not available"}]
