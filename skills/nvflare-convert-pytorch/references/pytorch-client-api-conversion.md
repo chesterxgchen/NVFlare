@@ -35,3 +35,6 @@ without local training.
 - `examples/hello-world/hello-pt/client.py`
 - `examples/hello-world/hello-pt/job.py`
 - `examples/advanced/cifar10/pt`
+
+`hello-pt` uses FedAvg. Load `recipe-selection.md` before creating or updating
+`job.py` so the selected recipe matches the user's requested FL workflow.
