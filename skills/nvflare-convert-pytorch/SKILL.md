@@ -83,9 +83,12 @@ download, license, size, or preprocessing blocker.
 
 Users may ask to generate synthetic data for each site. Treat this as a
 data-generation and prepare/split step, not as a hidden change to training.
-Follow the existing `download_data`/`prepare_data` structure or hello-world
-conventions, make generation deterministic with seed and site count, write
-per-site outputs explicitly, and report generated-data schema and counts.
+Infer shape, labels, and expected task type from the model, transforms, and data
+loader only when they are clear. Otherwise ask for a data generation spec or an
+approved generator/library. Follow the existing `download_data`/`prepare_data`
+structure or hello-world conventions, make generation deterministic with seed
+and site count, write per-site outputs explicitly, and report generated-data
+schema and counts.
 
 Users may ask to simulate site heterogeneity such as different training speed,
 learning rate, batch size, epochs, or local workload per site. Prefer per-site
@@ -124,7 +127,9 @@ arguments/config, and keep the shared training logic factored to avoid drift.
   access/download assumptions, follow existing data-prep structure, and rerun
   with comparable settings.
 - For synthetic-data experiments, add deterministic generation and per-site
-  prepare outputs that follow existing data-prep conventions.
+  prepare outputs that follow existing data-prep conventions. Do not invent a
+  synthetic data schema when the task, shape, labels, or expected behavior are
+  unclear.
 - For site-heterogeneity experiments, prefer site-specific args/config over
   duplicate scripts and report each site's settings.
 - Export and inspect the exported job folder when export is requested.

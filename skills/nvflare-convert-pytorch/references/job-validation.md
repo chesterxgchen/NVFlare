@@ -109,14 +109,27 @@ different dataset silently.
 
 When the user asks for synthetic data per site, add a deterministic data
 generation step that records seed, site count, sample counts, feature shape,
-label distribution, and output directory. Prefer extending existing
-`prepare_data.py`, `prepare_data.sh`, or equivalent helpers. If a separate
-generator is needed, keep it under the same data-prep structure and call it from
-the prepare step.
+label distribution, and output directory. First determine whether the expected
+data schema can be inferred from the existing model input, transforms, loss
+function, and data loader. For example, `hello-pt` synthetic data is useful
+because the code clearly expects CIFAR-shaped image tensors and class labels.
+
+If schema, label semantics, target distribution, expected metric, or generation
+library is not clear, ask the user for a data generation spec or an approved
+generator/library before creating data. Do not invent labels, features, class
+balance, or expected accuracy. If the user supplies a generator such as a
+domain-specific synthetic data tool, wire it into the existing data-prep flow and
+record the tool, version or command, seed, and parameters used.
+
+Prefer extending existing `prepare_data.py`, `prepare_data.sh`, or equivalent
+helpers. If a separate generator is needed, keep it under the same data-prep
+structure and call it from the prepare step.
 
 Generated site data should be written to explicit per-site outputs that the job
 can pass as site-specific data paths. Report the generation command, seed,
-schema, per-site counts, and validation command.
+schema, per-site counts, and validation command. Treat synthetic validation as a
+smoke test of wiring and training execution unless the user provides a synthetic
+data spec with meaningful expected metrics.
 
 ## Site-Specific Training Heterogeneity
 
