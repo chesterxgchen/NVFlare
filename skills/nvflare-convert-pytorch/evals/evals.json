@@ -53,7 +53,7 @@
         "optional_behavior": [
           {
             "id": "export-job",
-            "description": "exports the job folder when the generated job file supports export"
+            "description": "exports the job folder with FedJob system arguments when export is requested"
           }
         ]
       }

@@ -13,8 +13,8 @@ path and an exported job folder when export is in scope.
 
 ## Export
 
-- Use `python job.py --export --export-dir <dir>` only when the job file exposes
-  those arguments.
+- Use `python job.py --export --export-dir <dir>` to export a FedJob. These are
+  FedJob system arguments and do not need to be declared by the job file.
 - Inspect the exported folder for server/client app folders and expected config
   files before recommending submission.
 
