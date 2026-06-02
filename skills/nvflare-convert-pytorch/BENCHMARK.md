@@ -29,4 +29,3 @@ FLARE version: 2.8.0 minimum
   Hugging Face Trainer, TensorFlow, XGBoost, sklearn, or custom NumPy loops.
 - Export validation uses FedJob system arguments; no job-local export argument
   definition is required.
-- `nvflare-diagnose-job` is intentionally deferred from this seed pass.
