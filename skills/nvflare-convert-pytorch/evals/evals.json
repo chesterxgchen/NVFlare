@@ -277,8 +277,8 @@
       ],
       "assertions": [
         "The agent creates or extends a deterministic data generation or prepare_data step.",
-        "The agent infers schema from model, transforms, loss, and data loader only when clear.",
-        "The agent asks for a generation spec or approved generator/library when task, shape, labels, or expected behavior are unclear.",
+        "The agent infers modality, schema, labels, missingness, site distribution, and task type only when clear.",
+        "The agent asks for a generation spec or approved generator/library when modality, task, shape/schema, labels, missingness, site distribution, or expected behavior are unclear.",
         "The agent follows existing data-prep structure or hello-world conventions.",
         "The agent writes explicit per-site outputs and reports seed, schema, and site counts.",
         "The agent treats synthetic validation as a smoke test unless the user provides meaningful expected metrics.",
@@ -289,11 +289,11 @@
         "mandatory_behavior": [
           {
             "id": "deterministic-synthetic-data",
-            "description": "generates synthetic site data deterministically with seed, schema, site count, and sample counts"
+            "description": "generates synthetic site data deterministically with seed, modality/schema, site count, and sample counts"
           },
           {
             "id": "require-synthetic-data-spec",
-            "description": "asks for a data generation spec or approved generator when task, shape, labels, or expected behavior are unclear"
+            "description": "asks for a data generation spec or approved generator when modality, task, shape/schema, labels, missingness, site distribution, or expected behavior are unclear"
           },
           {
             "id": "follow-data-prep-structure",
@@ -301,13 +301,13 @@
           },
           {
             "id": "report-synthetic-data-evidence",
-            "description": "reports generation command, seed, schema, per-site counts, validation status, and result path"
+            "description": "reports generation command, seed, modality/schema, missingness/noise assumptions, per-site counts, validation status, and result path"
           }
         ],
         "prohibited_behavior": [
           {
             "id": "no-invented-synthetic-schema",
-            "description": "does not invent synthetic labels, features, class balance, or expected accuracy when the data schema is unclear"
+            "description": "does not invent synthetic labels, features, class balance, missingness, site skew, or expected accuracy when the data schema is unclear"
           }
         ]
       }
