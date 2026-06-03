@@ -332,6 +332,35 @@ def test_agent_skills_install_and_list_json(capsys, monkeypatch, tmp_path):
     assert list_payload["data"]["installed"][0]["name"] == "nvflare-test-skill"
 
 
+def test_agent_skills_list_human_output_is_summarized(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    target = tmp_path / "target"
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "list",
+            "--agent",
+            "codex",
+            "--target",
+            str(target),
+        ]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "NVFLARE Agent Skills" in captured.out
+    assert "agent: codex" in captured.out
+    assert "available:" in captured.out
+    assert "installed:" in captured.out
+    assert "conflicts:" in captured.out
+    assert "- nvflare-test-skill" in captured.out
+    assert "[{'name':" not in captured.out
+
+
 def test_agent_skills_missing_named_skill_is_structured_json_error(capsys, monkeypatch, tmp_path):
     _patch_skill_source(monkeypatch, tmp_path)
 
