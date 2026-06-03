@@ -57,10 +57,9 @@ Report:
 - job status or local failure status;
 - matched failure pattern and confidence;
 - recovery category such as `FIXABLE_BY_CODE`, `FIXABLE_BY_CONFIG`,
-  `ENVIRONMENT_FAILURE`, or `UNKNOWN`;
+  `ENVIRONMENT_FAILURE`, `RETRYABLE`, or `UNKNOWN`;
 - source-aware evidence summary with site/process labels when available;
 - next action and any missing evidence.
 
 Load `references/evidence-collection.md` for mode-specific evidence collection
 and `references/failure-patterns.md` before assigning a likely failure cause.
-

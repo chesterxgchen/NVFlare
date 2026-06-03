@@ -26,7 +26,7 @@ Use local evidence only:
   simulation;
 - local dependency, dataset, and path evidence supplied by the user.
 
-Use `nvflare agent inspect <path> --format json` when the user provides a
+Use `nvflare --format json agent inspect <path>` when the user provides a
 project, job, or exported-job path. Do not use `nvflare job` or
 `nvflare system` commands for a pure simulation failure unless the user also
 provides a POC/production job ID or startup-kit context.
@@ -64,7 +64,8 @@ permission-denied. Treat these as findings:
 Use source labels from the evidence when available: server, site name, client
 name, subprocess, user training code, or FLARE runtime. If markers such as
 `[USER_CODE_EXCEPTION]` or `[FLARE]` are present, preserve them in the evidence
-summary.
+summary. If no marker or source label is visible, mark the source as `unknown`
+rather than inferring user code or FLARE runtime ownership.
 
 ## Diagnosis Report
 
@@ -77,4 +78,3 @@ Report the diagnosis as:
 5. recovery category;
 6. concrete next action;
 7. missing evidence or follow-up command when confidence is limited.
-

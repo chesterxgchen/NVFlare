@@ -117,6 +117,32 @@
       }
     },
     {
+      "id": "diagnose-transfer-progress-timeout",
+      "prompt": "A production job saw peer_read_timeout while streaming a large model, but later logs still show stream progress and completion. Diagnose the failure category.",
+      "expected_output": "The agent matches the timeout-with-progress case to TRANSFER_PROGRESS_TIMEOUT, reports RETRYABLE rather than ENVIRONMENT_FAILURE, and recommends checking progress-aware streaming evidence before escalating.",
+      "files": [
+        "evals/files/transfer_progress_timeout.log"
+      ],
+      "assertions": [
+        "The agent recognizes peer_read_timeout with active streaming progress as a transient transfer-congestion candidate.",
+        "The agent reports RETRYABLE rather than ENVIRONMENT_FAILURE for the progress-confirmed transfer timeout.",
+        "The agent recommends checking progress-aware streaming evidence and only tuning timeouts if progress stalls."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-diagnose-job",
+        "mandatory_behavior": [
+          {
+            "id": "retryable-transfer-timeout",
+            "description": "classifies timeout evidence with active transfer progress as RETRYABLE instead of environment failure"
+          },
+          {
+            "id": "check-progress-before-escalation",
+            "description": "checks transfer progress evidence before treating peer timeout as a failed peer or environment outage"
+          }
+        ]
+      }
+    },
+    {
       "id": "diagnose-negative-pytorch-conversion",
       "prompt": "Convert this PyTorch training script into an NVFLARE federated job and run it locally.",
       "expected_output": "The diagnosis skill should not be the lead; the PyTorch conversion skill should handle the request.",
