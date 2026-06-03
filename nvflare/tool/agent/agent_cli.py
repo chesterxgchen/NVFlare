@@ -337,6 +337,7 @@ def _handle_agent_doctor_cmd(args, handle_schema_flag, output_error_message, out
 
 def _handle_agent_skills_cmd(args, handle_schema_flag, output_error_message, output_ok) -> None:
     from nvflare.tool.agent.skill_manager import SUPPORTED_AGENT_TARGETS, install_skills, list_skills
+    from nvflare.tool.cli_output import is_json_mode, is_jsonl_mode, print_human
 
     skills_sub_cmd = getattr(args, "agent_skills_sub_cmd", None)
     schema_sub_cmd = _schema_agent_skills_sub_cmd(getattr(args, "_argv", sys.argv[1:]))
@@ -433,6 +434,9 @@ def _handle_agent_skills_cmd(args, handle_schema_flag, output_error_message, out
         except ValueError as e:
             _output_agent_skill_target_error(output_error_message, getattr(args, "target", None), e)
             return
+        if not is_json_mode() and not is_jsonl_mode():
+            print_human(_format_agent_skills_list_human(data))
+            return
         output_ok(
             data,
             code="OK",
@@ -442,6 +446,63 @@ def _handle_agent_skills_cmd(args, handle_schema_flag, output_error_message, out
         return
 
     raise CLIUnknownCmdException(f"unknown agent skills subcommand: {skills_sub_cmd}")
+
+
+def _format_agent_skills_list_human(data: dict) -> str:
+    lines = [
+        "NVFLARE Agent Skills",
+        f"agent: {data.get('agent', '')}",
+        f"target: {data.get('target_path', '')}",
+    ]
+    source = data.get("source") or {}
+    if source:
+        lines.append(
+            "source: "
+            f"{source.get('type', 'unknown')} "
+            f"({source.get('skill_count', 0)} available, root: {source.get('root', '')})"
+        )
+
+    _append_skill_rows(lines, "available", data.get("available") or [])
+    _append_skill_rows(lines, "installed", data.get("installed") or [])
+    _append_conflict_rows(lines, data.get("conflicts") or [])
+    return "\n".join(lines)
+
+
+def _append_skill_rows(lines: list[str], title: str, skills: list[dict]) -> None:
+    lines.append("")
+    lines.append(f"{title}:")
+    if not skills:
+        lines.append("  none")
+        return
+
+    for skill in skills:
+        detail_parts = []
+        if skill.get("skill_version"):
+            detail_parts.append(f"version {skill['skill_version']}")
+        if skill.get("blast_radius"):
+            detail_parts.append(f"blast_radius {skill['blast_radius']}")
+        if skill.get("target_path"):
+            detail_parts.append(f"target {skill['target_path']}")
+        elif skill.get("relative_path"):
+            detail_parts.append(f"path {skill['relative_path']}")
+        detail = f" ({', '.join(detail_parts)})" if detail_parts else ""
+        lines.append(f"  - {skill.get('name', '<unknown>')}{detail}")
+
+
+def _append_conflict_rows(lines: list[str], conflicts: list[dict]) -> None:
+    lines.append("")
+    lines.append("conflicts:")
+    if not conflicts:
+        lines.append("  none")
+        return
+
+    for conflict in conflicts:
+        lines.append(
+            "  - "
+            f"{conflict.get('skill', '<unknown>')}: "
+            f"{conflict.get('code', '<unknown>')} - "
+            f"{conflict.get('message', '')}"
+        )
 
 
 def _output_agent_skill_target_error(output_error_message, target, error: ValueError) -> None:
