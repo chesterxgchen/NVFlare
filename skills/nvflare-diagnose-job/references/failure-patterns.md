@@ -11,7 +11,8 @@ does not match a known pattern or required site evidence is missing.
 | `ABSOLUTE_DATA_PATH` | both | hard-coded `/home/...`, `/Users/...`, drive-letter paths, remote site cannot resolve path | `FIXABLE_BY_CODE` | Replace hard-coded local paths with site args/config or prepared site data. |
 | `CUDA_OOM` | both | `CUDA out of memory`, GPU allocation failure, memory exhausted | `FIXABLE_BY_CODE` | Reduce batch/model memory, use gradient accumulation, or adjust resource allocation. |
 | `ROUND_TIMEOUT` | POC/production | round timeout, no client response, task timeout, aggregator waits for clients | `ENVIRONMENT_FAILURE` | Check client liveness, site logs, resource pressure, and timeout configuration. |
-| `PEER_GONE_OR_TIMEOUT` | POC/production | `PEER_GONE`, `target_unreachable`, `peer_read_timeout`, connection closed | `ENVIRONMENT_FAILURE` | Check site process health, network reachability, and whether large transfers are still progressing. |
+| `TRANSFER_PROGRESS_TIMEOUT` | POC/production | `peer_read_timeout`, `PEER_GONE`, or task timeout appears while logs also show large model/tensor streaming progress, active download, or later successful transfer progress | `RETRYABLE` | Treat as a transient transfer-congestion candidate; check progress-aware streaming evidence, avoid duplicate resends, and retry or tune streaming idle settings only if progress stalls. |
+| `PEER_GONE_OR_TIMEOUT` | POC/production | `PEER_GONE`, `target_unreachable`, `peer_read_timeout`, connection closed, and no evidence of active transfer progress | `ENVIRONMENT_FAILURE` | Check site process health, network reachability, heartbeat/liveness, and whether the peer actually exited. |
 | `AUTH_FAILURE` | POC/production | authentication rejection, certificate verification failure, unauthorized admin/site | `FIXABLE_BY_CONFIG` | Verify startup kit, identity, organization, token, and server trust chain. |
 | `STARTUP_KIT_EXPIRED` | POC/production | certificate validity failure, expired kit, not-before/not-after errors | `FIXABLE_BY_CONFIG` | Re-provision or refresh startup kits and retry with the active kit. |
 | `COMPONENT_NOT_AUTHORIZED` | both | `ComponentNotAuthorized`, component not in `allow_list` | `FIXABLE_BY_CONFIG` | Add the component to the secure-mode allow list or use an authorized component. |
@@ -31,4 +32,3 @@ does not match a known pattern or required site evidence is missing.
 
 When confidence is medium or low, name the missing evidence and give the next
 bounded command or local file path to collect.
-
