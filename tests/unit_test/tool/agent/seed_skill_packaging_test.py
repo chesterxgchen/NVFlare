@@ -1,0 +1,109 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from pathlib import Path
+
+from nvflare.tool.agent.skill_manager import SkillSource, install_skills, list_skills
+from nvflare.tool.agent.skill_manifest import build_skill_manifest, copy_released_skills_to_bundle
+
+SEED_SKILLS = {
+    "nvflare-orient",
+    "nvflare-convert-pytorch",
+    "nvflare-diagnose-job",
+}
+
+
+def test_seed_skill_manifest_includes_public_skills_and_skips_shared_references():
+    skills_root = _repo_root() / "skills"
+
+    manifest = build_skill_manifest(skills_root, source_type="editable", nvflare_version="2.8.0")
+
+    names = {skill["name"] for skill in manifest["skills"]}
+    assert manifest["findings"] == []
+    assert SEED_SKILLS.issubset(names)
+    assert "_shared" not in names
+    assert all(skill["relative_path"] != "_shared" for skill in manifest["skills"])
+
+
+def test_seed_bundle_copy_includes_references_evals_and_log_fixtures(tmp_path):
+    skills_root = _repo_root() / "skills"
+    bundle_root = tmp_path / "bundle"
+
+    manifest = copy_released_skills_to_bundle(skills_root, bundle_root, nvflare_version="2.8.0")
+
+    names = {skill["name"] for skill in manifest["skills"]}
+    assert SEED_SKILLS.issubset(names)
+    assert not (bundle_root / "_shared").exists()
+    _assert_diagnose_payload(bundle_root / "nvflare-diagnose-job")
+
+
+def test_seed_skills_install_into_codex_and_claude_temp_targets(tmp_path):
+    source = _seed_skill_source()
+    codex_target = tmp_path / "codex-home" / "skills"
+    claude_target = tmp_path / "home" / ".claude" / "skills"
+
+    codex_plan = install_skills(agent="codex", target_dir=codex_target, source=source)
+    claude_plan = install_skills(agent="claude", target_dir=claude_target, source=source)
+
+    assert codex_plan["applied"] is True
+    assert claude_plan["applied"] is True
+    assert SEED_SKILLS.issubset({entry["name"] for entry in codex_plan["skills"]})
+    assert SEED_SKILLS.issubset({entry["name"] for entry in claude_plan["skills"]})
+    _assert_diagnose_payload(codex_target / "nvflare-diagnose-job")
+    _assert_diagnose_payload(claude_target / "nvflare-diagnose-job")
+
+    codex_list = list_skills(agent="codex", target_dir=codex_target, source=source)
+    claude_list = list_skills(agent="claude", target_dir=claude_target, source=source)
+    assert SEED_SKILLS.issubset({skill["name"] for skill in codex_list["installed"]})
+    assert SEED_SKILLS.issubset({skill["name"] for skill in claude_list["installed"]})
+
+
+def test_seed_skills_dry_run_selects_all_seed_skills_without_copying(tmp_path):
+    source = _seed_skill_source()
+    target = tmp_path / "target"
+
+    plan = install_skills(agent="codex", target_dir=target, source=source, dry_run=True)
+
+    assert plan["applied"] is False
+    assert SEED_SKILLS.issubset({entry["name"] for entry in plan["skills"]})
+    assert any(
+        Path(file_plan["source"]).name == "transfer_progress_timeout.log"
+        for entry in plan["skills"]
+        if entry["name"] == "nvflare-diagnose-job"
+        for file_plan in entry["files"]
+    )
+    assert not target.exists()
+
+
+def _seed_skill_source() -> SkillSource:
+    skills_root = _repo_root() / "skills"
+    return SkillSource(
+        source_type="editable",
+        root=skills_root,
+        manifest=build_skill_manifest(skills_root, source_type="editable", nvflare_version="2.8.0"),
+    )
+
+
+def _assert_diagnose_payload(skill_dir: Path) -> None:
+    assert skill_dir.joinpath("SKILL.md").is_file()
+    assert skill_dir.joinpath("references", "evidence-collection.md").is_file()
+    assert skill_dir.joinpath("references", "failure-patterns.md").is_file()
+    assert skill_dir.joinpath("evals", "evals.json").is_file()
+    assert skill_dir.joinpath("evals", "files", "poc_component_not_authorized.log").is_file()
+    assert skill_dir.joinpath("evals", "files", "simulation_import_error.log").is_file()
+    assert skill_dir.joinpath("evals", "files", "transfer_progress_timeout.log").is_file()
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[4]
