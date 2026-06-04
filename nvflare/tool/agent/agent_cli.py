@@ -406,6 +406,9 @@ def _handle_agent_skills_cmd(args, handle_schema_flag, output_error_message, out
                 recovery_category="FIXABLE_BY_ENV",
             )
             return
+        if not is_json_mode() and not is_jsonl_mode():
+            print_human(_format_agent_skills_install_human(plan))
+            return
         output_ok(
             plan,
             code="OK",
@@ -446,6 +449,90 @@ def _handle_agent_skills_cmd(args, handle_schema_flag, output_error_message, out
         return
 
     raise CLIUnknownCmdException(f"unknown agent skills subcommand: {skills_sub_cmd}")
+
+
+def _format_agent_skills_install_human(plan: dict) -> str:
+    skills = plan.get("skills") or []
+    counts = {
+        "installed": 0,
+        "replaced": 0,
+        "skipped": 0,
+        "planned": 0,
+        "failed": 0,
+    }
+    for skill in skills:
+        state = skill.get("status") or skill.get("action") or "unknown"
+        if state in ("installed", "copy"):
+            counts["installed" if skill.get("status") else "planned"] += 1
+        elif state in ("replaced", "replace"):
+            counts["replaced" if skill.get("status") else "planned"] += 1
+        elif state == "failed":
+            counts["failed"] += 1
+        else:
+            counts["skipped"] += 1
+
+    lines = [
+        "NVFLARE Agent Skills Install",
+        f"agent: {plan.get('agent', '')}",
+        f"target: {plan.get('target_path', '')}",
+    ]
+    requested_skill = plan.get("requested_skill")
+    if requested_skill:
+        lines.append(f"requested skill: {requested_skill}")
+    source = plan.get("source") or {}
+    if source:
+        lines.append(
+            "source: "
+            f"{source.get('type', 'unknown')} "
+            f"({source.get('skill_count', 0)} available, root: {source.get('root', '')})"
+        )
+    lines.extend(
+        [
+            f"mode: {'applied' if plan.get('applied') else 'dry-run'}",
+            "summary: "
+            f"installed {counts['installed']}, "
+            f"replaced {counts['replaced']}, "
+            f"planned {counts['planned']}, "
+            f"skipped {counts['skipped']}, "
+            f"conflicts {len(plan.get('conflicts') or [])}, "
+            f"errors {len(plan.get('errors') or [])}",
+        ]
+    )
+
+    _append_install_skill_rows(lines, skills)
+    _append_conflict_rows(lines, plan.get("conflicts") or [])
+    if plan.get("missing"):
+        lines.append("")
+        lines.append("missing:")
+        for name in plan["missing"]:
+            lines.append(f"  - {name}")
+    lines.append("")
+    lines.append("Use --format json for the full machine-readable install plan.")
+    return "\n".join(lines)
+
+
+def _append_install_skill_rows(lines: list[str], skills: list[dict]) -> None:
+    lines.append("")
+    lines.append("skills:")
+    if not skills:
+        lines.append("  none")
+        return
+
+    for skill in skills:
+        state = skill.get("status") or skill.get("action") or "unknown"
+        detail_parts = []
+        if skill.get("skill_version"):
+            detail_parts.append(f"version {skill['skill_version']}")
+        if skill.get("version_delta"):
+            detail_parts.append(f"delta {skill['version_delta']}")
+        if skill.get("reason"):
+            detail_parts.append(skill["reason"])
+        if skill.get("conflict"):
+            detail_parts.append(f"conflict {skill['conflict']}")
+        if skill.get("backup_path"):
+            detail_parts.append(f"backup {skill['backup_path']}")
+        detail = f" ({', '.join(detail_parts)})" if detail_parts else ""
+        lines.append(f"  - {skill.get('name', '<unknown>')}: {state}{detail}")
 
 
 def _format_agent_skills_list_human(data: dict) -> str:
