@@ -28,18 +28,28 @@ debugging that does not ask for FLARE conversion.
 3. Run `nvflare recipe list --framework pytorch --format json` and select the
    recipe from the requested FL workflow, not from PyTorch alone. Use FedAvg
    only for standard horizontal model-parameter aggregation.
-4. Convert training exchange to the FLARE Client API: initialize FLARE, receive
+4. Create the converted FLARE job source in a separate generated folder such as
+   `<project>/nvflare_jobs/<job_name>/` unless the user provides a target. Do
+   not mix generated FLARE files into the original training-code root by
+   default.
+5. Use the standard generated source names `client.py`, `job.py`, and `model.py`
+   when model code is copied or wrapped. Keep original files such as `train.py`
+   as source references unless the user explicitly asks to rewrite them.
+6. Convert training exchange to the FLARE Client API: initialize FLARE, receive
    an `FLModel`, load `params` into the PyTorch model, train or evaluate, and
    send an `FLModel` with updated `params`, metrics, and useful metadata.
-5. Add or update a `job.py` that uses the selected PyTorch recipe or job API
+7. Add or update a `job.py` that uses the selected PyTorch recipe or job API
    path for local simulation and export.
-6. Validate locally with `python job.py` and export with
-   `python job.py --export --export-dir <dir>` using the FedJob system
-   arguments.
+8. Validate locally with `python job.py` and export with
+   `python job.py --export --export-dir /tmp/nvflare/job_config/<job_name>`
+   using the FedJob system arguments. Keep simulation workspaces and generated
+   runtime outputs under `/tmp/nvflare/` unless the user provides another path.
 
 ## Requirements
 
 - Must keep edits scoped to training, model, job, and small config files.
+- Must keep generated FLARE source separate from the original training source
+  unless the user asks for in-place conversion.
 - Must preserve user data paths and require user confirmation before changing
   them.
 - Must translate natural user requests into concrete recipe, site-count,
@@ -48,6 +58,9 @@ debugging that does not ask for FLARE conversion.
   unavailable.
 - Must report recipe choice, validation commands, export status, and remaining
   blockers before calling the conversion complete.
+- Must report metric values or explain why metrics are unavailable, including
+  the exact simulation workspace, result file, log, or global-model path used as
+  evidence.
 - Must not submit to POC or production without explicit user approval.
 - Must not generate Python solely to wrap `nvflare` CLI commands or scrape
   human CLI output.

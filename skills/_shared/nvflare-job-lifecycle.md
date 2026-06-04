@@ -15,6 +15,23 @@ arguments, validation intent, and approval boundaries before asking follow-up
 questions. Ask only when a missing value changes the generated job or runtime
 behavior.
 
+## Generated Job Layout
+
+Create generated FLARE source in a separate job folder unless the user asks for
+in-place conversion. Prefer `<project>/nvflare_jobs/<job_name>/` for source
+files and standard names such as `client.py`, `job.py`, `model.py`,
+`requirements.txt`, and small config files. Preserve the original training
+files as references instead of renaming or overwriting them.
+
+Do not put exported jobs, simulation workspaces, generated model artifacts, or
+temporary vocab/cache files in the original source root by default. Use explicit
+runtime locations under `/tmp/nvflare/` unless the user provides another path:
+
+- exported job config: `/tmp/nvflare/job_config/<job_name>/`;
+- simulation workspace: `/tmp/nvflare/workspaces/<job_name>/`;
+- generated validation outputs or evaluation records:
+  `/tmp/nvflare/results/<job_name>/`.
+
 ## Local Validation
 
 - Use `python job.py` for local recipe or SimEnv validation when the generated
@@ -27,6 +44,8 @@ behavior.
 
 - Use `python job.py --export --export-dir <dir>` to export a FedJob. These are
   FedJob system arguments and do not need to be declared by the job file.
+- Default `<dir>` to `/tmp/nvflare/job_config/<job_name>` unless the user
+  provides an export directory.
 - Inspect the exported folder for server/client app folders and expected config
   files before recommending submission.
 
@@ -39,6 +58,9 @@ Before calling a generated job correct, report:
 - local validation command and pass/fail status;
 - export command, export directory, and exported folder inspection result when
   export is in scope;
+- metric values or a clear explanation that metrics were unavailable;
+- exact result paths, including simulation workspace, generated result files,
+  logs, and global-model artifact paths used as evidence;
 - unresolved blockers such as unavailable data, missing dependencies, or
   required user approval.
 
@@ -74,4 +96,3 @@ root-cause hypothesis, and follow-up fix or blocker.
 If the failure represents a repeatable skill gap, add or update an eval case,
 benchmark gap, fixture, or reference note so future skill runs are tested
 against the same scenario.
-

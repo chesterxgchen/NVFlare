@@ -36,6 +36,7 @@ V1_LINT_IDS = (
     "skill-catalog-category-lint",
     "skill-global-negative-lint",
     "skill-policy-coverage-lint",
+    "skill-process-eval-lint",
     "skill-command-drift-lint",
     "skill-helper-script-lint",
     "skill-fixture-lint",
@@ -49,6 +50,7 @@ LINT_SKILL_TRIGGER_OVERLAP = "skill-trigger-overlap-lint"
 LINT_SKILL_CATALOG_CATEGORY = "skill-catalog-category-lint"
 LINT_SKILL_GLOBAL_NEGATIVE = "skill-global-negative-lint"
 LINT_SKILL_POLICY_COVERAGE = "skill-policy-coverage-lint"
+LINT_SKILL_PROCESS_EVAL = "skill-process-eval-lint"
 LINT_SKILL_COMMAND_DRIFT = "skill-command-drift-lint"
 LINT_SKILL_HELPER_SCRIPT = "skill-helper-script-lint"
 LINT_SKILL_FIXTURE = "skill-fixture-lint"
@@ -223,6 +225,7 @@ def run_v1_lints(
         "skill-catalog-category-lint": _lint_catalog_category,
         "skill-global-negative-lint": _lint_global_negative,
         "skill-policy-coverage-lint": _lint_policy_coverage,
+        "skill-process-eval-lint": _lint_process_eval,
         "skill-command-drift-lint": _lint_command_drift,
         "skill-helper-script-lint": _lint_helper_scripts,
         "skill-fixture-lint": _lint_fixtures,
@@ -652,6 +655,87 @@ def _lint_policy_coverage(context: LintContext) -> None:
             break
 
 
+def _lint_process_eval(context: LintContext) -> None:
+    for record in _public_records(context.records):
+        if record.evals_error:
+            _add_evals_error(context, "skill-process-eval-lint", record)
+            continue
+        if not record.evals_path.is_file():
+            context.findings.append(
+                _finding(
+                    "skill-process-eval-lint",
+                    FINDING_ERROR,
+                    record.evals_path,
+                    "evals/evals.json is required for process-evaluation coverage",
+                    "Add process evaluation metrics under nvflare.process_evaluation.metrics.",
+                    code="skill-evals-missing",
+                    skill=record.name,
+                )
+            )
+            continue
+
+        process_metrics = []
+        for item in record.evals:
+            for metric in _process_metrics(item):
+                process_metrics.append((item, metric))
+
+        if not process_metrics:
+            context.findings.append(
+                _finding(
+                    "skill-process-eval-lint",
+                    FINDING_ERROR,
+                    record.evals_path,
+                    "missing process-evaluation metrics for this public skill",
+                    "Add nvflare.process_evaluation.metrics entries for first-pass quality, correction count, "
+                    "unwanted actions, validation evidence, or other skill-process outcomes.",
+                    code="skill-process-eval-missing",
+                    skill=record.name,
+                )
+            )
+            continue
+
+        for item, metric in process_metrics:
+            if not isinstance(metric, dict):
+                context.findings.append(
+                    _finding(
+                        "skill-process-eval-lint",
+                        FINDING_ERROR,
+                        record.evals_path,
+                        f"eval '{item.get('id', '<missing>')}' process metric must be an object",
+                        "Use objects with at least id and description fields.",
+                        code="skill-process-eval-metric-type",
+                        skill=record.name,
+                    )
+                )
+                continue
+            metric_id = metric.get("id")
+            description = metric.get("description")
+            if not isinstance(metric_id, str) or not metric_id.strip():
+                context.findings.append(
+                    _finding(
+                        "skill-process-eval-lint",
+                        FINDING_ERROR,
+                        record.evals_path,
+                        f"eval '{item.get('id', '<missing>')}' process metric is missing id",
+                        "Add a stable metric id such as turns_to_acceptable or user_correction_count.",
+                        code="skill-process-eval-metric-id-missing",
+                        skill=record.name,
+                    )
+                )
+            if not isinstance(description, str) or not description.strip():
+                context.findings.append(
+                    _finding(
+                        "skill-process-eval-lint",
+                        FINDING_ERROR,
+                        record.evals_path,
+                        f"eval '{item.get('id', '<missing>')}' process metric '{metric_id}' is missing description",
+                        "Describe what the metric measures and what evidence records it.",
+                        code="skill-process-eval-metric-description-missing",
+                        skill=record.name,
+                    )
+                )
+
+
 def _lint_command_drift(context: LintContext) -> None:
     for record in _public_records(context.records):
         for file_path, text in _iter_skill_text_files(record.skill_dir, include_scripts=True):
@@ -989,6 +1073,16 @@ def _behavior_id_count(item: dict[str, Any]) -> int:
         if isinstance(values, list):
             count += len(values)
     return count
+
+
+def _process_metrics(item: dict[str, Any]) -> list[Any]:
+    nvflare = _nvflare_ext(item)
+    process_evaluation = nvflare.get("process_evaluation", {})
+    if isinstance(process_evaluation, dict):
+        metrics = process_evaluation.get("metrics", [])
+        return metrics if isinstance(metrics, list) else [metrics]
+    legacy_metrics = nvflare.get("process_metrics", [])
+    return legacy_metrics if isinstance(legacy_metrics, list) else [legacy_metrics]
 
 
 def _eval_text(item: dict[str, Any]) -> str:
