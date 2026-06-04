@@ -1202,6 +1202,9 @@ class TestBasic(TestController):
             result=result,
         )
 
+        controller.communicator.check_tasks()
+        assert client_task_id not in controller.communicator._client_task_map
+
         duplicate_result = Shareable()
         duplicate_result["result"] = "duplicate"
         controller.communicator.process_submission(
