@@ -42,7 +42,27 @@
             "id": "doctor-readiness",
             "description": "runs doctor when the prompt asks about local readiness"
           }
-        ]
+        ],
+        "process_evaluation": {
+          "metrics": [
+            {
+              "id": "first_pass_route_correct",
+              "description": "whether the first routing recommendation names the correct lead skill or no-skill result"
+            },
+            {
+              "id": "turns_to_route",
+              "description": "number of user/agent turns before a concrete lead skill or no-skill route is identified"
+            },
+            {
+              "id": "unwanted_action_count",
+              "description": "number of file edits, runtime commands, or production actions performed during read-only orientation"
+            },
+            {
+              "id": "handoff_clarity",
+              "description": "whether the route includes the next skill, why it applies, and what the agent should do next"
+            }
+          ]
+        }
       }
     },
     {

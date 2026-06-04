@@ -4,7 +4,7 @@
     {
       "id": "pytorch-convert-basic",
       "prompt": "Here is my PyTorch training code. Convert it to FLARE FL code, run the converted job with 3 simulated sites using this dataset, split the dataset evenly for the 3 sites, use FedAvg, and train for 3 rounds.",
-      "expected_output": "A FLARE-compatible PyTorch Client API training integration, a runnable job.py using FedAvg with 3 simulated sites and 3 rounds, local validation evidence, and an export attempt when supported.",
+      "expected_output": "A FLARE-compatible PyTorch Client API training integration in a separate generated job folder, standard client.py/job.py/model.py layout, a runnable job.py using FedAvg with 3 simulated sites and 3 rounds, local validation evidence, result or metric evidence, and an export attempt under /tmp/nvflare/job_config when supported.",
       "files": [
         "evals/files/hello-pt/train.py",
         "evals/files/hello-pt/model.py"
@@ -15,9 +15,12 @@
         "The agent translates the natural request into recipe, site-count, dataset, split, training, validation, and export settings.",
         "The agent checks nvflare recipe list --framework pytorch --format json before selecting the job recipe.",
         "The agent selects FedAvg only when the requested workflow is standard horizontal model-parameter aggregation.",
+        "The agent creates generated FLARE source in a separate folder rather than mixing converted files into the original training root.",
+        "The generated source uses standard names such as client.py, job.py, and model.py instead of ad hoc names such as fl_train.py.",
         "The generated training code uses nvflare.client receive/send and FLModel for model exchange.",
+        "The agent keeps simulation workspaces, exported job folders, and generated runtime outputs under /tmp/nvflare unless the user gives another location.",
         "The agent runs python job.py for local validation when dependencies are available.",
-        "The agent reports recipe choice, validation status, export status, and remaining blockers.",
+        "The agent reports recipe choice, validation status, export status, metric or result evidence, exact result paths, and remaining blockers.",
         "The agent records failed generated-job validation as evaluation evidence when the job does not run as expected.",
         "The agent does not submit to POC or production without explicit approval."
       ],
@@ -45,6 +48,18 @@
             "description": "selects the PyTorch recipe from the requested FL workflow instead of assuming every PyTorch job is FedAvg"
           },
           {
+            "id": "separate-generated-job-folder",
+            "description": "creates converted FLARE source in a separate generated job folder instead of mixing it into the original training root"
+          },
+          {
+            "id": "standard-generated-layout",
+            "description": "uses standard generated file names such as client.py, job.py, and model.py"
+          },
+          {
+            "id": "tmp-runtime-outputs",
+            "description": "uses /tmp/nvflare locations for exported jobs, simulation workspaces, and generated validation outputs unless overridden by the user"
+          },
+          {
             "id": "use-client-api-for-training-exchange",
             "description": "uses nvflare.client receive/send and FLModel for training exchange"
           },
@@ -54,7 +69,7 @@
           },
           {
             "id": "report-validation-evidence",
-            "description": "reports recipe choice, validation command status, export status, and remaining blockers"
+            "description": "reports recipe choice, validation command status, export status, metric or result evidence, exact result paths, and remaining blockers"
           },
           {
             "id": "record-validation-failures",
@@ -84,7 +99,31 @@
             "id": "approved-poc-submit",
             "description": "submits the exported job to POC only when the user explicitly approves POC or provides a POC workspace and asks for submission"
           }
-        ]
+        ],
+        "process_evaluation": {
+          "metrics": [
+            {
+              "id": "first_pass_accepted",
+              "description": "whether the first generated conversion satisfies layout, recipe, validation, and evidence requirements without user correction"
+            },
+            {
+              "id": "turns_to_acceptable",
+              "description": "number of user/agent turns before the conversion is accepted as structurally correct and validated or explicitly blocked"
+            },
+            {
+              "id": "user_correction_count",
+              "description": "number of user corrections needed for workflow, layout, validation, evidence, or artifact-location mistakes"
+            },
+            {
+              "id": "layout_violations",
+              "description": "count of generated source layout, file naming, or runtime artifact placement violations found before final acceptance"
+            },
+            {
+              "id": "validation_evidence_completeness",
+              "description": "whether the final answer reports validation commands, statuses, metric or result evidence, and exact artifact paths"
+            }
+          ]
+        }
       }
     },
     {

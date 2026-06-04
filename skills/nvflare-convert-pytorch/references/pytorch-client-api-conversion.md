@@ -14,6 +14,23 @@ This reference covers standard PyTorch training loops that already have a
 - Send `flare.FLModel(params=model.cpu().state_dict(), metrics=..., meta=...)`
   with `flare.send(...)`.
 
+## Generated Source Layout
+
+Use `../../_shared/nvflare-job-lifecycle.md` for the generated folder and
+runtime output locations. For PyTorch conversions, the generated job folder
+should normally contain:
+
+- `client.py`: FLARE Client API entry point;
+- `job.py`: recipe or FedJob builder, simulation entry point, and export entry
+  point;
+- `model.py`: copied, wrapped, or imported model definition when needed;
+- `requirements.txt` or a small requirements file only when dependencies differ
+  from the source project.
+
+Avoid names such as `fl_train.py` for the generated FLARE Client API entry
+point unless the user explicitly requests that naming. Keep the original
+`train.py` intact as the source training reference.
+
 ## Evaluation Branch
 
 When the task is evaluation-only, use `flare.is_evaluate()` to send metrics

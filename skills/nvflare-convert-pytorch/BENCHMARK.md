@@ -19,12 +19,21 @@ FLARE version: 2.8.0 minimum
 | Site heterogeneity trigger | Draft | `pytorch-site-specific-training` covers per-site speed and hyperparameter simulation. |
 | Adjacent negative trigger | Draft | Lightning prompt routes away from this skill. |
 | Global negative trigger | Draft | Kubernetes deployment prompt routes away from this skill. |
-| Mandatory behavior | Draft | Behavior IDs cover inspect-first, natural request parsing, recipe discovery, recipe selection from FL intent, scoped edits, Client API exchange, local validation, validation evidence reporting, and failed-validation eval records. |
+| Mandatory behavior | Draft | Behavior IDs cover inspect-first, natural request parsing, recipe discovery, recipe selection from FL intent, scoped edits, separate generated job folders, standard generated layout, `/tmp/nvflare` runtime outputs, Client API exchange, local validation, validation evidence reporting, and failed-validation eval records. |
 | Prohibited behavior | Draft | Behavior IDs prohibit production submit, private data copying, and CLI-wrapper Python. |
+| Process evaluation | Draft | Metrics cover first-pass acceptance, turns to acceptable, user correction count, layout violations, and validation evidence completeness. |
+
+## Observed Process Runs
+
+| Case | Status | Process Score | Notes |
+| --- | --- | --- | --- |
+| AMES PyTorch FedAvg conversion | Informal/ad hoc | 3/5 | Functional conversion and simulation completed, but first pass mixed generated files into the source root, used `fl_train.py` instead of `client.py`, wrote export/workspace artifacts under the project root, and required user correction. The skill was updated to add generated-folder, standard-layout, `/tmp/nvflare` output, and result-evidence guardrails. |
 
 ## Known Gaps
 
 - Runtime agent-performance scoring has not been run yet.
+- Formal runtime process scoring has not been run yet; the AMES row above is
+  an informal process observation from a real conversion exercise.
 - The seed skill targets standard PyTorch loops only, not Lightning,
   Hugging Face Trainer, TensorFlow, XGBoost, sklearn, or custom NumPy loops.
 - Export validation uses FedJob system arguments; no job-local export argument
