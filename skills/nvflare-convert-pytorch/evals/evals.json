@@ -121,6 +121,18 @@
             {
               "id": "validation_evidence_completeness",
               "description": "whether the final answer reports validation commands, statuses, metric or result evidence, and exact artifact paths"
+            },
+            {
+              "id": "elapsed_seconds",
+              "description": "wall-clock time used for the conversion workflow from first skill-guided action to final reported result"
+            },
+            {
+              "id": "token_count",
+              "description": "total conversation token count for the conversion run when supplied by the evaluation runner"
+            },
+            {
+              "id": "conversion_quality",
+              "description": "reviewer-rated 1-5 quality of the converted FLARE job, considering structure, API choices, validation evidence, and artifact placement"
             }
           ]
         }

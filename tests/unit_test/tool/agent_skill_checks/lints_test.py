@@ -23,6 +23,7 @@ LINT_SKILL_TRIGGER_OVERLAP = "skill-trigger-overlap-lint"
 LINT_SKILL_CATALOG_CATEGORY = "skill-catalog-category-lint"
 LINT_SKILL_GLOBAL_NEGATIVE = "skill-global-negative-lint"
 LINT_SKILL_POLICY_COVERAGE = "skill-policy-coverage-lint"
+LINT_SKILL_PROCESS_EVAL = "skill-process-eval-lint"
 LINT_SKILL_COMMAND_DRIFT = "skill-command-drift-lint"
 LINT_SKILL_HELPER_SCRIPT = "skill-helper-script-lint"
 LINT_SKILL_FIXTURE = "skill-fixture-lint"
@@ -47,6 +48,7 @@ def test_run_v1_lints_passes_complete_skill(tmp_path):
         LINT_SKILL_CATALOG_CATEGORY,
         LINT_SKILL_GLOBAL_NEGATIVE,
         LINT_SKILL_POLICY_COVERAGE,
+        LINT_SKILL_PROCESS_EVAL,
         LINT_SKILL_COMMAND_DRIFT,
         LINT_SKILL_HELPER_SCRIPT,
         LINT_SKILL_FIXTURE,
@@ -363,7 +365,17 @@ def _default_evals(name, *, category="conversion", adjacent_negative=True, inclu
                 "expected_output": "A validated FLARE job.",
                 "files": ["evals/files/input.py"],
                 "assertions": ["Uses the expected skill."],
-                "nvflare": {"expected_skill": name},
+                "nvflare": {
+                    "expected_skill": name,
+                    "process_evaluation": {
+                        "metrics": [
+                            {
+                                "id": "turns_to_acceptable",
+                                "description": "number of turns before an acceptable result",
+                            }
+                        ]
+                    },
+                },
             },
             {
                 "id": "global-negative",

@@ -27,6 +27,7 @@ CMD_AGENT_DOCTOR = "doctor"
 CMD_AGENT_SKILLS = "skills"
 CMD_AGENT_SKILLS_INSTALL = "install"
 CMD_AGENT_SKILLS_LIST = "list"
+CMD_AGENT_SKILLS_PERFORMANCE = "performance"
 
 _AGENT_OUTPUT_MODES = ["json"]
 _AGENT_EXAMPLES = [
@@ -42,6 +43,7 @@ _AGENT_SKILLS_EXAMPLES = [
     "nvflare agent skills install --agent codex --dry-run --format json",
     "nvflare agent skills install --agent claude --skill nvflare-orient --format json",
     "nvflare agent skills list --agent codex --format json",
+    "nvflare agent skills performance --skill nvflare-convert-pytorch --case pytorch-convert-basic --format json",
 ]
 _agent_parser: Optional[argparse.ArgumentParser] = None
 _agent_sub_cmd_parsers = {}
@@ -122,11 +124,25 @@ def def_agent_cli_parser(sub_cmd) -> dict:
     _add_agent_target_args(list_parser)
     list_parser.add_argument("--schema", action="store_true", help="print command schema as JSON and exit")
 
+    performance_parser = skills_subparser.add_parser(
+        CMD_AGENT_SKILLS_PERFORMANCE,
+        description="Summarize NVFLARE-owned skill process-evaluation performance.",
+        help="summarize skill process-evaluation performance",
+    )
+    performance_parser.add_argument("--skill", help="summarize one skill by name; omit to summarize all skills")
+    performance_parser.add_argument("--case", dest="case_id", help="summarize one eval case by id")
+    performance_parser.add_argument(
+        "--records",
+        help="JSON, JSONL, or directory of runtime process records; defaults to ~/.nvflare/agent_skill_eval_runs",
+    )
+    performance_parser.add_argument("--schema", action="store_true", help="print command schema as JSON and exit")
+
     _agent_sub_cmd_parsers[CMD_AGENT_INSPECT] = inspect_parser
     _agent_sub_cmd_parsers[CMD_AGENT_DOCTOR] = doctor_parser
     _agent_sub_cmd_parsers[CMD_AGENT_SKILLS] = skills_parser
     _agent_skills_sub_cmd_parsers[CMD_AGENT_SKILLS_INSTALL] = install_parser
     _agent_skills_sub_cmd_parsers[CMD_AGENT_SKILLS_LIST] = list_parser
+    _agent_skills_sub_cmd_parsers[CMD_AGENT_SKILLS_PERFORMANCE] = performance_parser
 
     _agent_parser = parser
     return {"agent": parser}
@@ -182,6 +198,13 @@ def _agent_info_data() -> dict:
             {
                 "name": "skills list",
                 "command": "nvflare agent skills list",
+                "status": "available",
+                "mutating": False,
+                "streaming": False,
+            },
+            {
+                "name": "skills performance",
+                "command": "nvflare agent skills performance",
                 "status": "available",
                 "mutating": False,
                 "streaming": False,
@@ -337,6 +360,7 @@ def _handle_agent_doctor_cmd(args, handle_schema_flag, output_error_message, out
 
 def _handle_agent_skills_cmd(args, handle_schema_flag, output_error_message, output_ok) -> None:
     from nvflare.tool.agent.skill_manager import SUPPORTED_AGENT_TARGETS, install_skills, list_skills
+    from nvflare.tool.agent.skill_performance import format_skill_performance_human, summarize_skill_performance
     from nvflare.tool.cli_output import is_json_mode, is_jsonl_mode, print_human
 
     skills_sub_cmd = getattr(args, "agent_skills_sub_cmd", None)
@@ -445,6 +469,49 @@ def _handle_agent_skills_cmd(args, handle_schema_flag, output_error_message, out
             code="OK",
             message="NVFLARE agent skills listed.",
             hint=f"Supported agent targets: {', '.join(SUPPORTED_AGENT_TARGETS)}.",
+        )
+        return
+
+    if skills_sub_cmd == CMD_AGENT_SKILLS_PERFORMANCE:
+        handle_schema_flag(
+            _agent_skills_sub_cmd_parsers[CMD_AGENT_SKILLS_PERFORMANCE],
+            "nvflare agent skills performance",
+            _AGENT_SKILLS_EXAMPLES,
+            sys.argv[1:],
+            streaming=False,
+            output_modes=_AGENT_OUTPUT_MODES,
+            mutating=False,
+            idempotent=True,
+        )
+        try:
+            data = summarize_skill_performance(
+                skill_name=getattr(args, "skill", None),
+                case_id=getattr(args, "case_id", None),
+                records_path=getattr(args, "records", None),
+            )
+        except ValueError as e:
+            message = str(e)
+            error_code = (
+                "AGENT_SKILL_NOT_FOUND" if "skill not found" in message.lower() else "AGENT_SKILL_PERFORMANCE_FAILED"
+            )
+            output_error_message(
+                error_code,
+                "NVFLARE agent skill performance summary failed.",
+                "Pass an existing records path or omit --records to use the default process-record location.",
+                exit_code=4,
+                detail=message,
+                include_data=True,
+                recovery_category="FIXABLE_BY_CONFIG",
+            )
+            return
+        if not is_json_mode() and not is_jsonl_mode():
+            print_human(format_skill_performance_human(data))
+            return
+        output_ok(
+            data,
+            code="OK",
+            message="NVFLARE agent skill performance summarized.",
+            hint="Runtime fields are reported only when supplied by process evaluation records.",
         )
         return
 

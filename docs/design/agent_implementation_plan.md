@@ -7,7 +7,7 @@
 | Created date | 2026-05-26 |
 | Updated date | 2026-06-04 |
 | Status | Ready for Implementation |
-| Sources | [Agent Integration](agent_integration.md), [Agent Skill Authoring](agent_skill_authoring.md), [Agent Skill Evaluation](agent_skill_evaluation.md), [Agent Skills Deferred Roadmap](agent_skills_deferred_roadmap.md) |
+| Sources | [Agent Integration](agent_integration.md), [Agent Skill Authoring](agent_skill_authoring.md), [Agent Skill Evaluation](agent_skill_evaluation.md), and the temporary deferred-roadmap planning note |
 | Scope | First implementation cut for native NVFLARE agent skills |
 | Out of scope | Public NVIDIA skills catalog mechanics, public scoreboard ownership, Node/npm/npx installer dependency, Auto-FL product roadmap, and deferred roadmap items |
 
@@ -17,7 +17,7 @@ This plan implements the simplified initial design. Deferred mechanisms such as
 receipts, provenance, durable workflow state, transcript replay, workspace
 cleanup, full lifecycle commands, compatibility shims, PR-bot automation, and
 the large policy catalog are intentionally not part of this plan. They live in
-[Agent Skills Deferred Roadmap](agent_skills_deferred_roadmap.md).
+the temporary deferred-roadmap planning note.
 
 The core test split is:
 

@@ -116,7 +116,8 @@ _KNOWN_NVFLARE_ROOT_COMMANDS = {
     "system",
 }
 _KNOWN_AGENT_COMMANDS = {"doctor", "info", "inspect", "skills"}
-_KNOWN_AGENT_SKILLS_COMMANDS = {"install", "list"}
+_KNOWN_AGENT_SKILLS_COMMANDS = {"install", "list", "performance"}
+_PLANNED_AGENT_SKILLS_COMMANDS = {"evaluate"}
 _KNOWN_AGENT_FLAGS = {
     "agent": {"--format", "--schema"},
     "agent doctor": {"--format", "--online", "--schema", "--startup-kit", "--project", "--org"},
@@ -125,6 +126,7 @@ _KNOWN_AGENT_FLAGS = {
     "agent skills": {"--format", "--schema"},
     "agent skills install": {"--agent", "--dry-run", "--format", "--schema", "--skill", "--target"},
     "agent skills list": {"--agent", "--format", "--schema", "--target"},
+    "agent skills performance": {"--case", "--format", "--records", "--schema", "--skill"},
 }
 _DOC_FILES = (
     "agent_implementation_plan.md",
@@ -942,7 +944,7 @@ def _lint_doc_crosslinks(context: LintContext) -> None:
         for line_no, command in _extract_nvflare_commands(text):
             if not command.startswith("nvflare agent"):
                 continue
-            message = _command_drift_message(command, check_flags=False)
+            message = _command_drift_message(command, check_flags=False, allow_planned=True)
             if message is None:
                 continue
             context.findings.append(
@@ -1210,7 +1212,7 @@ def _trim_command(text: str) -> str:
     return text
 
 
-def _command_drift_message(command: str, *, check_flags: bool = True) -> Optional[str]:
+def _command_drift_message(command: str, *, check_flags: bool = True, allow_planned: bool = False) -> Optional[str]:
     tokens = _command_tokens(command)
     if not tokens or tokens[0] != "nvflare":
         return None
@@ -1225,8 +1227,11 @@ def _command_drift_message(command: str, *, check_flags: bool = True) -> Optiona
 
     if len(positional) >= 2 and positional[1] not in _KNOWN_AGENT_COMMANDS:
         return f"unknown nvflare agent command '{positional[1]}' in '{command}'"
-    if len(positional) >= 3 and positional[1] == "skills" and positional[2] not in _KNOWN_AGENT_SKILLS_COMMANDS:
-        return f"unknown nvflare agent skills command '{positional[2]}' in '{command}'"
+    if len(positional) >= 3 and positional[1] == "skills":
+        skills_command = positional[2]
+        if skills_command not in _KNOWN_AGENT_SKILLS_COMMANDS:
+            if not allow_planned or skills_command not in _PLANNED_AGENT_SKILLS_COMMANDS:
+                return f"unknown nvflare agent skills command '{skills_command}' in '{command}'"
 
     command_key = " ".join(positional[:3] if len(positional) >= 3 and positional[1] == "skills" else positional[:2])
     allowed_flags = _KNOWN_AGENT_FLAGS.get(command_key, _KNOWN_AGENT_FLAGS.get(root, set()))
