@@ -310,6 +310,15 @@ Deliverables:
 - Make activation explicit: normal skill use is off; invoking
   `nvflare agent skills evaluate` is on; scripted harnesses turn evaluation on
   by invoking the same evaluator entry point after collecting artifacts.
+- Document and implement the agent/harness convention
+  `NVFLARE_SKILL_EVAL=on`: installed skills and scripted harnesses should check
+  this environment variable after a skill run and, when a matching eval case and
+  bounded artifact or checklist evidence are available, call
+  `nvflare agent skills evaluate`. The NVFLARE CLI itself does not read this
+  variable. If the variable is unset, or if the case/evidence is unavailable,
+  no process record is required. Harnesses that run baseline and skill-assisted
+  comparisons should pass explicit `--run-mode` values so summaries group the
+  records separately.
 - Do not add an LLM judge, human runtime mode, or agent self-scoring mode in
   this milestone. Agent-authored notes may be evidence, but the evaluator or
   reviewer checklist assigns the score from the documented rubric.
@@ -465,6 +474,8 @@ Engineering tests:
 
 - evaluator loads a skill's `evals/evals.json`, selects one case, and rejects
   unknown skill/case IDs with JSON envelope errors;
+- seed skills document the `NVFLARE_SKILL_EVAL=on` post-run convention and do
+  not claim that the NVFLARE CLI reads the variable directly;
 - evaluator rejects omitted `--case` with a JSON envelope error and writes no
   process record;
 - evaluator supports trigger-only or adjacent-negative cases with empty behavior

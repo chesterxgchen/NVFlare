@@ -296,6 +296,11 @@ The initial native skill-management surface is intentionally small:
   [--skill-version <version>] [--artifacts <path>] [--checklist <path>]
   [--records <path>] --format json` is the explicit runtime process-evaluator
   entry point defined by [Agent Skill Evaluation](agent_skill_evaluation.md#runtime-evaluator-and-records).
+- `nvflare agent skills benchmark --skill <name> [--case <eval-id>]
+  [--records <path>] [--output <path>] [--dry-run] [--format json]` renders a
+  reviewable `BENCHMARK.md` draft from `skills performance` summaries. It is
+  mutating only when `--dry-run` is omitted and must not execute skills, parse
+  raw artifacts, or mutate runtime process records.
 - `nvflare agent skills install --target <dir>` may be supported for explicit
   custom or project-local installation when named agent shortcuts are not
   enough.
@@ -307,6 +312,14 @@ Full lifecycle commands such as catalog browsing, explain/audit, validate,
 skills doctor, compatibility reports, changelog, uninstall, revert, report-bug,
 feedback, transcript replay, and workspace cleanup are deferred to
 the future roadmap. They should not be required for the first implementation.
+
+Runtime process evaluation can also be activated by the agent or harness
+environment. `NVFLARE_SKILL_EVAL=on` means the agent should attempt to call
+`nvflare agent skills evaluate` after completing a skill run when a matching
+eval case and bounded artifact or checklist evidence are available. The
+NVFLARE CLI does not read this variable directly; unset means normal skill use
+with zero evaluator overhead. Harnesses should pass explicit `--run-mode`
+values when comparing baseline and skill-assisted runs.
 
 Installer authority rules:
 
@@ -884,6 +897,16 @@ automation.
 [--records <path>] --format json` is the explicit runtime process-evaluator
 entry point. It follows the input, output, scoring, and error-code contract in
 [Agent Skill Evaluation](agent_skill_evaluation.md#runtime-evaluator-and-records).
+
+`nvflare agent skills benchmark --skill <name> [--case <eval-id>]
+[--records <path>] [--output <path>] [--dry-run] [--format json]` renders a
+reviewable benchmark draft from the performance summary for one skill. It
+does not collect or score evidence itself.
+
+Installed skills should also honor the `NVFLARE_SKILL_EVAL=on` convention by
+attempting a post-run `skills evaluate` call when the case and bounded evidence
+are available. This is an agent/harness convention, not a CLI environment
+switch.
 
 Full discovery, audit, validation, compatibility, transcript, feedback,
 approval-list, revert, uninstall, and cleanup commands are deferred to

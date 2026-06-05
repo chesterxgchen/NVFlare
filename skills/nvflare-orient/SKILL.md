@@ -39,5 +39,14 @@ diagnosis. Route to the narrower skill instead.
 - Must say when no FLARE skill should trigger.
 - Must not edit files, start POC systems, submit jobs, or read private keys.
 
+## Runtime Evaluation
+
+After completing a skill run, check `NVFLARE_SKILL_EVAL`. If it is `on`, run
+`nvflare agent skills evaluate` before the final response when a matching eval
+case and bounded evidence are available. Use `--skill nvflare-orient`, `--case
+<eval-id>`, `--agent`, `--run-mode`, and either `--artifacts <dir>` or
+`--checklist <file>`. Do not invent a case or evidence; if unavailable, report
+why evaluation was skipped.
+
 Load `references/orientation-routing.md` when routing is ambiguous or when the
 inspect output names multiple possible workflow families.
