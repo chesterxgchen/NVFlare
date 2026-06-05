@@ -535,8 +535,20 @@ Initial activation is explicit. Normal agent skill use is `off`. Invoking
 process record unless validation fails before write. Scripted harnesses should
 turn evaluation on by invoking the same evaluator entry point after collecting
 artifacts; if they only collect raw artifacts and do not invoke the evaluator,
-the run remains `off`. The initial product contract does not require a separate
-environment variable or global config switch.
+the run remains `off`.
+
+For agent-driven runs, `NVFLARE_SKILL_EVAL=on` is the activation convention.
+This environment variable is read by the agent harness or skill instructions,
+not by the NVFLARE CLI. When it is unset, normal skill use remains `off` and
+there is no evaluator overhead. When it is set to the literal value `on`, the
+agent should attempt runtime evaluation after completing a skill run by calling
+`nvflare agent skills evaluate` with the selected skill, eval case, run mode,
+and artifact or checklist evidence. If the agent or harness cannot identify a
+matching `evals/evals.json` case or cannot provide bounded evidence, it should
+not invent inputs; it should report that runtime evaluation was skipped and
+why. Test harnesses that compare baseline and skill-assisted runs should keep
+the environment variable set and pass distinct `--run-mode` values such as
+`without_skill` and `with_skill` so `skills performance` groups them separately.
 
 There is no initial `human`, `agent_record`, or LLM-judge mode. A human reviewer
 may inspect records later, but manual review is not a runtime mode. Agent notes

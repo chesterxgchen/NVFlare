@@ -77,6 +77,15 @@ debugging that does not ask for FLARE conversion.
   incompatible checkpoint loading, unsupported metric serialization, or data
   loaders that cannot be parameterized per site.
 
+## Runtime Evaluation
+
+After completing a skill run, check `NVFLARE_SKILL_EVAL`. If it is `on`, run
+`nvflare agent skills evaluate` before the final response when a matching eval
+case and bounded evidence are available. Use `--skill
+nvflare-convert-pytorch`, `--case <eval-id>`, `--agent`, `--run-mode`, and
+either `--artifacts <dir>` or `--checklist <file>`. Do not invent a case or
+evidence; if unavailable, report why evaluation was skipped.
+
 ## User Input And Approval
 
 - Ask the user to clarify FL workflow intent when recipe selection is uncertain.

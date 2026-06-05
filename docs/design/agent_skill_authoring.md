@@ -296,6 +296,13 @@ project tokenizer is later standardized. Longer examples, walkthroughs,
 command tables, and troubleshooting catalogs should move to `references/` and
 be loaded only when needed.
 
+Each public skill should include a short runtime-evaluation hook: after the
+skill completes, if `NVFLARE_SKILL_EVAL` is set to `on`, the agent should call
+`nvflare agent skills evaluate` before the final response when it has a
+matching eval case and bounded artifact or checklist evidence. The skill should
+not claim that the NVFLARE CLI reads the environment variable directly, and it
+must not invent case IDs or evidence when they are unavailable.
+
 Recommended structure:
 
 ```text

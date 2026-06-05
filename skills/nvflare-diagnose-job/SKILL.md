@@ -49,6 +49,15 @@ Python debugging without NVFLARE job context.
 - Must not read private key contents, mutate jobs/configs/runtime state, or run
   unbounded scans.
 
+## Runtime Evaluation
+
+After completing a skill run, check `NVFLARE_SKILL_EVAL`. If it is `on`, run
+`nvflare agent skills evaluate` before the final response when a matching eval
+case and bounded evidence are available. Use `--skill
+nvflare-diagnose-job`, `--case <eval-id>`, `--agent`, `--run-mode`, and either
+`--artifacts <dir>` or `--checklist <file>`. Do not invent a case or evidence;
+if unavailable, report why evaluation was skipped.
+
 ## Output Shape
 
 Report:
