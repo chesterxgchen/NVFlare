@@ -392,6 +392,161 @@ def test_agent_skills_list_human_output_is_summarized(capsys, monkeypatch, tmp_p
     assert "[{'name':" not in captured.out
 
 
+def test_agent_skills_performance_json_summarizes_runtime_records(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    records_root = _write_process_record(
+        tmp_path,
+        {
+            "schema_version": "1",
+            "skill": "nvflare-test-skill",
+            "skill_version": "0.0.0",
+            "case_id": "test-conversion",
+            "eval_passed": True,
+            "process_metrics": {
+                "elapsed_seconds": 120,
+                "token_count": 5000,
+                "user_correction_count": 1,
+                "conversion_quality": 4,
+            },
+            "score": {"value": 4, "max": 5, "rationale": "minor correction"},
+        },
+    )
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "performance",
+            "--skill",
+            "nvflare-test-skill",
+            "--records",
+            str(records_root),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = _load_single_stdout_json(capsys.readouterr())
+    _assert_envelope_shape(payload, "ok")
+    data = payload["data"]
+    assert data["records_status"] == "loaded"
+    assert data["filters"] == {"skill": "nvflare-test-skill", "case_id": None}
+    assert [metric["id"] for metric in data["metric_contracts"][0]["metrics"]] == [
+        "elapsed_seconds",
+        "token_count",
+        "user_correction_count",
+        "conversion_quality",
+    ]
+    summary = data["summaries"][0]
+    assert summary["skill"] == "nvflare-test-skill"
+    assert summary["case_id"] == "test-conversion"
+    assert summary["record_count"] == 1
+    assert summary["eval_pass_rate"] == 1.0
+    assert summary["score"]["avg"] == 4
+    assert summary["score"]["available"] == 1
+    assert summary["elapsed_seconds"]["avg"] == 120
+    assert summary["token_count"]["avg"] == 5000
+    assert summary["user_correction_count"]["avg"] == 1
+    assert summary["conversion_quality"]["avg"] == 4
+    assert data["records"][0]["skill"] == "nvflare-test-skill"
+    assert data["records"][0]["score"] == {"value": 4, "max": 5}
+
+
+def test_agent_skills_performance_json_reports_empty_m6_contracts(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    records_root = tmp_path / "empty-records"
+    records_root.mkdir()
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "performance",
+            "--skill",
+            "nvflare-test-skill",
+            "--case",
+            "test-conversion",
+            "--records",
+            str(records_root),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = _load_single_stdout_json(capsys.readouterr())
+    _assert_envelope_shape(payload, "ok")
+    data = payload["data"]
+    assert data["filters"] == {"skill": "nvflare-test-skill", "case_id": "test-conversion"}
+    assert data["metric_contracts"][0]["skill"] == "nvflare-test-skill"
+    assert data["metric_contracts"][0]["case_id"] == "test-conversion"
+    assert [metric["id"] for metric in data["metric_contracts"][0]["metrics"]] == [
+        "elapsed_seconds",
+        "token_count",
+        "user_correction_count",
+        "conversion_quality",
+    ]
+    assert data["summaries"] == []
+    assert data["records"] == []
+
+
+def test_agent_skills_performance_human_output_visualizes_score(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    records_root = _write_process_record(
+        tmp_path,
+        {
+            "schema_version": "1",
+            "skill": "nvflare-test-skill",
+            "case_id": "test-conversion",
+            "eval_passed": True,
+            "process_metrics": {
+                "elapsed_seconds": 60,
+                "token_count": 2500,
+                "user_correction_count": 0,
+                "conversion_quality": 5,
+            },
+            "score": {"value": 5, "max": 5},
+        },
+    )
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "performance",
+            "--records",
+            str(records_root),
+        ]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert "NVFLARE Agent Skill Performance" in captured.out
+    assert "metric contracts:" in captured.out
+    assert "- nvflare-test-skill / test-conversion: 4 metrics" in captured.out
+    assert "runtime summaries:" in captured.out
+    assert "- nvflare-test-skill / test-conversion: records 1, pass 1, score 5/5 [##########]" in captured.out
+    assert "elapsed_seconds: avg 60" in captured.out
+    assert "token_count: avg 2500" in captured.out
+    assert "{'record_count':" not in captured.out
+
+
+def test_agent_skills_performance_schema_exits_zero(capsys):
+    exit_code = _run_main(["nvflare", "agent", "skills", "performance", "--schema"])
+
+    assert exit_code == 0
+    schema = json.loads(capsys.readouterr().out)
+    assert schema["command"] == "nvflare agent skills performance"
+    assert schema["mutating"] is False
+    assert schema["output_modes"] == ["json"]
+    assert any(arg["name"] == "--case" for arg in schema["args"])
+
+
 def test_agent_skills_missing_named_skill_is_structured_json_error(capsys, monkeypatch, tmp_path):
     _patch_skill_source(monkeypatch, tmp_path)
 
@@ -622,4 +777,52 @@ def _write_skill(root, name):
         "# Test Skill\n",
         encoding="utf-8",
     )
+    evals_dir = skill_dir / "evals"
+    evals_dir.mkdir()
+    evals_dir.joinpath("evals.json").write_text(
+        json.dumps(
+            {
+                "skill_name": name,
+                "evals": [
+                    {
+                        "id": "test-conversion",
+                        "prompt": "Convert this training code.",
+                        "expected_output": "A validated conversion.",
+                        "nvflare": {
+                            "expected_skill": name,
+                            "process_evaluation": {
+                                "metrics": [
+                                    {
+                                        "id": "elapsed_seconds",
+                                        "description": "time used for the conversion",
+                                    },
+                                    {
+                                        "id": "token_count",
+                                        "description": "total conversation token count when available",
+                                    },
+                                    {
+                                        "id": "user_correction_count",
+                                        "description": "number of user corrections",
+                                    },
+                                    {
+                                        "id": "conversion_quality",
+                                        "description": "reviewer-rated conversion quality",
+                                    },
+                                ]
+                            },
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     return skill_dir
+
+
+def _write_process_record(tmp_path, record):
+    records_root = tmp_path / "records"
+    record_dir = records_root / record["skill"] / record["case_id"]
+    record_dir.mkdir(parents=True)
+    record_dir.joinpath("record.json").write_text(json.dumps(record), encoding="utf-8")
+    return records_root
