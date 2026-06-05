@@ -27,7 +27,9 @@ CMD_AGENT_DOCTOR = "doctor"
 CMD_AGENT_SKILLS = "skills"
 CMD_AGENT_SKILLS_INSTALL = "install"
 CMD_AGENT_SKILLS_LIST = "list"
+CMD_AGENT_SKILLS_EVALUATE = "evaluate"
 CMD_AGENT_SKILLS_PERFORMANCE = "performance"
+CMD_AGENT_SKILLS_BENCHMARK = "benchmark"
 
 _AGENT_OUTPUT_MODES = ["json"]
 _AGENT_EXAMPLES = [
@@ -43,7 +45,9 @@ _AGENT_SKILLS_EXAMPLES = [
     "nvflare agent skills install --agent codex --dry-run --format json",
     "nvflare agent skills install --agent claude --skill nvflare-orient --format json",
     "nvflare agent skills list --agent codex --format json",
+    "nvflare agent skills evaluate --skill nvflare-convert-pytorch --case pytorch-convert-basic --checklist ./checklist.json --format json",
     "nvflare agent skills performance --skill nvflare-convert-pytorch --case pytorch-convert-basic --format json",
+    "nvflare agent skills benchmark --skill nvflare-convert-pytorch --records ~/.nvflare/agent_skill_eval_runs --format json",
 ]
 _agent_parser: Optional[argparse.ArgumentParser] = None
 _agent_sub_cmd_parsers = {}
@@ -124,6 +128,35 @@ def def_agent_cli_parser(sub_cmd) -> dict:
     _add_agent_target_args(list_parser)
     list_parser.add_argument("--schema", action="store_true", help="print command schema as JSON and exit")
 
+    evaluate_parser = skills_subparser.add_parser(
+        CMD_AGENT_SKILLS_EVALUATE,
+        description="Evaluate one NVFLARE-owned skill runtime run from bounded artifacts or a reviewer checklist.",
+        help="evaluate one skill runtime run",
+    )
+    evaluate_skill_arg = evaluate_parser.add_argument("--skill", help="skill name to evaluate")
+    evaluate_skill_arg.schema_required = True
+    evaluate_case_arg = evaluate_parser.add_argument("--case", dest="case_id", help="eval case id")
+    evaluate_case_arg.schema_required = True
+    evaluate_parser.add_argument(
+        "--agent",
+        choices=["codex", "claude", "other", "unknown"],
+        default="unknown",
+        help="agent target that performed the run",
+    )
+    evaluate_parser.add_argument(
+        "--run-mode",
+        choices=["without_skill", "with_skill", "with_skill_forced"],
+        help="comparison mode for the evaluated run",
+    )
+    evaluate_parser.add_argument("--skill-version", help="override the skill version stored in the runtime record")
+    evaluate_parser.add_argument("--artifacts", help="structured artifact directory containing run.json/evidence.json")
+    evaluate_parser.add_argument("--checklist", help="reviewer checklist JSON")
+    evaluate_parser.add_argument(
+        "--records",
+        help="directory for written runtime process records; defaults to ~/.nvflare/agent_skill_eval_runs",
+    )
+    evaluate_parser.add_argument("--schema", action="store_true", help="print command schema as JSON and exit")
+
     performance_parser = skills_subparser.add_parser(
         CMD_AGENT_SKILLS_PERFORMANCE,
         description="Summarize NVFLARE-owned skill process-evaluation performance.",
@@ -137,12 +170,33 @@ def def_agent_cli_parser(sub_cmd) -> dict:
     )
     performance_parser.add_argument("--schema", action="store_true", help="print command schema as JSON and exit")
 
+    benchmark_parser = skills_subparser.add_parser(
+        CMD_AGENT_SKILLS_BENCHMARK,
+        description="Render a BENCHMARK.md draft from runtime process-evaluation performance summaries.",
+        help="render a skill benchmark draft",
+    )
+    benchmark_skill_arg = benchmark_parser.add_argument("--skill", help="skill name whose benchmark should be rendered")
+    benchmark_skill_arg.schema_required = True
+    benchmark_parser.add_argument("--case", dest="case_id", help="render one eval case by id")
+    benchmark_parser.add_argument(
+        "--records",
+        help="JSON, JSONL, or directory of runtime process records; defaults to ~/.nvflare/agent_skill_eval_runs",
+    )
+    benchmark_parser.add_argument(
+        "--output",
+        help="benchmark file to write; defaults to BENCHMARK.md in the selected skill directory",
+    )
+    benchmark_parser.add_argument("--dry-run", action="store_true", help="render benchmark content without writing it")
+    benchmark_parser.add_argument("--schema", action="store_true", help="print command schema as JSON and exit")
+
     _agent_sub_cmd_parsers[CMD_AGENT_INSPECT] = inspect_parser
     _agent_sub_cmd_parsers[CMD_AGENT_DOCTOR] = doctor_parser
     _agent_sub_cmd_parsers[CMD_AGENT_SKILLS] = skills_parser
     _agent_skills_sub_cmd_parsers[CMD_AGENT_SKILLS_INSTALL] = install_parser
     _agent_skills_sub_cmd_parsers[CMD_AGENT_SKILLS_LIST] = list_parser
+    _agent_skills_sub_cmd_parsers[CMD_AGENT_SKILLS_EVALUATE] = evaluate_parser
     _agent_skills_sub_cmd_parsers[CMD_AGENT_SKILLS_PERFORMANCE] = performance_parser
+    _agent_skills_sub_cmd_parsers[CMD_AGENT_SKILLS_BENCHMARK] = benchmark_parser
 
     _agent_parser = parser
     return {"agent": parser}
@@ -203,10 +257,24 @@ def _agent_info_data() -> dict:
                 "streaming": False,
             },
             {
+                "name": "skills evaluate",
+                "command": "nvflare agent skills evaluate",
+                "status": "available",
+                "mutating": True,
+                "streaming": False,
+            },
+            {
                 "name": "skills performance",
                 "command": "nvflare agent skills performance",
                 "status": "available",
                 "mutating": False,
+                "streaming": False,
+            },
+            {
+                "name": "skills benchmark",
+                "command": "nvflare agent skills benchmark",
+                "status": "available",
+                "mutating": True,
                 "streaming": False,
             },
         ],
@@ -359,8 +427,14 @@ def _handle_agent_doctor_cmd(args, handle_schema_flag, output_error_message, out
 
 
 def _handle_agent_skills_cmd(args, handle_schema_flag, output_error_message, output_ok) -> None:
+    from nvflare.tool.agent.skill_benchmark import SkillBenchmarkError, render_skill_benchmark
+    from nvflare.tool.agent.skill_evaluator import SkillEvaluationError, evaluate_skill_run
     from nvflare.tool.agent.skill_manager import SUPPORTED_AGENT_TARGETS, install_skills, list_skills
-    from nvflare.tool.agent.skill_performance import format_skill_performance_human, summarize_skill_performance
+    from nvflare.tool.agent.skill_performance import (
+        SkillPerformanceError,
+        format_skill_performance_human,
+        summarize_skill_performance,
+    )
     from nvflare.tool.cli_output import is_json_mode, is_jsonl_mode, print_human
 
     skills_sub_cmd = getattr(args, "agent_skills_sub_cmd", None)
@@ -472,6 +546,50 @@ def _handle_agent_skills_cmd(args, handle_schema_flag, output_error_message, out
         )
         return
 
+    if skills_sub_cmd == CMD_AGENT_SKILLS_EVALUATE:
+        handle_schema_flag(
+            _agent_skills_sub_cmd_parsers[CMD_AGENT_SKILLS_EVALUATE],
+            "nvflare agent skills evaluate",
+            _AGENT_SKILLS_EXAMPLES,
+            sys.argv[1:],
+            streaming=False,
+            output_modes=_AGENT_OUTPUT_MODES,
+            mutating=True,
+            idempotent=False,
+        )
+        try:
+            data = evaluate_skill_run(
+                skill_name=getattr(args, "skill", None),
+                case_id=getattr(args, "case_id", None),
+                agent=getattr(args, "agent", "unknown"),
+                run_mode=getattr(args, "run_mode", None),
+                skill_version=getattr(args, "skill_version", None),
+                artifacts_path=getattr(args, "artifacts", None),
+                checklist_path=getattr(args, "checklist", None),
+                records_path=getattr(args, "records", None),
+            )
+        except SkillEvaluationError as e:
+            output_error_message(
+                e.code,
+                e.message,
+                e.hint or "Fix the selected evaluation inputs and rerun the command.",
+                exit_code=1 if e.code == "RECORD_WRITE_FAILED" else 4,
+                detail=e.detail,
+                include_data=True,
+                recovery_category="FIXABLE_BY_ENV" if e.code == "RECORD_WRITE_FAILED" else "FIXABLE_BY_CONFIG",
+            )
+            return
+        if not is_json_mode() and not is_jsonl_mode():
+            print_human(_format_agent_skills_evaluate_human(data))
+            return
+        output_ok(
+            data,
+            code="OK",
+            message="NVFLARE agent skill evaluation record written.",
+            hint="Use 'nvflare agent skills performance' to aggregate written process records.",
+        )
+        return
+
     if skills_sub_cmd == CMD_AGENT_SKILLS_PERFORMANCE:
         handle_schema_flag(
             _agent_skills_sub_cmd_parsers[CMD_AGENT_SKILLS_PERFORMANCE],
@@ -489,6 +607,17 @@ def _handle_agent_skills_cmd(args, handle_schema_flag, output_error_message, out
                 case_id=getattr(args, "case_id", None),
                 records_path=getattr(args, "records", None),
             )
+        except SkillPerformanceError as e:
+            output_error_message(
+                e.code,
+                e.message,
+                e.hint or "Review the supplied runtime process records.",
+                exit_code=4,
+                detail=e.detail,
+                include_data=True,
+                recovery_category="FIXABLE_BY_CONFIG",
+            )
+            return
         except ValueError as e:
             message = str(e)
             error_code = (
@@ -515,7 +644,79 @@ def _handle_agent_skills_cmd(args, handle_schema_flag, output_error_message, out
         )
         return
 
+    if skills_sub_cmd == CMD_AGENT_SKILLS_BENCHMARK:
+        handle_schema_flag(
+            _agent_skills_sub_cmd_parsers[CMD_AGENT_SKILLS_BENCHMARK],
+            "nvflare agent skills benchmark",
+            _AGENT_SKILLS_EXAMPLES,
+            sys.argv[1:],
+            streaming=False,
+            output_modes=_AGENT_OUTPUT_MODES,
+            mutating=True,
+            idempotent=True,
+        )
+        try:
+            data = render_skill_benchmark(
+                skill_name=getattr(args, "skill", None),
+                case_id=getattr(args, "case_id", None),
+                records_path=getattr(args, "records", None),
+                output_path=getattr(args, "output", None),
+                dry_run=getattr(args, "dry_run", False),
+            )
+        except (SkillBenchmarkError, SkillPerformanceError) as e:
+            output_error_message(
+                e.code,
+                e.message,
+                e.hint or "Review benchmark inputs and runtime process records.",
+                exit_code=1 if e.code == "BENCHMARK_WRITE_FAILED" else 4,
+                detail=e.detail,
+                include_data=True,
+                recovery_category="FIXABLE_BY_ENV" if e.code == "BENCHMARK_WRITE_FAILED" else "FIXABLE_BY_CONFIG",
+            )
+            return
+        except ValueError as e:
+            message = str(e)
+            error_code = (
+                "AGENT_SKILL_NOT_FOUND" if "skill not found" in message.lower() else "AGENT_SKILL_BENCHMARK_FAILED"
+            )
+            output_error_message(
+                error_code,
+                "NVFLARE agent skill benchmark rendering failed.",
+                "Pass a valid skill, case, records path, and writable output path.",
+                exit_code=4,
+                detail=message,
+                include_data=True,
+                recovery_category="FIXABLE_BY_CONFIG",
+            )
+            return
+        if not is_json_mode() and not is_jsonl_mode():
+            print_human(data["content"])
+            return
+        output_ok(
+            data,
+            code="OK",
+            message=(
+                "NVFLARE agent skill benchmark rendered."
+                if data.get("written")
+                else "NVFLARE agent skill benchmark dry run rendered."
+            ),
+            hint="Review BENCHMARK.md before treating it as release evidence.",
+        )
+        return
+
     raise CLIUnknownCmdException(f"unknown agent skills subcommand: {skills_sub_cmd}")
+
+
+def _format_agent_skills_evaluate_human(data: dict) -> str:
+    score = (data.get("record") or {}).get("score") or {}
+    lines = [
+        "NVFLARE Agent Skill Evaluation",
+        f"record: {data.get('record_path', '')}",
+        f"eval passed: {data.get('eval_passed')}",
+    ]
+    if score:
+        lines.append(f"score: {score.get('value')}/{score.get('max', 5)}")
+    return "\n".join(lines)
 
 
 def _format_agent_skills_install_human(plan: dict) -> str:

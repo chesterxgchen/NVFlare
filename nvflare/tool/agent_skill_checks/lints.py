@@ -116,14 +116,27 @@ _KNOWN_NVFLARE_ROOT_COMMANDS = {
     "system",
 }
 _KNOWN_AGENT_COMMANDS = {"doctor", "info", "inspect", "skills"}
-_KNOWN_AGENT_SKILLS_COMMANDS = {"install", "list", "performance"}
-_PLANNED_AGENT_SKILLS_COMMANDS = {"evaluate"}
+_KNOWN_AGENT_SKILLS_COMMANDS = {"benchmark", "evaluate", "install", "list", "performance"}
+_PLANNED_AGENT_SKILLS_COMMANDS = set()
 _KNOWN_AGENT_FLAGS = {
     "agent": {"--format", "--schema"},
     "agent doctor": {"--format", "--online", "--schema", "--startup-kit", "--project", "--org"},
     "agent info": {"--format", "--schema"},
     "agent inspect": {"--format", "--redact", "--schema"},
     "agent skills": {"--format", "--schema"},
+    "agent skills benchmark": {"--case", "--dry-run", "--format", "--output", "--records", "--schema", "--skill"},
+    "agent skills evaluate": {
+        "--agent",
+        "--artifacts",
+        "--case",
+        "--checklist",
+        "--format",
+        "--records",
+        "--run-mode",
+        "--schema",
+        "--skill",
+        "--skill-version",
+    },
     "agent skills install": {"--agent", "--dry-run", "--format", "--schema", "--skill", "--target"},
     "agent skills list": {"--agent", "--format", "--schema", "--target"},
     "agent skills performance": {"--case", "--format", "--records", "--schema", "--skill"},

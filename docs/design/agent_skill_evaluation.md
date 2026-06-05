@@ -1043,6 +1043,28 @@ successfully, report the packaged metric contracts, and return empty `summaries`
 and `records` arrays. This is the expected Milestone 6 state before runtime
 evidence exists.
 
+The explicit benchmark-rendering command is:
+
+```bash
+nvflare agent skills benchmark --skill <name> [--case <eval-id>] [--records <path>] [--output <path>] [--dry-run] [--format json]
+```
+
+`skills benchmark` is the only command in this group that writes
+`BENCHMARK.md`. It consumes the same read-only performance summary described
+above and renders a reviewable Markdown draft. It must not run skills, run the
+evaluator, parse raw artifacts, call an LLM, infer missing metrics, or mutate
+runtime process records. `--skill` is required so the command updates only one
+skill benchmark at a time. If `--output` is omitted, the output path defaults to
+`BENCHMARK.md` in the selected skill directory. `--dry-run` renders the same
+content and returns it in the command result without writing a file.
+
+The generated `BENCHMARK.md` is a curated-publication draft, not the source of
+truth. Runtime records remain the raw evidence, and `skills performance` remains
+the computed current view. The benchmark draft should include the records root,
+filters, packaged metric contracts, grouped runtime summaries, and recent
+record paths so a reviewer can decide whether the evidence is representative
+enough for release or skill-quality reporting.
+
 Example JSON output shape:
 
 ```json

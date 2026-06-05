@@ -438,8 +438,19 @@ Deliverables:
   null, exclude `null` values from averages while reporting available and
   unavailable counts, support the `--case <eval-id>` filter, emit the documented
   JSON output shape, and reject unsupported `schema_version` values.
-- Upgrade `BENCHMARK.md` from manual initial summaries to runtime summaries when
-  automated or repeated eval evidence exists.
+- Add the explicit benchmark-rendering command:
+  `nvflare agent skills benchmark --skill <name> [--case <eval-id>]
+  [--records <path>] [--output <path>] [--dry-run] [--format json]`.
+  `--skill` is required. The command consumes `skills performance` summaries and
+  renders a reviewable Markdown draft. It is mutating only when `--dry-run` is
+  omitted. It must not run skills, run the evaluator, parse raw artifacts, call
+  an LLM, infer missing metrics, or mutate runtime process records.
+- Use `skills benchmark` to upgrade `BENCHMARK.md` from manual initial
+  summaries to runtime summaries when automated or repeated eval evidence
+  exists. If `--output` is omitted, write `BENCHMARK.md` in the selected skill
+  directory. The rendered file is a publication/review draft; runtime records
+  remain the raw evidence and `skills performance` remains the current computed
+  view.
 - Consume runtime process records with `nvflare agent skills performance` to
   visualize process score, conversion time, token usage, correction count,
   task-quality fields, and known improvement items before updating
@@ -580,6 +591,15 @@ Engineering tests:
   divided by group `record_count` and emits it as a plain float.
 - `skills performance` exits successfully with metric contracts and empty
   `summaries`/`records` arrays when no runtime records match.
+- `skills benchmark` requires `--skill`, supports `--case`, `--records`,
+  `--output`, and `--dry-run`, writes a Markdown benchmark draft only when
+  `--dry-run` is omitted, returns rendered content in the JSON envelope, and
+  leaves runtime process records unchanged.
+- `skills benchmark --dry-run` renders the same content without creating or
+  modifying `BENCHMARK.md`.
+- `skills benchmark` output includes scope, records root, packaged metric
+  contracts, grouped runtime summaries, and recent record paths from
+  `skills performance`, and does not infer metrics or parse artifacts itself.
 
 This milestone evaluates the seed skill set before additional skill waves are
 implemented. Runtime evaluation evidence is required before a skill is used as a
