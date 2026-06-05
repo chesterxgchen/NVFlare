@@ -284,6 +284,18 @@ The initial native skill-management surface is intentionally small:
   with NVFLARE-source skills and are not managed by NVFLARE, or managed
   NVFLARE installs with local edit/version conflicts. Existing third-party
   agent skills with unrelated names are ignored by default.
+- `nvflare agent skills performance [--skill <name>] [--case <eval-id>]
+  [--records <path>] [--format json]` is a read-only reviewer report. It summarizes packaged
+  process-evaluation metric definitions and optional runtime process records,
+  including process score, elapsed time, token count, correction count, and
+  workflow-quality metrics. It must not execute a skill, call an LLM, infer
+  missing token counts, or mutate evaluation artifacts.
+- `nvflare agent skills evaluate --skill <name> --case <eval-id>
+  [--agent codex|claude|other|unknown]
+  [--run-mode without_skill|with_skill|with_skill_forced]
+  [--skill-version <version>] [--artifacts <path>] [--checklist <path>]
+  [--records <path>] --format json` is the explicit runtime process-evaluator
+  entry point defined by [Agent Skill Evaluation](agent_skill_evaluation.md#runtime-evaluator-and-records).
 - `nvflare agent skills install --target <dir>` may be supported for explicit
   custom or project-local installation when named agent shortcuts are not
   enough.
@@ -531,7 +543,8 @@ intent. This table is a roadmap view, not the initial implementation scope. The
 first implementation seed, `next` means follow-on customer-journey skills, and
 `later` means later catalog expansion. The `Category` column is also the initial
 source for same-category trigger-overlap lint unless a later metadata schema
-adds category directly to skills.
+adds category directly to skills. Any change to category names or skill-category
+assignment must update the evaluation lint expectations in the same PR.
 Framework conversion scope, repo evidence, and tier are canonical in
 [Agent Skill Authoring](agent_skill_authoring.md#skill-granularity-and-naming).
 This catalog table is a product overview and should not redefine conversion
@@ -856,6 +869,22 @@ name-overlap conflicts with NVFLARE-source skills or managed NVFLARE installs;
 unrelated third-party skills already present in the agent target directory are
 ignored by default.
 
+`nvflare agent skills performance [--skill <name>] [--case <eval-id>]
+[--records <path>] [--format json]` is a read-only review command for
+process-evaluation evidence.
+It reports the metric contract from packaged `evals/evals.json` files and
+aggregates runtime process records when provided. It should render a concise
+human summary with simple visual bars and a structured JSON summary for
+automation.
+
+`nvflare agent skills evaluate --skill <name> --case <eval-id>
+[--agent codex|claude|other|unknown]
+[--run-mode without_skill|with_skill|with_skill_forced]
+[--skill-version <version>] [--artifacts <path>] [--checklist <path>]
+[--records <path>] --format json` is the explicit runtime process-evaluator
+entry point. It follows the input, output, scoring, and error-code contract in
+[Agent Skill Evaluation](agent_skill_evaluation.md#runtime-evaluator-and-records).
+
 Full discovery, audit, validation, compatibility, transcript, feedback,
 approval-list, revert, uninstall, and cleanup commands are deferred to
 the future roadmap.
@@ -920,9 +949,10 @@ after required files are complete. As a follow-on core CLI enhancement, exported
 job folders should eventually include:
 
 - `_export_manifest.json` with required files, source path, source hash,
-  timestamp, NVFLARE version, exporter, `poc_validated`, and `poc_validation`;
-- `job_fingerprint.json` with FLARE, Python, recipe, framework dependency, and
-  source-hash metadata.
+  timestamp, NVFLARE version, exporter, `poc_validated`, `poc_validation`, and
+  a nested `fingerprint` section containing FLARE, Python, recipe, framework
+  dependency, and source-hash metadata. Use one manifest file unless a separate
+  consumer explicitly needs a standalone `job_fingerprint.json`.
 
 `nvflare agent inspect` should classify current exported job folders as
 `exported_job` even when these future manifest files are absent. When the
