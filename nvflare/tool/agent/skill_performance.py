@@ -20,6 +20,8 @@ from typing import Any, Optional
 
 DEFAULT_RECORDS_ROOT = Path("~/.nvflare/agent_skill_eval_runs").expanduser()
 EVALS_FILE = "evals/evals.json"
+SCHEMA_VERSION = "1"
+ALLOWED_STATUSES = {"pass", "fail", "missing", "not_applicable", "non_scoring_note"}
 SUMMARY_METRICS = (
     "elapsed_seconds",
     "token_count",
@@ -27,7 +29,21 @@ SUMMARY_METRICS = (
     "user_correction_count",
     "agent_self_correction_count",
     "conversion_quality",
+    "layout_violations",
+    "workflow_violations",
+    "evidence_gap_violations",
 )
+
+
+class SkillPerformanceError(ValueError):
+    """Runtime process-record error surfaced as a structured CLI error."""
+
+    def __init__(self, code: str, message: str, hint: str = "", detail: str = ""):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.hint = hint
+        self.detail = detail
 
 
 def summarize_skill_performance(
@@ -39,8 +55,9 @@ def summarize_skill_performance(
 ) -> dict:
     """Summarize packaged process metrics and optional runtime process records.
 
-    This is the Milestone 6 reporting surface. It does not run skills, evaluate
-    artifacts, infer scores, or mutate runtime records.
+    This read-only reporting surface does not run skills, evaluate artifacts,
+    infer scores, mutate runtime records, or fill missing runtime fields from
+    the currently packaged skill manifest.
     """
     from nvflare.tool.agent import skill_manager
 
@@ -173,15 +190,27 @@ def _read_record_file(path: Path) -> list[dict]:
             except json.JSONDecodeError as e:
                 raise ValueError(f"invalid JSONL record in {path}:{line_no}: {e}") from e
             if isinstance(record, dict):
+                _validate_record(record, path)
                 records.append(_with_record_metadata(record, path))
         return records
 
     data = _read_json_file(path)
     if isinstance(data, list):
-        return [_with_record_metadata(record, path) for record in data if isinstance(record, dict)]
+        records = []
+        for record in data:
+            if isinstance(record, dict):
+                _validate_record(record, path)
+                records.append(_with_record_metadata(record, path))
+        return records
     if isinstance(data, dict):
         if isinstance(data.get("records"), list):
-            return [_with_record_metadata(record, path) for record in data["records"] if isinstance(record, dict)]
+            records = []
+            for record in data["records"]:
+                if isinstance(record, dict):
+                    _validate_record(record, path)
+                    records.append(_with_record_metadata(record, path))
+            return records
+        _validate_record(data, path)
         return [_with_record_metadata(data, path)]
     return []
 
@@ -198,6 +227,51 @@ def _with_record_metadata(record: dict, path: Path) -> dict:
     copied["_path"] = str(path)
     copied["_timestamp"] = _record_timestamp(record, path)
     return copied
+
+
+def _validate_record(record: dict, path: Path) -> None:
+    schema_version = record.get("schema_version")
+    if schema_version != SCHEMA_VERSION:
+        raise SkillPerformanceError(
+            "UNSUPPORTED_SCHEMA_VERSION",
+            f"Unsupported runtime process record schema_version {schema_version!r} in {path}.",
+            'Use records with schema_version "1".',
+        )
+    if not isinstance(record.get("eval_passed"), bool):
+        raise SkillPerformanceError(
+            "AGENT_SKILL_PERFORMANCE_FAILED",
+            f"Runtime process record missing boolean eval_passed in {path}.",
+        )
+    score = record.get("score")
+    if score is not None and not isinstance(score, dict):
+        raise SkillPerformanceError(
+            "AGENT_SKILL_PERFORMANCE_FAILED",
+            f"Runtime process record score must be an object or null in {path}.",
+        )
+    for category in ("mandatory_behavior", "prohibited_behavior", "optional_behavior"):
+        _validate_behavior_statuses(record.get(category), category, path)
+
+
+def _validate_behavior_statuses(behavior_map: Any, category: str, path: Path) -> None:
+    if behavior_map is None:
+        return
+    if not isinstance(behavior_map, dict):
+        raise SkillPerformanceError(
+            "AGENT_SKILL_PERFORMANCE_FAILED",
+            f"Runtime process record {category} must be an object in {path}.",
+        )
+    for behavior_id, entry in behavior_map.items():
+        if not isinstance(entry, dict):
+            raise SkillPerformanceError(
+                "AGENT_SKILL_PERFORMANCE_FAILED",
+                f"Runtime process record behavior entry must be an object: {category}.{behavior_id} in {path}.",
+            )
+        status = entry.get("status")
+        if status not in ALLOWED_STATUSES:
+            raise SkillPerformanceError(
+                "AGENT_SKILL_PERFORMANCE_FAILED",
+                f"Unsupported behavior status {status!r} for {category}.{behavior_id} in {path}.",
+            )
 
 
 def _record_timestamp(record: dict, path: Path) -> Optional[str]:
@@ -228,17 +302,17 @@ def _summaries(records: list[dict], skills: list[dict]) -> list[dict]:
     if not records:
         return []
 
-    skill_versions = {skill["name"]: skill.get("skill_version") for skill in skills}
     groups = {}
     for record in records:
         skill = record.get("skill") or record.get("skill_name")
         case_id = record.get("case_id") or "unknown"
-        skill_version = record.get("skill_version") or skill_versions.get(skill)
-        key = (skill, skill_version, case_id)
+        skill_version = record.get("skill_version")
+        key = _summary_key(skill, skill_version, case_id, record.get("run_mode"), record.get("source_hash"))
         groups.setdefault(key, []).append(record)
 
     summaries = []
-    for (skill, skill_version, case_id), group_records in sorted(groups.items()):
+    for key, group_records in sorted(groups.items(), key=lambda item: _sortable_summary_key(item[0])):
+        skill, skill_version, case_id, run_mode, source_hash = key
         summary = {
             "skill": skill,
             "skill_version": skill_version,
@@ -253,7 +327,23 @@ def _summaries(records: list[dict], skills: list[dict]) -> list[dict]:
                 len(group_records),
             )
         summaries.append(summary)
+        if run_mode is not None:
+            summary["run_mode"] = run_mode
+        if source_hash is not None:
+            summary["source_hash"] = source_hash
     return summaries
+
+
+def _summary_key(
+    skill: Optional[str], skill_version: Optional[str], case_id: Optional[str], run_mode: Any, source_hash: Any
+) -> tuple:
+    key_run_mode = run_mode if run_mode is not None else None
+    key_source_hash = source_hash if source_hash is not None else None
+    return (skill, skill_version, case_id, key_run_mode, key_source_hash)
+
+
+def _sortable_summary_key(key: tuple) -> tuple:
+    return tuple("" if value is None else str(value) for value in key)
 
 
 def _eval_pass_rate(records: list[dict]) -> float:
@@ -311,7 +401,7 @@ def _numeric_summary(values: list[Optional[float]], total: int) -> dict:
 
 def _compact_record(record: dict) -> dict:
     score = record.get("score") if isinstance(record.get("score"), dict) else {}
-    return {
+    compact = {
         "path": record.get("_path"),
         "timestamp": record.get("_timestamp"),
         "skill": record.get("skill") or record.get("skill_name"),
@@ -323,6 +413,11 @@ def _compact_record(record: dict) -> dict:
             "max": score.get("max", 5),
         },
     }
+    if record.get("run_mode") is not None:
+        compact["run_mode"] = record.get("run_mode")
+    if record.get("source_hash") is not None:
+        compact["source_hash"] = record.get("source_hash")
+    return compact
 
 
 def _append_contracts(lines: list[str], contracts: list[dict]) -> None:

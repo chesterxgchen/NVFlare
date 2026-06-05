@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import argparse
+import hashlib
 import json
 import os
 from types import SimpleNamespace
@@ -454,6 +455,217 @@ def test_agent_skills_performance_json_summarizes_runtime_records(capsys, monkey
     assert data["records"][0]["score"] == {"value": 4, "max": 5}
 
 
+def test_agent_skills_performance_m7_filters_case_and_sorts_records_by_timestamp(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    records_root = _write_process_records(
+        tmp_path,
+        [
+            {
+                "schema_version": "1",
+                "timestamp": "20260604T120000000000Z",
+                "skill": "nvflare-test-skill",
+                "case_id": "test-conversion",
+                "eval_passed": True,
+                "score": {"value": 5, "max": 5, "rationale": "passed"},
+            },
+            {
+                "schema_version": "1",
+                "timestamp": "20260604T120300000000Z",
+                "skill": "nvflare-test-skill",
+                "case_id": "negative-trigger",
+                "eval_passed": False,
+                "score": {"value": 1, "max": 5, "rationale": "wrong trigger"},
+            },
+            {
+                "schema_version": "1",
+                "timestamp": "20260604T120200000000Z",
+                "skill": "nvflare-test-skill",
+                "case_id": "test-conversion",
+                "eval_passed": True,
+                "score": {"value": 4, "max": 5, "rationale": "minor issue"},
+            },
+        ],
+    )
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "performance",
+            "--skill",
+            "nvflare-test-skill",
+            "--case",
+            "test-conversion",
+            "--records",
+            str(records_root),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = _load_single_stdout_json(capsys.readouterr())
+    data = payload["data"]
+    assert data["filters"] == {"skill": "nvflare-test-skill", "case_id": "test-conversion"}
+    assert [record["case_id"] for record in data["records"]] == ["test-conversion", "test-conversion"]
+    assert [record["timestamp"] for record in data["records"]] == [
+        "20260604T120200000000Z",
+        "20260604T120000000000Z",
+    ]
+
+
+def test_agent_skills_performance_m7_groups_by_run_mode_and_source_hash(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    records_root = _write_process_records(
+        tmp_path,
+        [
+            _m7_process_record(
+                timestamp="20260604T120000000000Z",
+                run_mode="with_skill",
+                source_hash="a" * 64,
+                eval_passed=True,
+                score_value=5,
+            ),
+            _m7_process_record(
+                timestamp="20260604T120100000000Z",
+                run_mode="with_skill",
+                source_hash="a" * 64,
+                eval_passed=False,
+                score_value=3,
+            ),
+            _m7_process_record(
+                timestamp="20260604T120200000000Z",
+                run_mode="without_skill",
+                source_hash="a" * 64,
+                eval_passed=True,
+                score_value=4,
+            ),
+            _m7_process_record(
+                timestamp="20260604T120300000000Z",
+                run_mode="with_skill",
+                source_hash="b" * 64,
+                eval_passed=True,
+                score_value=2,
+            ),
+            _m7_process_record(
+                timestamp="20260604T120400000000Z",
+                run_mode=None,
+                source_hash=None,
+                eval_passed=True,
+                score_value=1,
+            ),
+        ],
+    )
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "performance",
+            "--skill",
+            "nvflare-test-skill",
+            "--records",
+            str(records_root),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = _load_single_stdout_json(capsys.readouterr())
+    summaries = payload["data"]["summaries"]
+    grouped = {
+        (
+            summary["skill"],
+            summary["skill_version"],
+            summary["case_id"],
+            summary.get("run_mode"),
+            summary.get("source_hash"),
+        ): summary
+        for summary in summaries
+    }
+    assert set(grouped) == {
+        ("nvflare-test-skill", "0.1.0", "test-conversion", "with_skill", "a" * 64),
+        ("nvflare-test-skill", "0.1.0", "test-conversion", "without_skill", "a" * 64),
+        ("nvflare-test-skill", "0.1.0", "test-conversion", "with_skill", "b" * 64),
+        ("nvflare-test-skill", "0.1.0", "test-conversion", None, None),
+    }
+    with_skill_a = grouped[("nvflare-test-skill", "0.1.0", "test-conversion", "with_skill", "a" * 64)]
+    assert with_skill_a["record_count"] == 2
+    assert with_skill_a["eval_pass_rate"] == 0.5
+    assert with_skill_a["score"] == {"avg": 4.0, "available": 2, "unavailable": 0}
+
+
+def test_agent_skills_performance_m7_excludes_null_numeric_values(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    records_root = _write_process_records(
+        tmp_path,
+        [
+            _m7_process_record(
+                timestamp="20260604T120000000000Z",
+                eval_passed=True,
+                score_value=5,
+                process_metrics={
+                    "elapsed_seconds": 100,
+                    "token_count": None,
+                    "user_correction_count": 0,
+                    "conversion_quality": None,
+                },
+            ),
+            _m7_process_record(
+                timestamp="20260604T120100000000Z",
+                eval_passed=True,
+                score_value=None,
+                process_metrics={
+                    "elapsed_seconds": None,
+                    "token_count": 2000,
+                    "user_correction_count": None,
+                    "conversion_quality": 4,
+                },
+            ),
+            _m7_process_record(
+                timestamp="20260604T120200000000Z",
+                eval_passed=False,
+                score_value=3,
+                process_metrics={
+                    "elapsed_seconds": 50,
+                    "token_count": None,
+                    "user_correction_count": 1,
+                    "conversion_quality": None,
+                },
+            ),
+        ],
+    )
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "performance",
+            "--skill",
+            "nvflare-test-skill",
+            "--records",
+            str(records_root),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = _load_single_stdout_json(capsys.readouterr())
+    summary = payload["data"]["summaries"][0]
+    assert summary["record_count"] == 3
+    assert summary["eval_pass_rate"] == 0.667
+    assert summary["score"] == {"avg": 4.0, "available": 2, "unavailable": 1}
+    assert summary["elapsed_seconds"] == {"avg": 75.0, "available": 2, "unavailable": 1}
+    assert summary["token_count"] == {"avg": 2000.0, "available": 1, "unavailable": 2}
+    assert summary["user_correction_count"] == {"avg": 0.5, "available": 2, "unavailable": 1}
+    assert summary["conversion_quality"] == {"avg": 4.0, "available": 1, "unavailable": 2}
+
+
 def test_agent_skills_performance_json_reports_empty_m6_contracts(capsys, monkeypatch, tmp_path):
     _patch_skill_source(monkeypatch, tmp_path)
     records_root = tmp_path / "empty-records"
@@ -491,6 +703,673 @@ def test_agent_skills_performance_json_reports_empty_m6_contracts(capsys, monkey
     ]
     assert data["summaries"] == []
     assert data["records"] == []
+
+
+def test_agent_skills_performance_m7_empty_records_exit_success(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    records_root = tmp_path / "empty-records"
+    records_root.mkdir()
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "performance",
+            "--skill",
+            "nvflare-test-skill",
+            "--records",
+            str(records_root),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = _load_single_stdout_json(capsys.readouterr())
+    data = payload["data"]
+    assert data["records_status"] == "loaded"
+    assert data["metric_contracts"]
+    assert data["summaries"] == []
+    assert data["records"] == []
+
+
+def test_agent_skills_performance_m7_rejects_unsupported_record_schema_version(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    records_root = _write_process_records(
+        tmp_path,
+        [
+            {
+                "schema_version": "2",
+                "timestamp": "20260604T120000000000Z",
+                "skill": "nvflare-test-skill",
+                "case_id": "test-conversion",
+                "eval_passed": True,
+                "score": {"value": 5, "max": 5, "rationale": "unsupported"},
+            }
+        ],
+    )
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "performance",
+            "--skill",
+            "nvflare-test-skill",
+            "--records",
+            str(records_root),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 4
+    payload = _load_single_stdout_json(capsys.readouterr())
+    _assert_envelope_shape(payload, "error")
+    assert payload["error_code"] == "UNSUPPORTED_SCHEMA_VERSION"
+    assert "2" in payload["message"]
+
+
+def test_agent_skills_performance_m7_remains_read_only(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    records_root = _write_process_records(
+        tmp_path,
+        [
+            _m7_process_record(
+                timestamp="20260604T120000000000Z",
+                eval_passed=True,
+                score_value=5,
+                process_metrics={"elapsed_seconds": 100},
+            )
+        ],
+    )
+    before = _snapshot_tree(records_root)
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "performance",
+            "--skill",
+            "nvflare-test-skill",
+            "--records",
+            str(records_root),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    _load_single_stdout_json(capsys.readouterr())
+    assert _snapshot_tree(records_root) == before
+
+
+def test_agent_skills_evaluate_m7_checklist_writes_bounded_record(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    checklist = _write_checklist(
+        tmp_path,
+        {
+            "schema_version": "1",
+            "skill": "nvflare-test-skill",
+            "case_id": "test-conversion",
+            "prompt_summary": "convert a small PyTorch trainer",
+            "behavior_evidence": {},
+            "first_pass": {"accepted": True, "violations": []},
+            "final_result": {"accepted": True, "validation_passed": True, "simulation_passed": True},
+            "skill_selection": {"selected_skill": "nvflare-test-skill"},
+            "process_metrics": {
+                "elapsed_seconds": 90,
+                "token_count": 1234,
+                "user_correction_count": 0,
+                "agent_self_correction_count": 0,
+                "layout_violations": 0,
+                "workflow_violations": 0,
+                "evidence_gap_violations": 0,
+                "conversion_quality": 5,
+            },
+            "significant_violations": [],
+            "skill_improvements": [],
+        },
+    )
+    records_root = tmp_path / "records"
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "evaluate",
+            "--skill",
+            "nvflare-test-skill",
+            "--case",
+            "test-conversion",
+            "--agent",
+            "codex",
+            "--run-mode",
+            "with_skill",
+            "--checklist",
+            str(checklist),
+            "--records",
+            str(records_root),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = _load_single_stdout_json(capsys.readouterr())
+    _assert_envelope_shape(payload, "ok")
+    data = payload["data"]
+    assert data["eval_passed"] is True
+    record_path = data["record_path"]
+    assert record_path.startswith(str(records_root))
+    record = json.loads(open(record_path, encoding="utf-8").read())
+    assert data["record"] == record
+    assert record["schema_version"] == "1"
+    assert record["skill"] == "nvflare-test-skill"
+    assert record["case_id"] == "test-conversion"
+    assert record["agent"] == "codex"
+    assert record["run_mode"] == "with_skill"
+    assert len(record["source_hash"]) == 64
+    assert record["evaluation"]["mode"] == "on"
+    assert record["evaluation"]["token_count"] == 0
+    assert record["process_metrics"]["validation_commands_run"] is None
+    assert record["process_metrics"]["unnecessary_files_created"] is None
+    assert record["score"] == {
+        "value": 5,
+        "max": 5,
+        "rationale": "One-shot correct; required evidence present; no user or agent correction recorded.",
+    }
+
+
+def test_agent_skills_evaluate_m7_missing_case_is_json_error_and_writes_nothing(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    checklist = _write_checklist(
+        tmp_path,
+        {
+            "schema_version": "1",
+            "skill": "nvflare-test-skill",
+            "case_id": "test-conversion",
+            "first_pass": {"accepted": True, "violations": []},
+            "final_result": {"accepted": True},
+            "skill_selection": {"selected_skill": "nvflare-test-skill"},
+        },
+    )
+    records_root = tmp_path / "records"
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "evaluate",
+            "--skill",
+            "nvflare-test-skill",
+            "--checklist",
+            str(checklist),
+            "--records",
+            str(records_root),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 4
+    payload = _load_single_stdout_json(capsys.readouterr())
+    _assert_envelope_shape(payload, "error")
+    assert payload["error_code"] == "CASE_REQUIRED"
+    assert not records_root.exists()
+
+
+def test_agent_skills_evaluate_m7_rejects_checklist_mismatch_and_writes_nothing(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    checklist = _write_checklist(
+        tmp_path,
+        {
+            "schema_version": "1",
+            "skill": "nvflare-test-skill",
+            "case_id": "wrong-case",
+            "first_pass": {"accepted": True, "violations": []},
+            "final_result": {"accepted": True},
+            "skill_selection": {"selected_skill": "nvflare-test-skill"},
+        },
+    )
+    records_root = tmp_path / "records"
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "evaluate",
+            "--skill",
+            "nvflare-test-skill",
+            "--case",
+            "test-conversion",
+            "--checklist",
+            str(checklist),
+            "--records",
+            str(records_root),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 4
+    payload = _load_single_stdout_json(capsys.readouterr())
+    _assert_envelope_shape(payload, "error")
+    assert payload["error_code"] == "CHECKLIST_MISMATCH"
+    assert not records_root.exists()
+
+
+def test_agent_skills_evaluate_m7_rejects_undeclared_process_metric(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    checklist = _write_checklist(
+        tmp_path,
+        {
+            "schema_version": "1",
+            "skill": "nvflare-test-skill",
+            "case_id": "test-conversion",
+            "first_pass": {"accepted": True, "violations": []},
+            "final_result": {"accepted": True},
+            "skill_selection": {"selected_skill": "nvflare-test-skill"},
+            "process_metrics": {"invented_metric": 1},
+        },
+    )
+    records_root = tmp_path / "records"
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "evaluate",
+            "--skill",
+            "nvflare-test-skill",
+            "--case",
+            "test-conversion",
+            "--checklist",
+            str(checklist),
+            "--records",
+            str(records_root),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 4
+    payload = _load_single_stdout_json(capsys.readouterr())
+    _assert_envelope_shape(payload, "error")
+    assert payload["error_code"] == "CHECKLIST_SCHEMA_INVALID"
+    assert "invented_metric" in payload["message"]
+    assert not records_root.exists()
+
+
+def test_agent_skills_evaluate_m7_prohibited_behavior_writes_failing_record(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path, with_behavior=True)
+    checklist = _write_checklist(
+        tmp_path,
+        {
+            "schema_version": "1",
+            "skill": "nvflare-test-skill",
+            "case_id": "test-conversion",
+            "behavior_evidence": {
+                "mandatory_behavior": {
+                    "inspect-first": {"status": "pass", "evidence": ["agent inspected source first"]}
+                },
+                "prohibited_behavior": {
+                    "no-production-submit": {"status": "fail", "evidence": ["submitted to production POC"]}
+                },
+            },
+            "first_pass": {"accepted": True, "violations": []},
+            "final_result": {"accepted": True, "validation_passed": True, "simulation_passed": True},
+            "process_metrics": {
+                "user_correction_count": 0,
+                "agent_self_correction_count": 0,
+                "layout_violations": 0,
+                "workflow_violations": 0,
+                "evidence_gap_violations": 0,
+            },
+            "significant_violations": [],
+        },
+    )
+    records_root = tmp_path / "records"
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "evaluate",
+            "--skill",
+            "nvflare-test-skill",
+            "--case",
+            "test-conversion",
+            "--checklist",
+            str(checklist),
+            "--records",
+            str(records_root),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = _load_single_stdout_json(capsys.readouterr())
+    record = json.loads(open(payload["data"]["record_path"], encoding="utf-8").read())
+    assert record["eval_passed"] is False
+    assert record["score"]["value"] == 2
+    assert record["prohibited_behavior"]["no-production-submit"]["status"] == "fail"
+
+
+def test_agent_skills_evaluate_m7_trigger_wrong_skill_scores_one(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    checklist = _write_trigger_checklist(
+        tmp_path,
+        case_id="test-conversion",
+        selected_skill="nvflare-other-skill",
+        process_metrics={
+            "user_correction_count": 0,
+            "agent_self_correction_count": 0,
+            "layout_violations": 0,
+            "workflow_violations": 0,
+            "evidence_gap_violations": 0,
+        },
+    )
+    records_root = tmp_path / "records"
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "evaluate",
+            "--skill",
+            "nvflare-test-skill",
+            "--case",
+            "test-conversion",
+            "--checklist",
+            str(checklist),
+            "--records",
+            str(records_root),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = _load_single_stdout_json(capsys.readouterr())
+    record = json.loads(open(payload["data"]["record_path"], encoding="utf-8").read())
+    assert record["eval_passed"] is False
+    assert record["score"]["value"] == 1
+    assert record["skill_selection"]["assertion_passed"] is False
+
+
+def test_agent_skills_evaluate_m7_trigger_violation_caps_score_three(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    checklist = _write_trigger_checklist(
+        tmp_path,
+        case_id="test-conversion",
+        selected_skill="nvflare-test-skill",
+        process_metrics={
+            "user_correction_count": 0,
+            "agent_self_correction_count": 0,
+            "layout_violations": 1,
+            "workflow_violations": 0,
+            "evidence_gap_violations": 0,
+        },
+    )
+    records_root = tmp_path / "records"
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "evaluate",
+            "--skill",
+            "nvflare-test-skill",
+            "--case",
+            "test-conversion",
+            "--checklist",
+            str(checklist),
+            "--records",
+            str(records_root),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = _load_single_stdout_json(capsys.readouterr())
+    record = json.loads(open(payload["data"]["record_path"], encoding="utf-8").read())
+    assert record["eval_passed"] is True
+    assert record["score"]["value"] == 3
+    assert "layout_violations recorded" in record["score"]["rationale"]
+
+
+def test_agent_skills_evaluate_m7_compound_expected_and_negative_trigger(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path, with_compound_trigger=True)
+    checklist = _write_trigger_checklist(
+        tmp_path,
+        case_id="compound-trigger",
+        selected_skill="nvflare-test-skill",
+        process_metrics={
+            "user_correction_count": 0,
+            "agent_self_correction_count": 0,
+            "layout_violations": 0,
+            "workflow_violations": 0,
+            "evidence_gap_violations": 0,
+        },
+    )
+    records_root = tmp_path / "records"
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "evaluate",
+            "--skill",
+            "nvflare-test-skill",
+            "--case",
+            "compound-trigger",
+            "--checklist",
+            str(checklist),
+            "--records",
+            str(records_root),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = _load_single_stdout_json(capsys.readouterr())
+    record = json.loads(open(payload["data"]["record_path"], encoding="utf-8").read())
+    assert record["eval_passed"] is True
+    assert record["score"]["value"] == 5
+    assert record["skill_selection"] == {
+        "selected_skill": "nvflare-test-skill",
+        "expected_skill": "nvflare-test-skill",
+        "negative_for": "nvflare-other-skill",
+        "assertion_passed": True,
+    }
+
+
+def test_agent_skills_evaluate_m7_rejects_invalid_same_skill_compound_trigger(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path, with_compound_trigger=True)
+    checklist = _write_trigger_checklist(
+        tmp_path,
+        case_id="invalid-compound-trigger",
+        selected_skill="nvflare-test-skill",
+    )
+    records_root = tmp_path / "records"
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "evaluate",
+            "--skill",
+            "nvflare-test-skill",
+            "--case",
+            "invalid-compound-trigger",
+            "--checklist",
+            str(checklist),
+            "--records",
+            str(records_root),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 4
+    payload = _load_single_stdout_json(capsys.readouterr())
+    _assert_envelope_shape(payload, "error")
+    assert payload["error_code"] == "CHECKLIST_SCHEMA_INVALID"
+    assert "expected_skill and negative_for cannot match" in payload["message"]
+    assert not records_root.exists()
+
+
+def test_agent_skills_evaluate_schema_marks_validated_inputs_required(capsys):
+    exit_code = _run_main(["nvflare", "agent", "skills", "evaluate", "--schema"])
+
+    assert exit_code == 0
+    schema = json.loads(capsys.readouterr().out)
+    assert schema["command"] == "nvflare agent skills evaluate"
+    assert schema["mutating"] is True
+    assert schema["idempotent"] is False
+    args_by_name = {arg["name"]: arg for arg in schema["args"]}
+    assert args_by_name["--skill"]["required"] is True
+    assert args_by_name["--case"]["required"] is True
+
+
+def test_agent_skills_benchmark_dry_run_renders_content_without_writing(capsys, monkeypatch, tmp_path):
+    source = _patch_skill_source(monkeypatch, tmp_path)
+    records_root = _write_process_records(
+        tmp_path,
+        [
+            _m7_process_record(
+                timestamp="20260604T120000000000Z",
+                run_mode="with_skill",
+                source_hash="a" * 64,
+                eval_passed=True,
+                score_value=5,
+                process_metrics={"elapsed_seconds": 100, "token_count": 1000, "conversion_quality": 5},
+            )
+        ],
+    )
+    benchmark_path = source.root / "nvflare-test-skill" / "BENCHMARK.md"
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "benchmark",
+            "--skill",
+            "nvflare-test-skill",
+            "--records",
+            str(records_root),
+            "--dry-run",
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = _load_single_stdout_json(capsys.readouterr())
+    _assert_envelope_shape(payload, "ok")
+    data = payload["data"]
+    assert data["written"] is False
+    assert data["dry_run"] is True
+    assert data["output_path"] == str(benchmark_path)
+    assert "# Agent Skill Benchmark" in data["content"]
+    assert "nvflare-test-skill" in data["content"]
+    assert "Runtime Summary" in data["content"]
+    assert not benchmark_path.exists()
+
+
+def test_agent_skills_benchmark_writes_explicit_output(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    records_root = _write_process_records(
+        tmp_path,
+        [
+            _m7_process_record(
+                timestamp="20260604T120000000000Z",
+                eval_passed=True,
+                score_value=4,
+                process_metrics={"elapsed_seconds": 80, "user_correction_count": 1},
+            )
+        ],
+    )
+    output = tmp_path / "out" / "BENCHMARK.md"
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "benchmark",
+            "--skill",
+            "nvflare-test-skill",
+            "--records",
+            str(records_root),
+            "--output",
+            str(output),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = _load_single_stdout_json(capsys.readouterr())
+    data = payload["data"]
+    assert data["written"] is True
+    assert data["output_path"] == str(output)
+    assert output.read_text(encoding="utf-8") == data["content"]
+    assert "| nvflare-test-skill | test-conversion |" in data["content"]
+    assert "Generated from runtime process-evaluation records" in data["content"]
+
+
+def test_agent_skills_benchmark_missing_skill_is_json_error_and_writes_nothing(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    output = tmp_path / "BENCHMARK.md"
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "benchmark",
+            "--output",
+            str(output),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 4
+    payload = _load_single_stdout_json(capsys.readouterr())
+    _assert_envelope_shape(payload, "error")
+    assert payload["error_code"] == "BENCHMARK_SKILL_REQUIRED"
+    assert not output.exists()
+
+
+def test_agent_skills_benchmark_schema_marks_skill_required(capsys):
+    exit_code = _run_main(["nvflare", "agent", "skills", "benchmark", "--schema"])
+
+    assert exit_code == 0
+    schema = json.loads(capsys.readouterr().out)
+    assert schema["command"] == "nvflare agent skills benchmark"
+    assert schema["mutating"] is True
+    assert schema["idempotent"] is True
+    args_by_name = {arg["name"]: arg for arg in schema["args"]}
+    assert args_by_name["--skill"]["required"] is True
 
 
 def test_agent_skills_performance_human_output_visualizes_score(capsys, monkeypatch, tmp_path):
@@ -749,11 +1628,11 @@ def test_agent_doctor_schema_exits_zero(capsys):
     assert any(arg["name"] == "--online" for arg in schema["args"])
 
 
-def _patch_skill_source(monkeypatch, tmp_path):
+def _patch_skill_source(monkeypatch, tmp_path, *, with_behavior=False, with_compound_trigger=False):
     from nvflare.tool.agent import skill_manager
 
     root = tmp_path / "skills"
-    _write_skill(root, "nvflare-test-skill")
+    _write_skill(root, "nvflare-test-skill", with_behavior=with_behavior, with_compound_trigger=with_compound_trigger)
     source = SkillSource(
         source_type="editable",
         root=root,
@@ -763,7 +1642,7 @@ def _patch_skill_source(monkeypatch, tmp_path):
     return source
 
 
-def _write_skill(root, name):
+def _write_skill(root, name, *, with_behavior=False, with_compound_trigger=False):
     skill_dir = root / name
     skill_dir.mkdir(parents=True)
     skill_dir.joinpath("SKILL.md").write_text(
@@ -779,40 +1658,72 @@ def _write_skill(root, name):
     )
     evals_dir = skill_dir / "evals"
     evals_dir.mkdir()
+    nvflare = {
+        "expected_skill": name,
+        "process_evaluation": {
+            "metrics": [
+                {
+                    "id": "elapsed_seconds",
+                    "description": "time used for the conversion",
+                },
+                {
+                    "id": "token_count",
+                    "description": "total conversation token count when available",
+                },
+                {
+                    "id": "user_correction_count",
+                    "description": "number of user corrections",
+                },
+                {
+                    "id": "conversion_quality",
+                    "description": "reviewer-rated conversion quality",
+                },
+            ]
+        },
+    }
+    if with_behavior:
+        nvflare.update(
+            {
+                "mandatory_behavior": [{"id": "inspect-first", "description": "inspect local code before editing"}],
+                "prohibited_behavior": [{"id": "no-production-submit", "description": "do not submit to production"}],
+            }
+        )
+    eval_cases = [
+        {
+            "id": "test-conversion",
+            "prompt": "Convert this training code.",
+            "expected_output": "A validated conversion.",
+            "nvflare": nvflare,
+        }
+    ]
+    if with_compound_trigger:
+        eval_cases.extend(
+            [
+                {
+                    "id": "compound-trigger",
+                    "prompt": "Route this to the test skill and not the other skill.",
+                    "expected_output": "The selected skill is nvflare-test-skill.",
+                    "nvflare": {
+                        "expected_skill": name,
+                        "negative_for": "nvflare-other-skill",
+                    },
+                },
+                {
+                    "id": "invalid-compound-trigger",
+                    "prompt": "Invalid trigger fixture.",
+                    "expected_output": "This fixture is invalid by design.",
+                    "nvflare": {
+                        "expected_skill": name,
+                        "negative_for": name,
+                    },
+                },
+            ]
+        )
     evals_dir.joinpath("evals.json").write_text(
         json.dumps(
             {
                 "skill_name": name,
-                "evals": [
-                    {
-                        "id": "test-conversion",
-                        "prompt": "Convert this training code.",
-                        "expected_output": "A validated conversion.",
-                        "nvflare": {
-                            "expected_skill": name,
-                            "process_evaluation": {
-                                "metrics": [
-                                    {
-                                        "id": "elapsed_seconds",
-                                        "description": "time used for the conversion",
-                                    },
-                                    {
-                                        "id": "token_count",
-                                        "description": "total conversation token count when available",
-                                    },
-                                    {
-                                        "id": "user_correction_count",
-                                        "description": "number of user corrections",
-                                    },
-                                    {
-                                        "id": "conversion_quality",
-                                        "description": "reviewer-rated conversion quality",
-                                    },
-                                ]
-                            },
-                        },
-                    }
-                ],
+                "evals": eval_cases,
             }
         ),
         encoding="utf-8",
@@ -826,3 +1737,69 @@ def _write_process_record(tmp_path, record):
     record_dir.mkdir(parents=True)
     record_dir.joinpath("record.json").write_text(json.dumps(record), encoding="utf-8")
     return records_root
+
+
+def _write_process_records(tmp_path, records):
+    records_root = tmp_path / "records"
+    for index, record in enumerate(records):
+        record_dir = records_root / record["skill"] / record["case_id"]
+        record_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = record.get("timestamp") or f"record-{index}"
+        record_dir.joinpath(f"{timestamp}.json").write_text(json.dumps(record), encoding="utf-8")
+    return records_root
+
+
+def _write_checklist(tmp_path, data):
+    path = tmp_path / "checklist.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def _write_trigger_checklist(tmp_path, *, case_id, selected_skill, process_metrics=None):
+    return _write_checklist(
+        tmp_path,
+        {
+            "schema_version": "1",
+            "skill": "nvflare-test-skill",
+            "case_id": case_id,
+            "first_pass": {"accepted": True, "violations": []},
+            "final_result": {"accepted": True, "validation_passed": True, "simulation_passed": True},
+            "skill_selection": {"selected_skill": selected_skill},
+            "process_metrics": process_metrics or {},
+            "significant_violations": [],
+        },
+    )
+
+
+def _m7_process_record(
+    *,
+    timestamp,
+    run_mode="with_skill",
+    source_hash=None,
+    eval_passed,
+    score_value,
+    process_metrics=None,
+):
+    score = {"value": score_value, "max": 5, "rationale": "test record"} if score_value is not None else None
+    return {
+        "schema_version": "1",
+        "timestamp": timestamp,
+        "skill": "nvflare-test-skill",
+        "skill_version": "0.1.0",
+        "case_id": "test-conversion",
+        "agent": "codex",
+        "run_mode": run_mode,
+        "source_hash": source_hash,
+        "eval_passed": eval_passed,
+        "process_metrics": process_metrics or {},
+        "score": score,
+        "evaluation": {"mode": "on", "scoring_source": "agent_skill_evaluation:v1"},
+    }
+
+
+def _snapshot_tree(root):
+    snapshot = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            snapshot[str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return snapshot
