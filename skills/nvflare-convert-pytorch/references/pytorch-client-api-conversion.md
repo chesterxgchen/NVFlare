@@ -16,9 +16,14 @@ This reference covers standard PyTorch training loops that already have a
 
 ## Generated Source Layout
 
-Use `../../_shared/nvflare-job-lifecycle.md` for the generated folder and
-runtime output locations. For PyTorch conversions, the generated job folder
-should normally contain:
+For PyTorch conversions, create generated FLARE source in a separate job folder
+unless the user asks for in-place conversion. Prefer
+`<project>/nvflare_jobs/<job_name>/` for source files. Keep exported jobs,
+simulation workspaces, generated model artifacts, and temporary caches out of
+the original training-code root by default; use explicit runtime locations under
+`/tmp/nvflare/` unless the user provides another path.
+
+The generated job folder should normally contain:
 
 - `client.py`: FLARE Client API entry point;
 - `job.py`: recipe or FedJob builder, simulation entry point, and export entry

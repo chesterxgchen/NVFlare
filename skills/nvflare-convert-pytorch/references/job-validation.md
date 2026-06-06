@@ -1,11 +1,5 @@
 # PyTorch Job Validation Notes
 
-Use `../../_shared/nvflare-job-lifecycle.md` for common local validation,
-FedJob export, POC handoff, approval boundaries, and evaluation-record behavior.
-Use `../../_shared/nvflare-experiment-workflows.md` for reruns, recipe
-comparisons, data-prep experiments, synthetic data, and site-heterogeneity
-behavior.
-
 ## PyTorch-Specific Validation
 
 - Validate that received `FLModel.params` load into the PyTorch model through
