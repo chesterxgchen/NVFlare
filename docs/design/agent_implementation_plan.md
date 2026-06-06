@@ -68,17 +68,15 @@ The first useful slice is:
 | 9 | Framework conversion skill wave | No | Yes |
 | 10 | Specialized workflow skill wave | No | Yes |
 | 11 | PET and security skill wave | No | Yes |
-| 12 | Export manifest and fingerprint | Yes | Yes |
-| 13 | Manifest-aware inspect and preflight | Yes | Yes |
-| 14 | External publication handoff artifacts | No | Yes; final handoff gate |
+| 12 | Export/manifest and publication handoff | Yes | Yes; final handoff gate |
 
 The first native agent-skills release is not complete until the runtime
 evaluator and follow-on skill waves are done. Runtime evaluation follows the
 seed bundle and gates the later skill waves so one or a small number of skills
 can be corrected before the same mistakes are copied across the catalog. It is
-an internal quality gate, not an external publication step. Publication handoff
-remains Milestone 14 because it packages the already evaluated release
-artifacts.
+an internal quality gate, not an external publication step. Export manifest,
+manifest-aware consumers, and publication handoff are combined in Milestone 12
+because they package and validate the already evaluated release artifacts.
 
 ## Initial PR Sequence
 
@@ -672,12 +670,78 @@ that skill.
 
 Deliverables:
 
-- Add `nvflare-setup-local`, `nvflare-local-validation`,
-  `nvflare-poc-workflow`, `nvflare-generate-job`,
-  `nvflare-identity-and-config`, `nvflare-job-lifecycle`, and
-  `nvflare-production-submit`.
-- Cover local readiness, job generation, validation, submission, monitoring,
-  log/stat download, and production approval boundaries.
+- Add `nvflare-setup-local`, `nvflare-poc-workflow`, and
+  `nvflare-job-lifecycle`.
+- Cover local readiness, POC lifecycle, job validation, submission, monitoring,
+  log/stat download, identity/config checks, and production approval boundaries.
+
+Skill coverage:
+
+- `nvflare-setup-local`
+  - Covers optional local bootstrap and readiness. Use it when the user wants to
+    prepare or repair the local FLARE environment itself, or when another
+    workflow detects that FLARE readiness is missing or broken before it can
+    continue.
+  - Covers fresh-machine or container bootstrap, editable or wheel installation
+    guidance, Python and virtual-environment sanity, optional dependency
+    guidance, CLI availability for `nvflare`, `nvflare agent`,
+    `nvflare recipe`, `nvflare job`, and `nvflare poc`, bundled-skill
+    install/list readiness, and final verification through
+    `nvflare agent doctor`.
+  - Does not cover POC prepare/start/stop/cleanup, POC or production job
+    submission, framework conversion edits, generated job source, or routine
+    validation that a conversion skill can do for its own output.
+  - Does not cover cloud, Kubernetes, Docker production deployment,
+    firewall/security-group setup, cert distribution, or multi-machine
+    provisioning. Route those to later deployment or provisioning workflows.
+
+- `nvflare-poc-workflow`
+  - Covers local POC system lifecycle: prepare, start, verify server/client
+    readiness, report current POC workspace and kit state, stop, cleanup, and
+    restore the previous kit/config when supported by the CLI.
+  - Covers readiness handoff into `nvflare-job-lifecycle` once a local POC
+    system is running and the user wants to submit or monitor a job.
+  - Does not cover installing FLARE, converting training code, generating job
+    source, selecting framework recipes, submitting or monitoring jobs as the
+    lead workflow, production startup-kit operation, or cloud/multi-machine
+    deployment.
+
+- `nvflare-job-lifecycle`
+  - Covers job operations against an already running FLARE system, including POC
+    and production/startup-kit based systems: validate an existing or exported
+    job before submit, submit, monitor, inspect metadata, collect logs and
+    stats, download outputs, summarize metrics/results, and report evidence.
+  - Covers SimEnv and exported-job validation only for existing jobs or as an
+    independent pre-submit pass. Framework conversion skills own the first local
+    validation for jobs they generated.
+  - Covers startup-kit identity/config checks, selected server/user/site
+    context, explicit production approval prompts, and bounded submit summaries
+    before production submission.
+  - Does not cover local environment bootstrap, POC prepare/start/stop/cleanup,
+    framework conversion edits, recipe-specific generated source, cloud or
+    Kubernetes deployment, deep failure diagnosis, or bypassing approval gates
+    for production submit/shutdown/delete/restart flows.
+
+Framework conversion skills own generated `job.py`, client code, recipe
+selection, SimEnv execution, and export for their framework-specific conversion
+requests. For example, a PyTorch request that asks for SCAFFOLD should route to
+`nvflare-convert-pytorch`, use `nvflare recipe list` and
+`nvflare recipe show scaffold-pt` to select the PyTorch SCAFFOLD recipe, and
+generate the converted PyTorch job there. This is the same ownership pattern
+already used by `nvflare-convert-pytorch` for FedAvg: the framework conversion
+skill discovers the recipe, explains the selection when needed, creates
+`client.py` and `job.py`, validates with `python job.py`, and exports with
+`python job.py --export --export-dir /tmp/nvflare/job_config/<job_name>`.
+TensorFlow SCAFFOLD should route to `nvflare-convert-tensorflow` and use the
+TensorFlow recipe.
+
+Do not add standalone `nvflare-local-validation`,
+`nvflare-identity-and-config`, or `nvflare-production-submit` public skills in
+this milestone. Local validation should be shared guidance used by conversion
+skills and `nvflare-job-lifecycle`. Identity/config checks and production-submit
+approval are safety gates inside `nvflare-job-lifecycle`, not separate skills,
+until those workflows grow enough distinct evidence, files, approval records, or
+policy checks to justify their own skill.
 
 ## Milestone 9: Framework Conversion Skill Wave
 
@@ -718,7 +782,7 @@ implemented just because its name appears in the catalog; implementation means
 the full authoring package, engineering lint coverage, and evaluation evidence
 exist in the repo.
 
-## Milestone 12: Export Manifest and Fingerprint
+## Milestone 12: Export/Manifest and Publication Handoff
 
 Deliverables:
 
@@ -728,41 +792,30 @@ Deliverables:
   Python, recipe, framework dependency, and source-hash metadata.
 - Prefer one manifest file with a nested fingerprint unless separate consumers
   need a separate `job_fingerprint.json`.
-
-Engineering tests:
-
-- exported job manifest content and schema tests;
-- manifest source-hash and required-file validation tests;
-- backward-compatible export tests for jobs that do not request manifest-aware
-  behavior.
-
-## Milestone 13: Manifest-Aware Inspect and Preflight
-
-Deliverables:
-
 - Make `nvflare agent inspect` consume `_export_manifest.json` and nested
   fingerprint metadata when present.
 - Keep `nvflare agent inspect` compatible with current exported jobs that lack
   the manifest.
 - Make future submit preflight consume the same manifest/fingerprint contract
   when that submit-preflight surface is promoted into current scope.
-
-Engineering tests:
-
-- inspect tests for exported jobs with and without `_export_manifest.json`;
-- stale manifest, missing required file, and source-hash mismatch fixtures;
-- preflight compatibility tests when submit preflight is implemented.
-
-## Milestone 14: Publication Handoff
-
-Deliverables:
-
 - Tie released skill content to the NVFLARE release that ships it.
 - Provide guide-compatible skill files and initial evaluation evidence.
 - Keep external catalog registration, signing, public installer metadata, and
   public scoreboard mechanics outside this implementation plan.
 - Do not hand off a skill as public-ready until Milestone 7 runtime evaluation
   passes for that skill.
+
+Engineering tests:
+
+- exported job manifest content and schema tests;
+- manifest source-hash and required-file validation tests;
+- backward-compatible export tests for jobs that do not request manifest-aware
+  behavior;
+- inspect tests for exported jobs with and without `_export_manifest.json`;
+- stale manifest, missing required file, and source-hash mismatch fixtures;
+- preflight compatibility tests when submit preflight is implemented;
+- publication handoff checks that released skill content is tied to the NVFLARE
+  release and has runtime evaluation evidence.
 
 ## Deferred Work
 
