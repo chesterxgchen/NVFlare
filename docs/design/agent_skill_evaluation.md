@@ -136,6 +136,7 @@ Example:
           "metrics": [
             {"id": "turns_to_acceptable", "description": "number of user/agent turns before an acceptable workflow result"},
             {"id": "user_correction_count", "description": "number of user corrections needed after the first pass"},
+            {"id": "missed_instruction_count", "description": "number of applicable explicit instructions the agent missed"},
             {"id": "layout_violations", "description": "count of generated layout or artifact-location mistakes found before final acceptance"}
           ]
         }
@@ -191,6 +192,14 @@ Behavior ID evaluation semantics:
   be supported by an agent transcript, command log, file diff, generated
   artifact, deterministic helper output, or manual reviewer checklist item.
   Missing evidence fails the eval.
+- Explicit user, design, or skill instructions that should be counted as missed
+  instructions must be represented by measurable `nvflare.mandatory_behavior`
+  IDs in the selected eval case. For example, a "do another review" requirement
+  should be represented by a behavior such as `review-after-fix`, and a "create
+  the converted job in a new folder" requirement should be represented by a
+  behavior such as `separate-generated-job-folder`. Without such a behavior ID
+  or an explicit harness-supplied count, the evaluator has no ground truth for
+  that instruction and must not infer a miss from vague transcript absence.
 - `nvflare.prohibited_behavior` entries are forbidden observations. If the
   transcript, command log, file diff, or generated artifact shows the behavior
   happened, the eval fails.
@@ -436,6 +445,7 @@ Recommended process record shape:
     "turns_to_acceptable": 4,
     "user_correction_count": 3,
     "agent_self_correction_count": 1,
+    "missed_instruction_count": 2,
     "conversion_quality": 3,
     "layout_violations": 3,
     "workflow_violations": null,
@@ -447,7 +457,7 @@ Recommended process record shape:
   "score": {
     "value": 3,
     "max": 5,
-    "rationale": "Functional result accepted, but user correction or missing mandatory evidence capped the score. 3 user corrections; layout violations on first pass."
+    "rationale": "Functional result accepted, but user correction, missed instruction, or missing mandatory evidence capped the score. 3 user corrections; layout violations on first pass."
   },
   "skill_improvements": [
     "add generated-job folder rule",
@@ -476,6 +486,23 @@ workflow. `score.value` must be an integer from `1` through `5` for initial
 runtime process records, `score.max` must be `5`, and `score.rationale` is
 required with a maximum length of 512 characters.
 
+`process_metrics.missed_instruction_count` counts applicable explicit
+instructions that the agent did not follow. Examples include a user asking for
+another review and the agent skipping the review, or a user/design rule requiring
+a generated conversion in a new folder while the agent converts in place.
+Condition-based instructions count only when the condition is satisfied. A
+missed instruction that is severe enough to invalidate safety, artifact
+ownership, or approval requirements should also be recorded in
+`significant_violations`. In M7 this count is best-effort: when the field is
+absent or `null`, the evaluator fills it from selected eval-case mandatory
+behavior statuses by counting mandatory behaviors whose status is not `pass`.
+This does not infer hidden intent or parse unstructured transcripts. A harness or
+reviewer-supplied numeric count takes precedence when it has broader evidence
+than the normalized behavior map. The automatic count is therefore only as
+complete as the eval case's mandatory behavior list; instructions not modeled as
+mandatory behavior IDs are outside the evaluator's automatic missed-instruction
+count.
+
 Initial `process_metrics` fields:
 
 | Field | Type | Nullability and ownership |
@@ -485,6 +512,7 @@ Initial `process_metrics` fields:
 | `turns_to_acceptable` | integer | `null` when unavailable. Reviewer checklist may supply it. |
 | `user_correction_count` | integer | Required for assigning score `4` or `5`; `null` prevents score `4` or `5`. |
 | `agent_self_correction_count` | integer | Required for assigning score `5`; `null` prevents score `5`. Score `4` does not require this field to be non-null; use `0` when no self-correction was observed. |
+| `missed_instruction_count` | integer | Best-effort derived from mandatory behavior statuses when absent or `null`; `0` means no missed instruction was observed in the available evidence. |
 | `layout_violations` | integer | Required for assigning score `4` or `5`; `0` means checked and none found; `null` when not checked. |
 | `workflow_violations` | integer | Required for assigning score `4` or `5`; `0` means checked and none found; `null` when not checked. |
 | `evidence_gap_violations` | integer | Required for assigning score `4` or `5`; `0` means checked and none found; `null` when not checked. |
@@ -540,15 +568,25 @@ the run remains `off`.
 For agent-driven runs, `NVFLARE_SKILL_EVAL=on` is the activation convention.
 This environment variable is read by the agent harness or skill instructions,
 not by the NVFLARE CLI. When it is unset, normal skill use remains `off` and
-there is no evaluator overhead. When it is set to the literal value `on`, the
-agent should attempt runtime evaluation after completing a skill run by calling
-`nvflare agent skills evaluate` with the selected skill, eval case, run mode,
-and artifact or checklist evidence. If the agent or harness cannot identify a
-matching `evals/evals.json` case or cannot provide bounded evidence, it should
-not invent inputs; it should report that runtime evaluation was skipped and
-why. Test harnesses that compare baseline and skill-assisted runs should keep
-the environment variable set and pass distinct `--run-mode` values such as
-`without_skill` and `with_skill` so `skills performance` groups them separately.
+there is no process-evaluation packaging or evaluator overhead. Agents should
+still collect task evidence that is needed for a useful user answer, such as
+validation status, result paths, and blockers. They should not create
+evaluation-only artifacts, behavior maps, correction counters, or checklist
+data unless runtime evaluation is on.
+
+When `NVFLARE_SKILL_EVAL` is set to the literal value `on`, the agent should
+preserve bounded evaluation evidence during or immediately after the skill run,
+then call `nvflare agent skills evaluate` before the final response with the
+selected skill, eval case, run mode, and artifact or checklist evidence. If the
+agent or harness cannot identify a matching `evals/evals.json` case or cannot
+provide bounded evidence, it should not invent inputs; it should report that
+runtime evaluation was skipped and why. Harnesses may set
+`NVFLARE_SKILL_EVAL_CASE=<eval-id>` to make the selected case explicit. If it is
+unset, the agent may inspect the selected skill's `evals/evals.json` and choose
+a case only when the task context maps unambiguously to one case. Test harnesses
+that compare baseline and skill-assisted runs should keep the environment
+variable set and pass distinct `--run-mode` values such as `without_skill` and
+`with_skill` so `skills performance` groups them separately.
 
 There is no initial `human`, `agent_record`, or LLM-judge mode. A human reviewer
 may inspect records later, but manual review is not a runtime mode. Agent notes
@@ -681,9 +719,11 @@ provided, the initial evaluator recognizes only these optional structured files:
 
 Unrecognized files under `--artifacts` are ignored. `skill_selection` in
 `run.json` should include `selected_skill`, optional `expected_skill`, optional
-`negative_for`, and `assertion_passed`. Trigger-only and adjacent-negative cases
-must supply skill-selection evidence through `run.json`, `evidence.json`, or the
-reviewer checklist.
+`negative_for`, and `assertion_passed`. These skill-selection fields must be
+strings or `null`; the evaluator should reject arrays, objects, numbers, or
+booleans instead of coercing them to strings. Trigger-only and adjacent-negative
+cases must supply skill-selection evidence through `run.json`, `evidence.json`,
+or the reviewer checklist.
 
 Artifacts supplied through `--artifacts` are trusted evaluator inputs. The
 initial evaluator does not prove artifact integrity, chain of custody, or whether
@@ -929,6 +969,12 @@ value must be consistent with `selected_skill`, `expected_skill`, and
 are set, `assertion_passed` is true only when
 `selected_skill == expected_skill` and `selected_skill != negative_for`. A case
 whose `expected_skill` and `negative_for` are the same skill is invalid.
+Global-negative cases may set `negative_for` to the literal string `"*"`, which
+means no FLARE skill should be selected. With this wildcard,
+`assertion_passed` is true only when `selected_skill` is JSON `null` or a string
+that strips to `""`, `"none"`, `"no_skill"`, or `"null"`. This wildcard is only
+for global-negative evals; adjacent-negative evals for a specific competing
+skill should name that skill explicitly.
 
 Trigger-only and adjacent-negative cases still receive a 1-5 `score.value`.
 When the expected skill-selection assertion passes on the first pass, no user
@@ -947,8 +993,8 @@ The evaluator should apply behavior semantics conservatively:
 - score `5` requires one-shot correct behavior, no meaningful correction, no
   prohibited behavior, and required evidence reported;
 - score `4` allows only minor, self-corrected, or harmless issues;
-- score `3` requires a functional result but allows user correction for
-  workflow, layout, or evidence gaps;
+- score `3` requires a functional result but allows user correction or missed
+  instructions for workflow, layout, or evidence gaps;
 - score `2` is for runnable or partially useful results that violated significant
   workflow, safety, or artifact rules;
 - score `1` is for failed, unsafe, or incomplete results.
@@ -958,15 +1004,18 @@ Score constraints must be deterministic:
 - score `5` requires all mandatory behaviors to pass, no prohibited behavior,
   required evidence, first-pass acceptance, final acceptance,
   `user_correction_count == 0`, `agent_self_correction_count == 0`, and no
-  layout, workflow, or evidence-gap violations;
+  missed instructions, layout violations, workflow violations, or evidence-gap
+  violations;
 - score `4` requires all mandatory behaviors to pass, no prohibited behavior,
   first-pass acceptance, final acceptance, `user_correction_count == 0`, and
-  zero layout, workflow, or evidence-gap violations. It may include minor
-  harmless issues or agent self-corrections made before the first user-visible
-  acceptable result. `first_pass.accepted` must be `true`; if the first
-  user-visible pass is rejected, the reason must be recorded in
-  `first_pass.violations` and score `4` is not allowed;
-- user correction for workflow, layout, or evidence gaps caps the score at `3`;
+  zero missed instructions, layout violations, workflow violations, or
+  evidence-gap violations. It may include minor harmless issues or agent
+  self-corrections made before the first user-visible acceptable result.
+  `first_pass.accepted` must be `true`; if the first user-visible pass is
+  rejected, the reason must be recorded in `first_pass.violations` and score `4`
+  is not allowed;
+- user correction or missed instructions for workflow, layout, or evidence gaps
+  cap the score at `3`;
 - if `user_correction_count` or the corresponding violation evidence is
   unavailable, the evaluator must not assign score `4` or `5`;
 - if `agent_self_correction_count` is unavailable, the evaluator must not assign
@@ -997,7 +1046,7 @@ When multiple constraints apply, the lowest applicable score or cap wins.
 | --- | --- |
 | 5 | `One-shot correct; required evidence present; no user or agent correction recorded.` |
 | 4 | `Accepted first pass with no user correction; agent self-correction or harmless issue recorded.` |
-| 3 | `Functional result accepted, but user correction or missing mandatory evidence capped the score.` |
+| 3 | `Functional result accepted, but user correction, missed instruction, or missing mandatory evidence capped the score.` |
 | 2 | `Runnable or partially useful result, but validation/prohibited/significant-violation cap applied.` |
 | 1 | `Failed, unsafe, wrong-trigger, or incomplete result.` |
 
@@ -1008,6 +1057,12 @@ The evaluator should not invent token usage, infer hidden agent intent, or
 retroactively excuse missing evidence. If token counts are unavailable from the
 agent runtime, the record should store `null` and let `nvflare agent skills
 performance` report it as unavailable.
+
+Likewise, the evaluator should not invent missed-instruction findings for
+instructions that are not represented by selected-case mandatory behavior IDs or
+an explicit structured `process_metrics.missed_instruction_count` from the
+harness/checklist. General natural-language expectations belong in
+`nvflare.mandatory_behavior` before they can be counted automatically.
 
 `final_result.validation_passed` and `final_result.simulation_passed` are
 case-specific booleans. They should be `true` or `false` only when the selected

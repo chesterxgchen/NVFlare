@@ -72,6 +72,10 @@
               "description": "number of user corrections needed for mode selection, evidence interpretation, recovery category, or overconfident claims"
             },
             {
+              "id": "missed_instruction_count",
+              "description": "number of applicable user, design, or skill instructions missed during diagnosis, such as requested review passes, bounded-evidence requirements, or mode-specific triage"
+            },
+            {
               "id": "unwanted_action_count",
               "description": "number of mutations, private-key reads, unbounded log dumps, or production actions attempted during diagnosis"
             }

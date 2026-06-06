@@ -312,13 +312,19 @@ Deliverables:
   by invoking the same evaluator entry point after collecting artifacts.
 - Document and implement the agent/harness convention
   `NVFLARE_SKILL_EVAL=on`: installed skills and scripted harnesses should check
-  this environment variable after a skill run and, when a matching eval case and
-  bounded artifact or checklist evidence are available, call
-  `nvflare agent skills evaluate`. The NVFLARE CLI itself does not read this
-  variable. If the variable is unset, or if the case/evidence is unavailable,
-  no process record is required. Harnesses that run baseline and skill-assisted
-  comparisons should pass explicit `--run-mode` values so summaries group the
-  records separately.
+  this environment variable before creating process-evaluation artifacts. When
+  unset, agents should collect only task evidence needed for the user-facing
+  result and should not create behavior maps, correction counters, checklist
+  data, or other evaluation-only artifacts. When set to `on`, and when a
+  matching eval case and bounded artifact or checklist evidence are available,
+  call `nvflare agent skills evaluate` before the final response. The NVFLARE
+  CLI itself does not read this variable. If the variable is unset, or if the
+  case/evidence is unavailable, no process record is required. Harnesses may set
+  `NVFLARE_SKILL_EVAL_CASE=<eval-id>` to avoid case selection ambiguity. If it
+  is unset, installed skills may inspect `evals/evals.json` and select a case
+  only when task context maps unambiguously to one case. Harnesses that run
+  baseline and skill-assisted comparisons should pass explicit `--run-mode`
+  values so summaries group the records separately.
 - Do not add an LLM judge, human runtime mode, or agent self-scoring mode in
   this milestone. Agent-authored notes may be evidence, but the evaluator or
   reviewer checklist assigns the score from the documented rubric.
@@ -409,13 +415,13 @@ Deliverables:
   prohibited behavior, partial or unvalidated final results, and unsafe or
   incomplete results. When multiple constraints apply, the lowest applicable
   score or cap wins. Do not assign score 4 or 5 when
-  `user_correction_count` or the corresponding layout/workflow/evidence-gap
-  violation evidence is unavailable. Score 5 requires
+  `user_correction_count` or the corresponding layout/workflow or evidence-gap
+  evidence is unavailable. Score 5 requires
   `agent_self_correction_count == 0`; score 4 requires
-  `first_pass.accepted == true`, user correction count zero, and no layout,
-  workflow, or evidence-gap violations. Cap significant workflow, safety, or
-  artifact-rule violations outside the prohibited-behavior list at score 2 and
-  set `eval_passed` false.
+  `first_pass.accepted == true`, user correction count zero, and no missed
+  instructions, layout violations, workflow violations, or evidence-gap
+  violations. Cap significant workflow, safety, or artifact-rule violations
+  outside the prohibited-behavior list at score 2 and set `eval_passed` false.
 - Derive `eval_passed` from observable trigger/workflow evidence, behavior
   status maps, final-result fields, significant violations, and evaluator
   validation outcome. Do not derive `eval_passed` from `score.value`.
@@ -430,6 +436,10 @@ Deliverables:
   the assertion as passing only when `selected_skill == expected_skill` and
   `selected_skill != negative_for`; reject cases where both fields name the same
   skill.
+- Validate `selected_skill`, `expected_skill`, and `negative_for` as strings or
+  `null`. Support `negative_for: "*"` only for global-negative cases where no
+  FLARE skill should be selected; treat it as passing only when `selected_skill`
+  is JSON `null` or strips to `""`, `"none"`, `"no_skill"`, or `"null"`.
 - Validate `score.value` as an integer 1 through 5, `score.max` as exactly 5,
   and `score.rationale` as a required bounded string generated from documented
   deterministic templates plus an optional short cap reason.
@@ -474,8 +484,9 @@ Engineering tests:
 
 - evaluator loads a skill's `evals/evals.json`, selects one case, and rejects
   unknown skill/case IDs with JSON envelope errors;
-- seed skills document the `NVFLARE_SKILL_EVAL=on` post-run convention and do
-  not claim that the NVFLARE CLI reads the variable directly;
+- seed skills document the `NVFLARE_SKILL_EVAL=on` post-run convention,
+  optional `NVFLARE_SKILL_EVAL_CASE=<eval-id>` case selection, and do not claim
+  that the NVFLARE CLI reads the variables directly;
 - evaluator rejects omitted `--case` with a JSON envelope error and writes no
   process record;
 - evaluator supports trigger-only or adjacent-negative cases with empty behavior
@@ -488,6 +499,10 @@ Engineering tests:
   selection and score 1 for wrong-skill or missing skill-selection evidence;
 - evaluator validates compound `expected_skill` plus `negative_for` trigger
   cases, including the invalid same-skill case;
+- evaluator rejects non-string, non-null `selected_skill`, `expected_skill`, and
+  `negative_for` values;
+- evaluator validates `negative_for: "*"` global-negative cases, including a
+  passing no-skill-selected case;
 - evaluator writes a process record under the requested records directory and
   preserves the documented schema, including UTC microsecond timestamped output
   paths and no overwrite on path collision;
@@ -559,15 +574,25 @@ Engineering tests:
   incomplete results, with the lowest applicable cap winning;
 - evaluator rejects score 4 when `first_pass.accepted` is false; score 4
   requires `first_pass.accepted=true`, `user_correction_count == 0`, and no
-  layout, workflow, or evidence-gap violations;
+  missed instructions, layout violations, workflow violations, or evidence-gap
+  violations;
 - evaluator validates `score.value`, `score.max`, and bounded
   `score.rationale`, including required rationale presence and deterministic
   template selection;
 - evaluator validates documented `process_metrics` types, nullability, and
   score-critical availability rules for `user_correction_count`,
-  `agent_self_correction_count`, and layout/workflow/evidence-gap counts,
-  including `agent_self_correction_count` being required for score 5 but not
-  score 4;
+  `agent_self_correction_count`, `missed_instruction_count`, and
+  layout/workflow/evidence-gap counts, including
+  `agent_self_correction_count` being required for score 5 but not score 4;
+- evaluator records `missed_instruction_count > 0` as a score-3 cap while
+  preserving `eval_passed=true` when required behavior, final result, validation,
+  and prohibited-behavior checks otherwise pass;
+- evaluator fills missing or `null` `missed_instruction_count` as a best-effort
+  post-run count of mandatory behavior entries whose status is not `pass`, while
+  trusting a supplied numeric count when broader harness evidence exists;
+- evaluator does not infer missed instructions that are not represented by the
+  selected eval case's mandatory behavior IDs or by an explicit structured
+  `process_metrics.missed_instruction_count`;
 - evaluator validates `first_pass.violations` and `skill_improvements` bounds:
   at most 10 strings each, with each string at most 512 characters;
 - evaluator does not assign score 4 or 5 when `user_correction_count` or

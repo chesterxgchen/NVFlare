@@ -37,6 +37,7 @@ STANDARD_PROCESS_METRICS = {
     "turns_to_acceptable",
     "user_correction_count",
     "agent_self_correction_count",
+    "missed_instruction_count",
     "layout_violations",
     "workflow_violations",
     "evidence_gap_violations",
@@ -49,6 +50,7 @@ INTEGER_PROCESS_METRICS = {
     "turns_to_acceptable",
     "user_correction_count",
     "agent_self_correction_count",
+    "missed_instruction_count",
     "layout_violations",
     "workflow_violations",
     "evidence_gap_violations",
@@ -69,7 +71,7 @@ RUNTIME_FIELDS = {
 RATIONALE_TEMPLATES = {
     5: "One-shot correct; required evidence present; no user or agent correction recorded.",
     4: "Accepted first pass with no user correction; agent self-correction or harmless issue recorded.",
-    3: "Functional result accepted, but user correction or missing mandatory evidence capped the score.",
+    3: "Functional result accepted, but user correction, missed instruction, or missing mandatory evidence capped the score.",
     2: "Runnable or partially useful result, but validation/prohibited/significant-violation cap applied.",
     1: "Failed, unsafe, wrong-trigger, or incomplete result.",
 }
@@ -145,6 +147,7 @@ def evaluate_skill_run(
     prompt_summary = _bounded_optional_string(merged.get("prompt_summary"), "prompt_summary")
 
     _validate_evidence_required(behavior_maps, behavior_spec, skill_selection, first_pass, final_result)
+    _apply_derived_missed_instruction_count(process_metrics, behavior_maps)
 
     if agent == "unknown" and merged.get("agent"):
         agent = merged["agent"]
@@ -539,6 +542,13 @@ def _validate_skill_selection(data: dict, *, nvflare_spec: dict, require: bool) 
     selected = data.get("selected_skill")
     expected = data.get("expected_skill", nvflare_spec.get("expected_skill"))
     negative = data.get("negative_for", nvflare_spec.get("negative_for"))
+    for field_name, value in (
+        ("skill_selection.selected_skill", selected),
+        ("skill_selection.expected_skill", expected),
+        ("skill_selection.negative_for", negative),
+    ):
+        if value is not None and not isinstance(value, str):
+            raise SkillEvaluationError("CHECKLIST_SCHEMA_INVALID", f"{field_name} must be a string or null.")
     assertion = data.get("assertion_passed")
     if assertion is not None and not isinstance(assertion, bool):
         raise SkillEvaluationError("CHECKLIST_SCHEMA_INVALID", "skill_selection.assertion_passed must be boolean.")
@@ -611,6 +621,12 @@ def _validate_evidence_required(
         raise SkillEvaluationError("EVIDENCE_REQUIRED", "skill_selection evidence is required.")
 
 
+def _apply_derived_missed_instruction_count(process_metrics: dict, behavior_maps: dict) -> None:
+    derived = sum(1 for entry in behavior_maps["mandatory_behavior"].values() if entry.get("status") != "pass")
+    if process_metrics.get("missed_instruction_count") is None:
+        process_metrics["missed_instruction_count"] = derived
+
+
 def _eval_passed(
     *,
     behavior_maps: dict,
@@ -678,7 +694,12 @@ def _score(
         score = min(score, 3)
         reasons.append("first pass rejected")
 
-    violation_fields = ("layout_violations", "workflow_violations", "evidence_gap_violations")
+    violation_fields = (
+        "missed_instruction_count",
+        "layout_violations",
+        "workflow_violations",
+        "evidence_gap_violations",
+    )
     for field in violation_fields:
         value = process_metrics.get(field)
         if value is None:
@@ -698,9 +719,6 @@ def _score(
         score = min(score, 4)
         reasons.append("agent self-correction recorded")
 
-    if not eval_passed and score == 5:
-        score = 3
-        reasons.append("eval did not pass")
     return score, _rationale(score, reasons)
 
 
@@ -712,7 +730,12 @@ def _trigger_score(skill_selection: dict, first_pass: dict, process_metrics: dic
         return 3, _rationale(
             3, ["user correction required" if user_corrections else "user correction count unavailable"]
         )
-    violation_fields = ("layout_violations", "workflow_violations", "evidence_gap_violations")
+    violation_fields = (
+        "missed_instruction_count",
+        "layout_violations",
+        "workflow_violations",
+        "evidence_gap_violations",
+    )
     for field in violation_fields:
         value = process_metrics.get(field)
         if value is None:

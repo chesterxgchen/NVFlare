@@ -115,6 +115,10 @@
               "description": "number of user corrections needed for workflow, layout, validation, evidence, or artifact-location mistakes"
             },
             {
+              "id": "missed_instruction_count",
+              "description": "number of applicable user, design, or skill instructions missed during conversion, such as required separate output folders or requested review passes"
+            },
+            {
               "id": "layout_violations",
               "description": "count of generated source layout, file naming, or runtime artifact placement violations found before final acceptance"
             },

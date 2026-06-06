@@ -41,12 +41,15 @@ diagnosis. Route to the narrower skill instead.
 
 ## Runtime Evaluation
 
-After completing a skill run, check `NVFLARE_SKILL_EVAL`. If it is `on`, run
-`nvflare agent skills evaluate` before the final response when a matching eval
-case and bounded evidence are available. Use `--skill nvflare-orient`, `--case
-<eval-id>`, `--agent`, `--run-mode`, and either `--artifacts <dir>` or
-`--checklist <file>`. Do not invent a case or evidence; if unavailable, report
-why evaluation was skipped.
+Check `NVFLARE_SKILL_EVAL` before creating process-evaluation artifacts. When
+it is unset, keep only task evidence needed for the user-facing routing result.
+If it is `on`, run `nvflare agent skills evaluate` before the final response
+when a matching eval case and bounded evidence are available. Use `--skill
+nvflare-orient`, `--case <eval-id>`, `--agent`, `--run-mode`, and either
+`--artifacts <dir>` or `--checklist <file>`. Prefer
+`NVFLARE_SKILL_EVAL_CASE` when set; otherwise read `evals/evals.json` and choose
+a case only when the task maps unambiguously to one. Do not invent a case or
+evidence; if unavailable, report why evaluation was skipped.
 
 Load `references/orientation-routing.md` when routing is ambiguous or when the
 inspect output names multiple possible workflow families.
