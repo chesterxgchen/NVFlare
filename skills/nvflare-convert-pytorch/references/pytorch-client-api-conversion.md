@@ -36,6 +36,11 @@ Avoid names such as `fl_train.py` for the generated FLARE Client API entry
 point unless the user explicitly requests that naming. Keep the original
 `train.py` intact as the source training reference.
 
+For standard FedAvg, package shared generated files for all clients. Do not
+replace all-client deployment with explicit per-site deployment unless the
+conversion has real per-site differences such as different scripts, arguments,
+data-split settings, or launch behavior.
+
 ## Evaluation Branch
 
 When the task is evaluation-only, use `flare.is_evaluate()` to send metrics
@@ -52,11 +57,8 @@ without local training.
 - For metrics, send scalar summaries in the `metrics` field and keep rich
   tracking artifacts in the normal experiment-tracking path.
 
-## Reference Examples
+## Job Pattern Reference
 
-- `examples/hello-world/hello-pt/client.py`
-- `examples/hello-world/hello-pt/job.py`
-- `examples/advanced/cifar10/pt`
-
-`hello-pt` uses FedAvg. Load `recipe-selection.md` before creating or updating
-`job.py` so the selected recipe matches the user's requested FL workflow.
+Load `recipe-selection.md` before creating or updating `job.py` so the selected
+recipe matches the user's requested FL workflow. Do not assume NVFLARE
+repository examples are available in the user's environment.
