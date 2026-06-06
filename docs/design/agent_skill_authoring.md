@@ -236,14 +236,13 @@ Recommended initial helper scripts:
 
 | Script | Used By | Purpose | Promotion Path |
 | --- | --- | --- | --- |
-| `scripts/scan_project.py` | `nvflare-orient`, `nvflare-convert-pytorch`, `nvflare-generate-job` | Static scan for frameworks, entry points, FLARE integration usage, `job.py`, SimEnv usage, export support, and absolute data paths | `nvflare agent inspect` |
-| `scripts/validate_flare_integration.py` | `nvflare-convert-pytorch`, `nvflare-local-validation` | AST-based check for FLARE receive/send patterns, `FLModel`, and incomplete conversion patterns without exposing API details as customer intent | `nvflare agent inspect` or a future conversion lint command |
-| `scripts/create_job_scaffold.py` | `nvflare-generate-job` | Create a starter `job.py` and README snippets from versioned recipe/example scaffolds without using the deprecated job-template config mechanism | future `nvflare recipe scaffold` if the scaffold contract stabilizes |
-| `scripts/validate_exported_job.py` | `nvflare-local-validation`, `nvflare-job-lifecycle`, `nvflare-production-submit` | Check required job files and obvious packaging mistakes; use `_export_manifest.json` or fingerprint metadata when the future export API provides them | `nvflare agent inspect` and `nvflare job submit` preflight |
-| `scripts/extract_metrics_summary.py` | `nvflare-local-validation`, `nvflare-job-lifecycle` | Collect simple metrics from known JSON artifacts, logs, TensorBoard pointers, or result files so the agent can report training progress | future `nvflare job metrics` |
+| `scripts/scan_project.py` | `nvflare-orient`, framework conversion skills | Static scan for frameworks, entry points, FLARE integration usage, `job.py`, SimEnv usage, export support, and absolute data paths | `nvflare agent inspect` |
+| `scripts/validate_flare_integration.py` | framework conversion skills | AST-based check for FLARE receive/send patterns, `FLModel`, and incomplete conversion patterns without exposing API details as customer intent | `nvflare agent inspect` or a future conversion lint command |
+| `scripts/validate_exported_job.py` | `nvflare-job-lifecycle`, framework conversion skills | Check required job files and obvious packaging mistakes; use `_export_manifest.json` or fingerprint metadata when the future export API provides them | `nvflare agent inspect` and `nvflare job submit` preflight |
+| `scripts/extract_metrics_summary.py` | `nvflare-job-lifecycle`, framework conversion skills | Collect simple metrics from known JSON artifacts, logs, TensorBoard pointers, or result files so the agent can report training progress | future `nvflare job metrics` |
 | `scripts/collect_job_evidence.py` | `nvflare-diagnose-job` | Run the standard evidence commands and save a support bundle with job meta, logs, stats, system status, and resources | future `nvflare job diagnose` |
 | `scripts/match_failure_patterns.py` | `nvflare-diagnose-job` | Match collected logs and metadata against known patterns such as CUDA OOM, import errors, auth failures, timeouts, and expired startup kits | future `nvflare job diagnose` |
-| `scripts/redact_support_bundle.py` | `nvflare-diagnose-job`, `nvflare-production-submit` | Redact secrets, local usernames, tokens, and private paths before an evidence bundle is shared | future support-bundle command |
+| `scripts/redact_support_bundle.py` | `nvflare-diagnose-job`, `nvflare-job-lifecycle` | Redact secrets, local usernames, tokens, and private paths before an evidence bundle is shared | future support-bundle command |
 
 Script requirements:
 
@@ -441,7 +440,7 @@ README files should include:
 - Keep each `SKILL.md` concise and move deep reference material into
   `references/`.
 - Add the initial helper scripts that support customer workflows:
-  `scan_project.py`, `validate_flare_integration.py`, `create_job_scaffold.py`,
+  `scan_project.py`, `validate_flare_integration.py`,
   `validate_exported_job.py`, `extract_metrics_summary.py`,
   `collect_job_evidence.py`, `match_failure_patterns.py`, and
   `redact_support_bundle.py`.

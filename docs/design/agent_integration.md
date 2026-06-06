@@ -505,12 +505,11 @@ Skill use should have one lead skill and a small number of supporting skills.
 For example:
 
 - "Convert this PyTorch training script to FLARE and run locally" should use
-  `nvflare-convert-pytorch` as the lead skill, with `nvflare-generate-job` and
-  `nvflare-local-validation` as supporting workflows.
+  `nvflare-convert-pytorch` as the lead skill. The conversion skill owns its
+  first local validation pass.
 - "Submit this exported job to my production system" should use
-  `nvflare-production-submit` as the lead skill, with
-  `nvflare-identity-and-config` and `nvflare-job-lifecycle` as supporting
-  workflows.
+  `nvflare-job-lifecycle` as the lead skill, with production identity/config
+  checks and explicit approval gates before submit.
 - "Why did this job fail?" should use `nvflare-diagnose-job` as the lead skill
   and should collect evidence through `nvflare job meta`, `nvflare job logs`,
   `nvflare job stats`, `nvflare system status`, and `nvflare system resources`.
@@ -588,12 +587,9 @@ scope.
 | Conversion | `nvflare-integrate-flower` | later | Interoperate with existing Flower applications |
 | Conversion | `nvflare-convert-gnn` | later | Graph neural network workflows |
 | Conversion | `nvflare-convert-numpy` | later | NumPy or custom training loops when no stronger framework-specific path applies |
-| Job creation | `nvflare-generate-job` | next | Generate or update `job.py`, run SimEnv, and export a job folder |
 | Job creation | `nvflare-site-specific-training` | next | Configure jobs where sites use different training scripts, data loaders, training parameters, or app folders while preserving a common FLARE task contract |
-| Validation | `nvflare-local-validation` | next | Run local checks and SimEnv before any server submission |
 | Local runtime | `nvflare-poc-workflow` | next | Prepare, start, verify, stop, and clean local POC systems |
-| Operations | `nvflare-identity-and-config` | next | Use `nvflare config` and per-command startup-kit selectors safely |
-| Operations | `nvflare-job-lifecycle` | next | Submit, monitor, inspect, download, and collect job outputs |
+| Operations | `nvflare-job-lifecycle` | next | Validate, submit, monitor, inspect, download, collect job outputs, and enforce identity/config plus production approval gates |
 | Observability | `nvflare-experiment-tracking` | next | Add, validate, and interpret TensorBoard or MLflow experiment tracking for FLARE jobs without owning an external tracking service |
 | Operations | `nvflare-system-operations` | later | Inspect and manage FLARE system state with explicit safety gates |
 | Operations | `nvflare-study-workflow` | later | Work with study-scoped job routing, authorization, and data isolation |
@@ -610,7 +606,6 @@ scope.
 | Privacy/security | `nvflare-privacy-policy-filters` | later | Configure or validate site/job privacy filters and policy scopes |
 | Troubleshooting | `nvflare-diagnose-job` | seed | Collect evidence and map common failures to recovery categories |
 | Troubleshooting | `nvflare-extract-local-debug-script` | later | Extract a non-federated local training/debug script from a FLARE job when diagnosing conversion or convergence issues |
-| Production safety | `nvflare-production-submit` | next | Require identity checks and explicit approval before production submit |
 | Provisioning | `nvflare-distributed-provisioning` | later | Guide request, approval, package, and startup-kit handling workflows |
 
 Skill naming convention:
@@ -998,12 +993,13 @@ for stronger completeness, freshness, and validation checks.
 Generated examples should make the FL ordering constraint visible: receive the
 global model, apply received weights, train locally, then send the updated model
 and metrics. When practical, generated jobs should write `metrics_summary.json`
-with enough round-start and round-end metrics for local-validation skills to
+with enough round-start and round-end metrics for conversion and job-lifecycle
+skills to
 detect semantic mistakes such as ignoring the received global model.
 
-`nvflare-local-validation` must document SimEnv limitations: no TLS/auth, no
-startup-kit validation, no network latency or timeout coverage, no real
-site-local data separation unless the job explicitly models it, and no
+Conversion skills and `nvflare-job-lifecycle` must document SimEnv limitations:
+no TLS/auth, no startup-kit validation, no network latency or timeout coverage,
+no real site-local data separation unless the job explicitly models it, and no
 guarantee that per-site resource limits match production. POC validation is
 required before production submission unless the user explicitly accepts the
 risk. POC workflows should record the previous kit identity before prepare and
@@ -1087,8 +1083,8 @@ Notebook guidance:
   cleanup.
 
 Notebook guidance is not a separate public skill in the initial catalog. It
-belongs in `nvflare-identity-and-config`, `nvflare-job-lifecycle`,
-`nvflare-local-validation`, and concise notebook references. A future
+belongs in `nvflare-job-lifecycle`, conversion skills, and concise notebook
+references. A future
 `nvflare-notebook-workflow` skill should be added only if notebook use develops
 distinct triggers, artifacts, safety boundaries, and eval inputs/assertions that would
 overlap poorly with those existing skills.
