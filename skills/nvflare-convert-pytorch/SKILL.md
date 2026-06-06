@@ -64,15 +64,17 @@ debugging that does not ask for FLARE conversion.
 - Must not submit to POC or production without explicit user approval.
 - Must not generate Python solely to wrap `nvflare` CLI commands or scrape
   human CLI output.
+- Must not require `rg` to be installed. Use `rg` when available; otherwise use
+  `nvflare agent inspect`, `find`, `git ls-files`, or a small Python search.
 
 ## Agent Responsibilities
 
 - Run project inspection and recipe discovery before selecting a recipe.
 - Explain the selected recipe when the user's algorithm intent is ambiguous.
 - Convert PyTorch Client API model exchange and generate or update `job.py`.
-- Use shared lifecycle guidance for validation, export, POC handoff, reruns,
-  recipe comparisons, data-prep experiments, synthetic data, and evaluation
-  records.
+- Keep validation, export, reruns, recipe comparisons, data-prep experiments,
+  synthetic data decisions, POC handoff, and evaluation records within the
+  instructions in this skill and its `references/` files.
 - Report PyTorch-specific blockers such as non-`state_dict` model state,
   incompatible checkpoint loading, unsupported metric serialization, or data
   loaders that cannot be parameterized per site.
@@ -96,10 +98,6 @@ either `--artifacts <dir>` or `--checklist <file>`. Prefer
 a case only when the task maps unambiguously to one. Do not invent a case or
 evidence; if unavailable, report why evaluation was skipped.
 
-Load `../_shared/nvflare-job-lifecycle.md` for common validation, export, POC,
-and evaluation behavior. Load `../_shared/nvflare-experiment-workflows.md` for
-reruns, recipe comparisons, data-prep experiments, synthetic data, and
-site-heterogeneity behavior. Load `references/recipe-selection.md` before
-creating `job.py`, `references/pytorch-client-api-conversion.md` for conversion
-details, and `references/job-validation.md` for PyTorch-specific validation
-notes.
+Load `references/recipe-selection.md` before creating `job.py`,
+`references/pytorch-client-api-conversion.md` for conversion details, and
+`references/job-validation.md` for PyTorch-specific validation notes.

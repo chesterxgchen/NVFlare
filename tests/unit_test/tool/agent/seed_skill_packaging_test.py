@@ -45,6 +45,7 @@ def test_seed_bundle_copy_includes_references_evals_and_log_fixtures(tmp_path):
     names = {skill["name"] for skill in manifest["skills"]}
     assert SEED_SKILLS.issubset(names)
     assert not (bundle_root / "_shared").exists()
+    _assert_convert_pytorch_payload(bundle_root / "nvflare-convert-pytorch")
     _assert_diagnose_payload(bundle_root / "nvflare-diagnose-job")
 
 
@@ -60,6 +61,8 @@ def test_seed_skills_install_into_codex_and_claude_temp_targets(tmp_path):
     assert claude_plan["applied"] is True
     assert SEED_SKILLS.issubset({entry["name"] for entry in codex_plan["skills"]})
     assert SEED_SKILLS.issubset({entry["name"] for entry in claude_plan["skills"]})
+    _assert_convert_pytorch_payload(codex_target / "nvflare-convert-pytorch")
+    _assert_convert_pytorch_payload(claude_target / "nvflare-convert-pytorch")
     _assert_diagnose_payload(codex_target / "nvflare-diagnose-job")
     _assert_diagnose_payload(claude_target / "nvflare-diagnose-job")
 
@@ -93,6 +96,25 @@ def _seed_skill_source() -> SkillSource:
         root=skills_root,
         manifest=build_skill_manifest(skills_root, source_type="editable", nvflare_version="2.8.0"),
     )
+
+
+def _assert_convert_pytorch_payload(skill_dir: Path) -> None:
+    assert skill_dir.joinpath("SKILL.md").is_file()
+    assert skill_dir.joinpath("references", "job-validation.md").is_file()
+    assert skill_dir.joinpath("references", "pytorch-client-api-conversion.md").is_file()
+    assert skill_dir.joinpath("references", "recipe-selection.md").is_file()
+
+    packaged_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in [
+            skill_dir / "SKILL.md",
+            skill_dir / "references" / "job-validation.md",
+            skill_dir / "references" / "pytorch-client-api-conversion.md",
+        ]
+    )
+    assert "nvflare-job-lifecycle.md" not in packaged_text
+    assert "nvflare-experiment-workflows.md" not in packaged_text
+    assert "Must not require `rg` to be installed" in packaged_text
 
 
 def _assert_diagnose_payload(skill_dir: Path) -> None:
