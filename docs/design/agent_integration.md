@@ -272,7 +272,8 @@ may optionally delegate to it only when that dependency is already available or
 explicitly requested. The default NVFLARE path should remain native Python
 package behavior.
 
-The initial native skill-management surface is intentionally small:
+The implemented native skill-management and evaluation surface through
+Milestone 7 is intentionally small:
 
 - `nvflare agent skills install --agent codex|claude [--skill <name>]
   [--dry-run] [--format json]` copies NVFLARE-owned skills from the installed
@@ -298,9 +299,10 @@ The initial native skill-management surface is intentionally small:
   entry point defined by [Agent Skill Evaluation](agent_skill_evaluation.md#runtime-evaluator-and-records).
 - `nvflare agent skills benchmark --skill <name> [--case <eval-id>]
   [--records <path>] [--output <path>] [--dry-run] [--format json]` renders a
-  reviewable `BENCHMARK.md` draft from `skills performance` summaries. It is
-  mutating only when `--dry-run` is omitted and must not execute skills, parse
-  raw artifacts, or mutate runtime process records.
+  reviewable `BENCHMARK.md` draft from `skills performance` summaries. This is
+  an implemented Milestone 7 command. It is mutating only when `--dry-run` is
+  omitted and must not execute skills, parse raw artifacts, or mutate runtime
+  process records.
 - `nvflare agent skills install --target <dir>` may be supported for explicit
   custom or project-local installation when named agent shortcuts are not
   enough.
@@ -318,8 +320,15 @@ environment. `NVFLARE_SKILL_EVAL=on` means the agent should attempt to call
 `nvflare agent skills evaluate` after completing a skill run when a matching
 eval case and bounded artifact or checklist evidence are available. The
 NVFLARE CLI does not read this variable directly; unset means normal skill use
-with zero evaluator overhead. Harnesses should pass explicit `--run-mode`
-values when comparing baseline and skill-assisted runs.
+with no process-evaluation packaging and zero evaluator overhead. Agents should
+still collect normal task evidence needed for the user-facing result, but should
+not create evaluation-only artifacts unless the variable is `on`. Harnesses may set
+`NVFLARE_SKILL_EVAL_CASE=<eval-id>` to make the case explicit. If that variable
+is unset, the agent may inspect the selected skill's `evals/evals.json` and
+choose a case only when the task context maps unambiguously to one case. If no
+unambiguous case exists, it should skip runtime evaluation and report why.
+Harnesses should pass explicit `--run-mode` values when comparing baseline and
+skill-assisted runs.
 
 Installer authority rules:
 
@@ -866,7 +875,7 @@ should include:
 It must not submit, abort, delete, download, restart, shut down, switch
 identity, modify config, or read private key contents.
 
-### Native Skill Install Commands
+### Native Skill Commands
 
 `nvflare agent skills install --agent codex|claude [--skill <name>]
 [--dry-run] [--format json]` is the initial management command. It copies
@@ -900,13 +909,17 @@ entry point. It follows the input, output, scoring, and error-code contract in
 
 `nvflare agent skills benchmark --skill <name> [--case <eval-id>]
 [--records <path>] [--output <path>] [--dry-run] [--format json]` renders a
-reviewable benchmark draft from the performance summary for one skill. It
-does not collect or score evidence itself.
+reviewable benchmark draft from the performance summary for one skill. It is an
+implemented Milestone 7 command and does not collect or score evidence itself.
 
 Installed skills should also honor the `NVFLARE_SKILL_EVAL=on` convention by
 attempting a post-run `skills evaluate` call when the case and bounded evidence
-are available. This is an agent/harness convention, not a CLI environment
-switch.
+are available. They should check the variable before creating evaluation-only
+artifacts; unset means normal task evidence only. Harnesses can set
+`NVFLARE_SKILL_EVAL_CASE=<eval-id>`; otherwise the agent should read the
+selected skill's `evals/evals.json` and choose a case only when task context
+maps unambiguously to one case. This is an agent/harness convention, not a CLI
+environment switch.
 
 Full discovery, audit, validation, compatibility, transcript, feedback,
 approval-list, revert, uninstall, and cleanup commands are deferred to

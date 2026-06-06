@@ -28,6 +28,7 @@ SUMMARY_METRICS = (
     "turns_to_acceptable",
     "user_correction_count",
     "agent_self_correction_count",
+    "missed_instruction_count",
     "conversion_quality",
     "layout_violations",
     "workflow_violations",
@@ -326,11 +327,11 @@ def _summaries(records: list[dict], skills: list[dict]) -> list[dict]:
                 [_process_metric(record, metric_id) for record in group_records],
                 len(group_records),
             )
-        summaries.append(summary)
         if run_mode is not None:
             summary["run_mode"] = run_mode
         if source_hash is not None:
             summary["source_hash"] = source_hash
+        summaries.append(summary)
     return summaries
 
 
@@ -361,31 +362,8 @@ def _score_value(record: dict) -> Optional[float]:
 def _process_metric(record: dict, metric_id: str) -> Optional[float]:
     process_metrics = record.get("process_metrics") or {}
     if isinstance(process_metrics, dict):
-        value = _as_float(process_metrics.get(metric_id))
-        if value is not None:
-            return value
-
-    # M6 accepts a few common harness aliases, but it does not infer missing
-    # values from transcript text or raw artifacts.
-    aliases = {
-        "elapsed_seconds": (("elapsed_seconds",), ("duration_seconds",), ("timing", "elapsed_seconds")),
-        "token_count": (("token_count",), ("total_tokens",), ("usage", "total_tokens")),
-        "conversion_quality": (("conversion_quality",), ("final_result", "conversion_quality")),
-    }
-    for path in aliases.get(metric_id, ()):
-        value = _nested_float(record, path)
-        if value is not None:
-            return value
+        return _as_float(process_metrics.get(metric_id))
     return None
-
-
-def _nested_float(record: dict, path: tuple[str, ...]) -> Optional[float]:
-    current = record
-    for part in path:
-        if not isinstance(current, dict) or part not in current:
-            return None
-        current = current[part]
-    return _as_float(current)
 
 
 def _numeric_summary(values: list[Optional[float]], total: int) -> dict:

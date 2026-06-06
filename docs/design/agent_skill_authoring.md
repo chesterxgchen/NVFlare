@@ -289,6 +289,10 @@ Each public FLARE skill should include:
 - publication handoff artifacts or externally generated skill-card/signature
   artifacts when the separate publication process produces them.
 
+Global-negative evals that expect no FLARE skill to trigger may set
+`nvflare.negative_for` to the literal string `"*"`. Adjacent-negative evals
+against a specific competing skill should name that skill explicitly.
+
 `SKILL.md` should stay compact enough for frequent loading. The initial lint uses
 200 lines as the hard gate. Roughly 2,000 tokens is an advisory authoring
 target, reported as a warning by a simple whitespace-based estimate unless a
@@ -296,12 +300,16 @@ project tokenizer is later standardized. Longer examples, walkthroughs,
 command tables, and troubleshooting catalogs should move to `references/` and
 be loaded only when needed.
 
-Each public skill should include a short runtime-evaluation hook: after the
-skill completes, if `NVFLARE_SKILL_EVAL` is set to `on`, the agent should call
-`nvflare agent skills evaluate` before the final response when it has a
-matching eval case and bounded artifact or checklist evidence. The skill should
-not claim that the NVFLARE CLI reads the environment variable directly, and it
-must not invent case IDs or evidence when they are unavailable.
+Each public skill should include a short runtime-evaluation hook. The skill
+should check `NVFLARE_SKILL_EVAL` before creating process-evaluation artifacts.
+When it is unset, collect only task evidence needed for the user-facing result.
+When it is `on`, the agent should call `nvflare agent skills evaluate` before
+the final response when it has a matching eval case and bounded artifact or
+checklist evidence. Harnesses may set `NVFLARE_SKILL_EVAL_CASE=<eval-id>`;
+otherwise the skill may inspect `evals/evals.json` and choose a case only when
+the task context maps unambiguously to one case. The skill should not claim
+that the NVFLARE CLI reads the environment variables directly, and it must not
+invent case IDs or evidence when they are unavailable.
 
 Recommended structure:
 

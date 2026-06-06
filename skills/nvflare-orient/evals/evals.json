@@ -58,6 +58,10 @@
               "description": "number of file edits, runtime commands, or production actions performed during read-only orientation"
             },
             {
+              "id": "missed_instruction_count",
+              "description": "number of applicable user, design, or skill instructions missed during orientation, such as requested review passes, read-only constraints, or routing conditions"
+            },
+            {
               "id": "handoff_clarity",
               "description": "whether the route includes the next skill, why it applies, and what the agent should do next"
             }
