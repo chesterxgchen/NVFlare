@@ -28,6 +28,10 @@ debugging that does not ask for FLARE conversion.
 3. Run `nvflare recipe list --framework pytorch --format json` and select the
    recipe from the requested FL workflow, not from PyTorch alone. Use FedAvg
    only for standard horizontal model-parameter aggregation.
+   For standard FedAvg, use the portable fast path in
+   `references/recipe-selection.md`; do not add per-site recipe config unless
+   the sites actually need different training scripts, arguments, or launch
+   settings.
 4. Create the converted FLARE job source in a separate generated folder such as
    `<project>/nvflare_jobs/<job_name>/` unless the user provides a target. Do
    not mix generated FLARE files into the original training-code root by
@@ -100,4 +104,5 @@ evidence; if unavailable, report why evaluation was skipped.
 
 Load `references/recipe-selection.md` before creating `job.py`,
 `references/pytorch-client-api-conversion.md` for conversion details, and
-`references/job-validation.md` for PyTorch-specific validation notes.
+`references/job-validation.md` for PyTorch-specific validation notes. Do not
+depend on NVFLARE repository examples being present in the user's environment.

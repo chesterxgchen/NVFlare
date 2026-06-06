@@ -75,10 +75,67 @@ Cyclic recipes, use the local catalog and
   collect metrics without local training updates.
 - Ask the user before choosing when the requested FL workflow is not clear.
 
-## Example Scope
+## Standard FedAvg Fast Path
 
-`examples/hello-world/hello-pt` is the FedAvg reference example. It is useful for
-standard Client API model exchange and FedAvg `job.py` structure, but it should
-not be treated as the universal PyTorch recipe. For non-FedAvg workflows, use the
-matching recipe from the catalog and keep the PyTorch Client API exchange aligned
-with that recipe's expected task names, metadata, and parameter format.
+For a normal PyTorch-to-FedAvg conversion, keep the `job.py` recipe construction
+small and portable:
+
+```python
+from nvflare.app_opt.pt.recipes.fedavg import FedAvgRecipe
+from nvflare.job_config.api import SimEnv
+from model import ModelClass
+
+recipe = FedAvgRecipe(
+    name=job_name,
+    min_clients=num_clients,
+    num_rounds=num_rounds,
+    model=ModelClass(),
+    train_script="client.py",
+    train_args=train_args,
+)
+
+env = SimEnv(num_clients=num_clients, workspace_root=workspace_root)
+run = recipe.execute(env)
+```
+
+If direct model construction is not practical, pass a recipe model dict with
+`class_path`:
+
+```python
+model={"class_path": "model.ModelClass", "args": {}}
+```
+
+The recipe layer converts `class_path` to the exported job/config `path`. Do not
+use recipe-level `model={"path": ...}` unless the local NVFLARE version
+explicitly documents `path` as an accepted alias.
+
+Do not infer that `per_site_config` is required only because recipe metadata
+mentions it. For standard FedAvg with the same `client.py`, `model.py`, and
+training arguments on all clients, leave `per_site_config` unset and let the
+recipe deploy the executor to all clients. Use `per_site_config` only when at
+least one site needs a different `train_script`, `train_args`, command,
+external-process setting, framework/exchange setting, or launch behavior.
+
+For non-FedAvg workflows, use the matching recipe from the catalog and keep the
+PyTorch Client API exchange aligned with that recipe's expected task names,
+metadata, and parameter format.
+
+## Non-FedAvg Recipe Rules
+
+The FedAvg fast path is not a universal PyTorch job template. When the user asks
+for FedOpt, FedProx, SCAFFOLD, Cyclic, Swarm Learning, FedEval, encryption, or a
+topology-specific workflow:
+
+- use `nvflare recipe show <recipe-name> --format json` for the selected recipe;
+- supply parameters marked `"required": true`;
+- leave optional parameters at defaults unless the user request, source code, or
+  validation result requires them;
+- keep generated source names and runtime locations consistent with this skill;
+- keep shared generated files on all clients unless the recipe semantics or user
+  request require site-specific roles, scripts, arguments, or launch settings;
+- ask before choosing when recipe intent or topology is ambiguous.
+
+For recipes with topology roles, such as cyclic ordering, swarm roles, vertical
+data ownership, or label-owner style workflows, do not collapse the topology into
+standard FedAvg. Preserve the selected recipe's required role or site parameters
+and report any missing user input before validation.
