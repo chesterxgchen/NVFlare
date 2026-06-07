@@ -93,7 +93,7 @@
         "optional_behavior": [
           {
             "id": "export-job",
-            "description": "exports the job folder with FedJob system arguments when export is requested"
+            "description": "exports the job folder with NVFLARE job system arguments when export is requested"
           },
           {
             "id": "approved-poc-submit",

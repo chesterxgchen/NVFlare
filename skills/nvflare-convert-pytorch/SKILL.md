@@ -42,10 +42,11 @@ debugging that does not ask for FLARE conversion.
    an `FLModel`, load `params` into the PyTorch model, train or evaluate, and
    send an `FLModel` with updated `params`, metrics, and useful metadata.
 7. Add or update a `job.py` that uses the selected PyTorch recipe or job API
-   path for local simulation and export.
+   path for local simulation and export. Follow the shared job lifecycle
+   guidance for generated job layout, validation, and export system arguments.
 8. Validate locally with `python job.py` and export with
    `python job.py --export --export-dir /tmp/nvflare/job_config/<job_name>`
-   using the FedJob system arguments. Keep simulation workspaces and generated
+   using NVFLARE job system arguments. Keep simulation workspaces and generated
    runtime outputs under `/tmp/nvflare/` unless the user provides another path.
 
 ## Requirements
@@ -103,7 +104,8 @@ either `--artifacts <dir>` or `--checklist <file>`. Prefer
 a case only when the task maps unambiguously to one. Do not invent a case or
 evidence; if unavailable, report why evaluation was skipped.
 
-Load `references/recipe-selection.md` before creating `job.py`,
+Load `../_shared/nvflare-job-lifecycle.md` and
+`references/recipe-selection.md` before creating `job.py`,
 `references/pytorch-client-api-conversion.md` for conversion details, and
 `references/job-validation.md` for PyTorch-specific validation notes. Do not
 depend on NVFLARE repository examples being present in the user's environment.

@@ -36,5 +36,5 @@ FLARE version: 2.8.0 minimum
   an informal process observation from a real conversion exercise.
 - The seed skill targets standard PyTorch loops only, not Lightning,
   Hugging Face Trainer, TensorFlow, XGBoost, sklearn, or custom NumPy loops.
-- Export validation uses FedJob system arguments; no job-local export argument
+- Export validation uses NVFLARE job system arguments; no job-local export argument
   definition is required.

@@ -42,10 +42,20 @@ runtime locations under `/tmp/nvflare/` unless the user provides another path:
 
 ## Export
 
-- Use `python job.py --export --export-dir <dir>` to export a FedJob. These are
-  FedJob system arguments and do not need to be declared by the job file.
+- Use `python job.py --export --export-dir <dir>` to export a generated job.
+  These are NVFLARE job system arguments across recipes, algorithms, and
+  frameworks. Do not declare them as generated job-local arguments.
+- If a generated `job.py` defines local command-line options, its local parser
+  must tolerate NVFLARE system arguments such as `--export` and `--export-dir`.
+  With `argparse`, use `parse_known_args()` or an equivalent approach. Do not
+  add local `--export` or `--export-dir` arguments, and do not let local parsing
+  reject or consume them before the NVFLARE job/export layer handles export.
+  Treat this as a generation-time requirement; validation should confirm the
+  behavior rather than discovering it through a failed export.
 - Default `<dir>` to `/tmp/nvflare/job_config/<job_name>` unless the user
   provides an export directory.
+- If writing explicit Job API code without a recipe execution helper, call
+  `job.export_job(<dir>)` directly when needed.
 - Inspect the exported folder for server/client app folders and expected config
   files before recommending submission.
 
