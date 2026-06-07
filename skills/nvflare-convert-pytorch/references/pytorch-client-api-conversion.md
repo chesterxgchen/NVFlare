@@ -14,17 +14,9 @@ This reference covers standard PyTorch training loops that already have a
 - Send `flare.FLModel(params=model.cpu().state_dict(), metrics=..., meta=...)`
   with `flare.send(...)`.
 
-## Generated Source Layout
+## Source Layout
 
-For PyTorch conversions, honor the user's requested target location. If the user
-does not specify one, choose a scoped location that avoids overwriting original
-training files; a separate generated folder such as
-`<project>/nvflare_jobs/<job_name>/` is allowed but not required. Keep exported
-jobs, simulation workspaces, generated model artifacts, and temporary caches out
-of the source-code root by default; use explicit runtime locations under
-`/tmp/nvflare/` unless the user provides another path.
-
-The generated job folder should normally contain:
+For PyTorch conversions, the job source should normally contain:
 
 - `client.py`: FLARE Client API entry point;
 - `job.py`: recipe or FedJob builder, simulation entry point, and export entry
@@ -34,8 +26,7 @@ The generated job folder should normally contain:
   from the source project.
 
 Avoid names such as `fl_train.py` for the generated FLARE Client API entry
-point unless the user explicitly requests that naming. Keep the original
-`train.py` intact as the source training reference.
+point unless the user explicitly requests that naming.
 
 For standard FedAvg, package shared generated files for all clients. Do not
 replace all-client deployment with explicit per-site deployment unless the
