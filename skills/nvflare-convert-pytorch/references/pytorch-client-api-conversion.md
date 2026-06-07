@@ -41,6 +41,12 @@ arguments and state-dict shapes. When the original model needs arguments such as
 input dimension, vocabulary size, number of classes, hidden size, or dropout,
 make those values explicit in both places.
 
+Do not rely on exporting a live `nn.Module` instance when the model constructor
+has required arguments. Derive required constructor values from the source code,
+dataset metadata, vocab/config generation, checkpoint metadata, or CLI args
+before writing `job.py`, then pass them explicitly through the recipe model
+config and the client model construction path.
+
 Acceptable patterns include:
 
 - a shared `model_args` dict imported by both `job.py` and `client.py`;
