@@ -53,8 +53,8 @@ debugging that does not ask for FLARE conversion.
 - Must keep edits scoped to training, model, job, and small config files.
 - Must audit model constructor arguments before writing `job.py`. If the model
   has required non-default `__init__` parameters, generate explicit recipe model
-  config such as `{"class_path": "...", "args": {...}}` or prove the recipe and
-  export path preserve those arguments.
+  config with `path` or `class_path` and `args`, then verify recipe
+  construction and export preserve those arguments.
 - Must preserve user data paths and require user confirmation before changing
   them.
 - Must translate natural user requests into concrete recipe, site-count,

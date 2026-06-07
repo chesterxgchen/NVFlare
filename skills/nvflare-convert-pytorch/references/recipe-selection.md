@@ -85,7 +85,7 @@ from nvflare.app_opt.pt.recipes.fedavg import FedAvgRecipe
 from nvflare.recipe.sim_env import SimEnv
 
 model_args = {"input_size": input_size, "num_classes": num_classes}
-recipe_model = {"class_path": "model.ModelClass", "args": model_args}
+recipe_model = {"path": "model.ModelClass", "args": model_args}
 
 recipe = FedAvgRecipe(
     name=job_name,
@@ -104,16 +104,16 @@ Prefer a recipe model dict with the same constructor arguments used by the
 client-side model:
 
 ```python
-model={"class_path": "model.ModelClass", "args": model_args}
+model={"path": "model.ModelClass", "args": model_args}
 ```
 
-The recipe layer converts `class_path` to the exported job/config `path`.
-`model={"path": ...}` is supported only on NVFLARE versions that explicitly
-document `path` as a recipe model alias; prefer `class_path` for portable
-generated jobs until the local version proves otherwise.
+The exported job/config uses `path`. If a local recipe API still requires
+`class_path`, use that key at recipe construction time, but do not prefer it
+when `path` is accepted.
 Some export paths serialize only the class path if given a live model instance,
-which can drop required constructor values. Use explicit `class_path` plus
-`args`, or verify that export preserves the required model arguments.
+which can drop required constructor values. Use explicit model config with
+`path` or `class_path` plus `args`, then verify export preserves the required
+model arguments.
 
 The server-side recipe model and the client-side training model must construct
 the same architecture. If the model constructor needs dimensions, class counts,
