@@ -192,10 +192,12 @@ items.
 
 Skill bundling is the default wheel behavior. Benchmark and CI flows that need a
 no-skills control package may build the wheel with
-`NVFLARE_PACKAGE_AGENT_SKILLS=0`; the wheel should still include an empty
-released-skill manifest so `nvflare agent skills list/install` can report that
-no bundled skills are available instead of failing on a missing package
-resource.
+`NVFLARE_PACKAGE_AGENT_SKILLS=0`. A disabled-skill wheel should add a wheel
+build tag containing `no_skills`, such as `1no_skills`, so the control wheel is
+easy to identify and does not overwrite the default wheel in the same output
+directory. The wheel should still include an empty released-skill manifest so
+`nvflare agent skills list/install` can report that no bundled skills are
+available instead of failing on a missing package resource.
 
 ### 3. Support Packaged, Repo-Local, and Catalog Skill Use
 
