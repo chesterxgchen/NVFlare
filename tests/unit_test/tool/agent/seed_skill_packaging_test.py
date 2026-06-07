@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from nvflare.tool.agent.skill_manager import SkillSource, install_skills, list_skills
@@ -87,6 +91,33 @@ def test_seed_skills_dry_run_selects_all_seed_skills_without_copying(tmp_path):
         for file_plan in entry["files"]
     )
     assert not target.exists()
+
+
+def test_setup_build_py_can_disable_packaged_agent_skills(tmp_path):
+    repo_root = _repo_root()
+    build_lib = tmp_path / "build_lib"
+    env = os.environ.copy()
+    env["NVFLARE_PACKAGE_AGENT_SKILLS"] = "0"
+
+    result = subprocess.run(
+        [sys.executable, "setup.py", "build_py", "--build-lib", str(build_lib)],
+        cwd=repo_root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    bundle_root = build_lib / "nvflare" / "tool" / "agent" / "bundled_skills"
+    manifest = json.loads(bundle_root.joinpath("manifest.json").read_text(encoding="utf-8"))
+    assert bundle_root.joinpath("__init__.py").is_file()
+    assert manifest["source_type"] == "wheel"
+    assert manifest["skills"] == []
+    assert manifest["findings"] == []
+    for skill_name in SEED_SKILLS:
+        assert not bundle_root.joinpath(skill_name).exists()
 
 
 def _seed_skill_source() -> SkillSource:
