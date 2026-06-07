@@ -12,7 +12,7 @@
       "assertions": [
         "The agent runs nvflare agent inspect before editing.",
         "The agent edits only training, model, job, or small config files.",
-        "The agent audits required model constructor arguments before writing job.py and uses explicit class_path plus args when needed.",
+        "The agent audits required model constructor arguments before writing job.py and uses explicit path or class_path plus args when needed.",
         "The agent translates the natural request into recipe, site-count, dataset, split, training, validation, and export settings.",
         "The agent checks nvflare recipe list --framework pytorch --format json before selecting the job recipe.",
         "The agent selects FedAvg only when the requested workflow is standard horizontal model-parameter aggregation.",
@@ -37,7 +37,7 @@
           },
           {
             "id": "audit-model-constructor-args",
-            "description": "audits required model constructor arguments before writing job.py and uses explicit class_path plus args when needed"
+            "description": "audits required model constructor arguments before writing job.py and uses explicit path or class_path plus args when needed"
           },
           {
             "id": "derive-config-from-natural-request",

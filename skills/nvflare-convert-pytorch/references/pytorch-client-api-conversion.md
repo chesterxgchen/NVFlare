@@ -50,6 +50,9 @@ config and the client model construction path.
 Acceptable patterns include:
 
 - a shared `model_args` dict imported by both `job.py` and `client.py`;
+- an explicit recipe model config such as
+  `{"path": "model.ModelClass", "args": model_args}` or
+  `{"class_path": "model.ModelClass", "args": model_args}`;
 - a small JSON/config file read by both sides;
 - explicit CLI arguments passed through recipe `train_args` and parsed by
   `client.py`, with the same values used in `job.py`.
