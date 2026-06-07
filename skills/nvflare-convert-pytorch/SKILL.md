@@ -23,8 +23,10 @@ debugging that does not ask for FLARE conversion.
 ## Workflow
 
 1. Run `nvflare agent inspect <path> --format json` before editing.
-2. Identify the model definition, training loop, data loading, metrics, and
-   checkpoint behavior.
+2. Identify the model definition, required `nn.Module.__init__` arguments,
+   training loop, data loading, metrics, and checkpoint behavior. Determine the
+   concrete constructor values that server and client models must share before
+   creating `job.py`.
 3. Run `nvflare recipe list --framework pytorch --format json` and select the
    recipe from the requested FL workflow, not from PyTorch alone. Use FedAvg
    only for standard horizontal model-parameter aggregation.
@@ -49,6 +51,10 @@ debugging that does not ask for FLARE conversion.
 ## Requirements
 
 - Must keep edits scoped to training, model, job, and small config files.
+- Must audit model constructor arguments before writing `job.py`. If the model
+  has required non-default `__init__` parameters, generate explicit recipe model
+  config such as `{"class_path": "...", "args": {...}}` or prove the recipe and
+  export path preserve those arguments.
 - Must preserve user data paths and require user confirmation before changing
   them.
 - Must translate natural user requests into concrete recipe, site-count,
