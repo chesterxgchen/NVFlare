@@ -101,6 +101,10 @@ def _package_agent_skills_enabled():
     return value not in {"0", "false", "no", "off"}
 
 
+def _no_skills_wheel_build_tag():
+    return os.environ.get("NVFLARE_NO_SKILLS_WHEEL_BUILD_TAG", "1no_skills").strip()
+
+
 extra_files = package_files(root="nvflare/dashboard/application", starting="static")
 tmp_job_template_folder = "./nvflare/tool/job/templates"
 copy_package(src_dir="job_templates", dst_dir=tmp_job_template_folder)
@@ -130,6 +134,29 @@ class AgentSkillsBuildPy(_base_build_py):
 
 
 cmdclass["build_py"] = AgentSkillsBuildPy
+
+
+def _agent_skills_bdist_wheel_cmd():
+    try:
+        from setuptools.command.bdist_wheel import bdist_wheel
+    except ImportError:
+        try:
+            from wheel.bdist_wheel import bdist_wheel
+        except ImportError:
+            return None
+
+    class AgentSkillsBdistWheel(bdist_wheel):
+        def finalize_options(self):
+            if not _package_agent_skills_enabled() and not self.build_number:
+                self.build_number = _no_skills_wheel_build_tag()
+            super().finalize_options()
+
+    return AgentSkillsBdistWheel
+
+
+_bdist_wheel_cmd = _agent_skills_bdist_wheel_cmd()
+if _bdist_wheel_cmd is not None:
+    cmdclass["bdist_wheel"] = _bdist_wheel_cmd
 
 
 setup(

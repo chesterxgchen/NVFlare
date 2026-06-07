@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib.util
 import json
 import os
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
+
+import pytest
 
 from nvflare.tool.agent.skill_manager import SkillSource, install_skills, list_skills
 from nvflare.tool.agent.skill_manifest import build_skill_manifest, copy_released_skills_to_bundle
@@ -120,6 +124,39 @@ def test_setup_build_py_can_disable_packaged_agent_skills(tmp_path):
         assert not bundle_root.joinpath(skill_name).exists()
 
 
+def test_setup_bdist_wheel_no_skills_build_has_distinct_filename(tmp_path):
+    if not _bdist_wheel_available():
+        pytest.skip("bdist_wheel command is not installed in this test environment")
+
+    repo_root = _repo_root()
+    dist_dir = tmp_path / "dist"
+    env = os.environ.copy()
+    env["NVFLARE_PACKAGE_AGENT_SKILLS"] = "0"
+
+    result = subprocess.run(
+        [sys.executable, "setup.py", "bdist_wheel", "--dist-dir", str(dist_dir)],
+        cwd=repo_root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    wheels = list(dist_dir.glob("*.whl"))
+    assert len(wheels) == 1
+    assert "-1no_skills-" in wheels[0].name
+    with zipfile.ZipFile(wheels[0]) as wheel_file:
+        names = set(wheel_file.namelist())
+        manifest_name = "nvflare/tool/agent/bundled_skills/manifest.json"
+        assert manifest_name in names
+        manifest = json.loads(wheel_file.read(manifest_name).decode("utf-8"))
+        assert manifest["skills"] == []
+        for skill_name in SEED_SKILLS:
+            assert f"nvflare/tool/agent/bundled_skills/{skill_name}/SKILL.md" not in names
+
+
 def _seed_skill_source() -> SkillSource:
     skills_root = _repo_root() / "skills"
     return SkillSource(
@@ -127,6 +164,16 @@ def _seed_skill_source() -> SkillSource:
         root=skills_root,
         manifest=build_skill_manifest(skills_root, source_type="editable", nvflare_version="2.8.0"),
     )
+
+
+def _bdist_wheel_available() -> bool:
+    for module_name in ("setuptools.command.bdist_wheel", "wheel.bdist_wheel"):
+        try:
+            if importlib.util.find_spec(module_name) is not None:
+                return True
+        except ModuleNotFoundError:
+            continue
+    return False
 
 
 def _assert_convert_pytorch_payload(skill_dir: Path) -> None:

@@ -153,8 +153,9 @@ Deliverables:
   skill files and the manifest.
 - Support a build-time no-skills control wheel for A/B evaluation by honoring
   `NVFLARE_PACKAGE_AGENT_SKILLS=0`. The default remains skill bundling enabled;
-  the disabled build should write an empty bundled-skill manifest rather than
-  omitting the bundle package.
+  the disabled build should add a `no_skills` wheel build tag, such as
+  `1no_skills`, and write an empty bundled-skill manifest rather than omitting
+  the bundle package.
 
 Engineering tests:
 
@@ -163,6 +164,8 @@ Engineering tests:
 - package contents check.
 - empty bundle manifest and stale bundled-content cleanup when skill packaging
   is disabled.
+- no-skills wheel filename includes the `no_skills` build tag when the wheel
+  command is available.
 
 ## Milestone 3: Native Install/List
 
