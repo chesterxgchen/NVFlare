@@ -151,12 +151,18 @@ Deliverables:
 - Update the active build backend configuration, such as `pyproject.toml`,
   `setup.py`, or package-data rules, so the wheel actually includes released
   skill files and the manifest.
+- Support a build-time no-skills control wheel for A/B evaluation by honoring
+  `NVFLARE_PACKAGE_AGENT_SKILLS=0`. The default remains skill bundling enabled;
+  the disabled build should write an empty bundled-skill manifest rather than
+  omitting the bundle package.
 
 Engineering tests:
 
 - source-vs-wheel manifest checks;
 - source hash/manifest validation;
 - package contents check.
+- empty bundle manifest and stale bundled-content cleanup when skill packaging
+  is disabled.
 
 ## Milestone 3: Native Install/List
 

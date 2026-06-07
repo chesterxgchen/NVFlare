@@ -19,7 +19,12 @@ from importlib import resources
 import pytest
 
 from nvflare.tool.agent import bundled_skills
-from nvflare.tool.agent.skill_manifest import build_skill_manifest, copy_released_skills_to_bundle, skill_tree_hash
+from nvflare.tool.agent.skill_manifest import (
+    build_skill_manifest,
+    copy_released_skills_to_bundle,
+    skill_tree_hash,
+    write_empty_skill_bundle,
+)
 
 
 def test_build_skill_manifest_includes_valid_skill(tmp_path):
@@ -177,6 +182,30 @@ def test_copy_released_skills_to_bundle_unlinks_stale_bundle_symlink(tmp_path):
     assert not bundle_root.joinpath("stale-link").exists()
     assert stale_target.is_dir()
     assert bundle_root.joinpath("nvflare-test-skill", "SKILL.md").is_file()
+
+
+def test_write_empty_skill_bundle_writes_empty_manifest_and_cleans_existing_content(tmp_path):
+    bundle_root = tmp_path / "bundle"
+    bundle_root.mkdir()
+    bundle_root.joinpath("__init__.py").write_text("# keep package marker\n", encoding="utf-8")
+    bundle_root.joinpath("stale.txt").write_text("stale\n", encoding="utf-8")
+    stale_skill = bundle_root / "nvflare-stale-skill"
+    stale_skill.mkdir()
+    stale_skill.joinpath("SKILL.md").write_text("stale\n", encoding="utf-8")
+
+    manifest = write_empty_skill_bundle(bundle_root, nvflare_version="2.8.0")
+
+    assert bundle_root.joinpath("__init__.py").is_file()
+    assert not bundle_root.joinpath("stale.txt").exists()
+    assert not stale_skill.exists()
+    assert manifest == {
+        "schema_version": "1",
+        "source_type": "wheel",
+        "nvflare_version": "2.8.0",
+        "skills": [],
+        "findings": [],
+    }
+    assert json.loads(bundle_root.joinpath("manifest.json").read_text(encoding="utf-8")) == manifest
 
 
 def test_bundled_skill_manifest_resource_exists():
