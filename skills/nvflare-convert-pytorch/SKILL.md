@@ -32,10 +32,7 @@ debugging that does not ask for FLARE conversion.
    `references/recipe-selection.md`; do not add per-site recipe config unless
    the sites actually need different training scripts, arguments, or launch
    settings.
-4. Create or update the converted FLARE job source in the user-requested target
-   location. If no target is provided, choose a scoped location that avoids
-   overwriting original training files; a generated folder is allowed but not
-   required.
+4. Use the user-requested target location for the converted FLARE job source.
 5. Use the standard generated source names `client.py`, `job.py`, and `model.py`
    when model code is copied or wrapped. Keep original files such as `train.py`
    as source references unless the user explicitly asks to rewrite them.
@@ -52,9 +49,6 @@ debugging that does not ask for FLARE conversion.
 ## Requirements
 
 - Must keep edits scoped to training, model, job, and small config files.
-- Must not overwrite original training files unless the user explicitly asks
-  for in-place conversion. If generated FLARE files live beside source files,
-  keep them scoped to job/training/model/config files and avoid name collisions.
 - Must preserve user data paths and require user confirmation before changing
   them.
 - Must translate natural user requests into concrete recipe, site-count,
