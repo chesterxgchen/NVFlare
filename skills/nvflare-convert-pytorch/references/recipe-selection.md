@@ -165,17 +165,6 @@ and report any missing user input before validation.
 
 ## Export Behavior
 
-`--export` and `--export-dir` are recipe/FedJob system arguments. They are
-consumed by the NVFLARE recipe layer and are not expected to appear in the
-generated job's local `argparse` definitions or in a recipe constructor
-signature. Do not conclude that export is unsupported because API inspection does
-not show `export_job` on `FedAvgRecipe` local arguments.
-
-Validate export with:
-
-```bash
-python job.py --export --export-dir /tmp/nvflare/job_config/<job_name>
-```
-
-If writing explicit Job API code without `recipe.execute(env)`, call
-`job.export_job(<dir>)` directly when needed.
+Export handling is shared across algorithms and frameworks. Follow
+`../../_shared/nvflare-job-lifecycle.md` for `--export`, `--export-dir`, and
+local command-line parser behavior.
