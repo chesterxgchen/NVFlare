@@ -190,6 +190,13 @@ manifest rather than scanning arbitrary package files. Rich catalog versioning,
 changelogs, compatibility shims, and migration metadata are deferred roadmap
 items.
 
+Skill bundling is the default wheel behavior. Benchmark and CI flows that need a
+no-skills control package may build the wheel with
+`NVFLARE_PACKAGE_AGENT_SKILLS=0`; the wheel should still include an empty
+released-skill manifest so `nvflare agent skills list/install` can report that
+no bundled skills are available instead of failing on a missing package
+resource.
+
 ### 3. Support Packaged, Repo-Local, and Catalog Skill Use
 
 Installing NVFLARE-owned skills should not require users to install Node.js,

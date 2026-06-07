@@ -108,6 +108,35 @@ def copy_released_skills_to_bundle(
     """Copy valid released skills and write their manifest into a package bundle directory."""
     source_root = Path(skills_root)
     target_root = Path(bundle_root)
+    _clean_bundle_root(target_root)
+
+    manifest = build_skill_manifest(source_root, source_type="wheel", nvflare_version=nvflare_version)
+    for skill in manifest["skills"]:
+        shutil.copytree(
+            source_root / skill["relative_path"],
+            target_root / skill["relative_path"],
+            ignore=shutil.ignore_patterns(*IGNORED_SKILL_FILE_NAMES),
+        )
+    write_manifest(manifest, target_root / MANIFEST_FILE_NAME)
+    return manifest
+
+
+def write_empty_skill_bundle(bundle_root: Path | str, *, nvflare_version: str = "") -> dict:
+    """Write an empty package skill bundle manifest and remove bundled skill content."""
+    target_root = Path(bundle_root)
+    _clean_bundle_root(target_root)
+    manifest = {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "source_type": "wheel",
+        "nvflare_version": nvflare_version,
+        "skills": [],
+        "findings": [],
+    }
+    write_manifest(manifest, target_root / MANIFEST_FILE_NAME)
+    return manifest
+
+
+def _clean_bundle_root(target_root: Path) -> None:
     target_root.mkdir(parents=True, exist_ok=True)
 
     for child in list(target_root.iterdir()):
@@ -119,16 +148,6 @@ def copy_released_skills_to_bundle(
             shutil.rmtree(child)
         else:
             child.unlink()
-
-    manifest = build_skill_manifest(source_root, source_type="wheel", nvflare_version=nvflare_version)
-    for skill in manifest["skills"]:
-        shutil.copytree(
-            source_root / skill["relative_path"],
-            target_root / skill["relative_path"],
-            ignore=shutil.ignore_patterns(*IGNORED_SKILL_FILE_NAMES),
-        )
-    write_manifest(manifest, target_root / MANIFEST_FILE_NAME)
-    return manifest
 
 
 def _iter_skill_files(skill_dir: Path, *, exclude_names: set[str]) -> Iterable[Path]:

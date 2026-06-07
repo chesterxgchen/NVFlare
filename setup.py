@@ -96,6 +96,11 @@ def remove_dir(target_path):
         shutil.rmtree(target_path)
 
 
+def _package_agent_skills_enabled():
+    value = os.environ.get("NVFLARE_PACKAGE_AGENT_SKILLS", "1").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
 extra_files = package_files(root="nvflare/dashboard/application", starting="static")
 tmp_job_template_folder = "./nvflare/tool/job/templates"
 copy_package(src_dir="job_templates", dst_dir=tmp_job_template_folder)
@@ -110,11 +115,18 @@ _base_build_py = cmdclass["build_py"]
 class AgentSkillsBuildPy(_base_build_py):
     def run(self):
         super().run()
-        agent_skill_manifest.copy_released_skills_to_bundle(
-            os.path.join(ROOT_DIR, "skills"),
-            os.path.join(self.build_lib, "nvflare", "tool", "agent", "bundled_skills"),
-            nvflare_version=version,
-        )
+        bundle_root = os.path.join(self.build_lib, "nvflare", "tool", "agent", "bundled_skills")
+        if _package_agent_skills_enabled():
+            agent_skill_manifest.copy_released_skills_to_bundle(
+                os.path.join(ROOT_DIR, "skills"),
+                bundle_root,
+                nvflare_version=version,
+            )
+        else:
+            agent_skill_manifest.write_empty_skill_bundle(
+                bundle_root,
+                nvflare_version=version,
+            )
 
 
 cmdclass["build_py"] = AgentSkillsBuildPy
