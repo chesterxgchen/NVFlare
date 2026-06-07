@@ -82,14 +82,16 @@ small and portable:
 
 ```python
 from nvflare.app_opt.pt.recipes.fedavg import FedAvgRecipe
-from nvflare.job_config.api import SimEnv
+from nvflare.recipe.sim_env import SimEnv
 from model import ModelClass
+
+model_args = {"input_size": input_size, "num_classes": num_classes}
 
 recipe = FedAvgRecipe(
     name=job_name,
     min_clients=num_clients,
     num_rounds=num_rounds,
-    model=ModelClass(),
+    model=ModelClass(**model_args),
     train_script="client.py",
     train_args=train_args,
 )
@@ -98,16 +100,34 @@ env = SimEnv(num_clients=num_clients, workspace_root=workspace_root)
 run = recipe.execute(env)
 ```
 
-If direct model construction is not practical, pass a recipe model dict with
-`class_path`:
+If direct model construction is not practical, pass a recipe model dict with the
+same constructor arguments used by the client-side model:
 
 ```python
-model={"class_path": "model.ModelClass", "args": {}}
+model={"class_path": "model.ModelClass", "args": model_args}
 ```
 
-The recipe layer converts `class_path` to the exported job/config `path`. Do not
-use recipe-level `model={"path": ...}` unless the local NVFLARE version
-explicitly documents `path` as an accepted alias.
+The recipe layer converts `class_path` to the exported job/config `path`.
+`model={"path": ...}` is supported only on NVFLARE versions that explicitly
+document `path` as a recipe model alias; prefer `class_path` for portable
+generated jobs until the local version proves otherwise.
+
+The server-side recipe model and the client-side training model must construct
+the same architecture. If the model constructor needs dimensions, class counts,
+dropout settings, embedding sizes, or other architecture arguments, pass the
+same values on both sides. Prefer a small shared constant, JSON/config file, or
+explicit `train_args` values over hard-coded divergent defaults.
+
+Use these portable imports when writing custom Job API code:
+
+```python
+from nvflare.job_config.api import FedJob
+from nvflare.job_config.script_runner import ScriptRunner
+from nvflare.recipe.sim_env import SimEnv
+```
+
+Do not inspect large NVFLARE modules to recover these imports unless validation
+shows that the installed version differs.
 
 Do not infer that `per_site_config` is required only because recipe metadata
 mentions it. For standard FedAvg with the same `client.py`, `model.py`, and
@@ -139,3 +159,20 @@ For recipes with topology roles, such as cyclic ordering, swarm roles, vertical
 data ownership, or label-owner style workflows, do not collapse the topology into
 standard FedAvg. Preserve the selected recipe's required role or site parameters
 and report any missing user input before validation.
+
+## Export Behavior
+
+`--export` and `--export-dir` are recipe/FedJob system arguments. They are
+consumed by the NVFLARE recipe layer and are not expected to appear in the
+generated job's local `argparse` definitions or in a recipe constructor
+signature. Do not conclude that export is unsupported because API inspection does
+not show `export_job` on `FedAvgRecipe` local arguments.
+
+Validate export with:
+
+```bash
+python job.py --export --export-dir /tmp/nvflare/job_config/<job_name>
+```
+
+If writing explicit Job API code without `recipe.execute(env)`, call
+`job.export_job(<dir>)` directly when needed.

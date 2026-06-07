@@ -16,11 +16,12 @@ This reference covers standard PyTorch training loops that already have a
 
 ## Generated Source Layout
 
-For PyTorch conversions, create generated FLARE source in a separate job folder
-unless the user asks for in-place conversion. Prefer
-`<project>/nvflare_jobs/<job_name>/` for source files. Keep exported jobs,
-simulation workspaces, generated model artifacts, and temporary caches out of
-the original training-code root by default; use explicit runtime locations under
+For PyTorch conversions, honor the user's requested target location. If the user
+does not specify one, choose a scoped location that avoids overwriting original
+training files; a separate generated folder such as
+`<project>/nvflare_jobs/<job_name>/` is allowed but not required. Keep exported
+jobs, simulation workspaces, generated model artifacts, and temporary caches out
+of the source-code root by default; use explicit runtime locations under
 `/tmp/nvflare/` unless the user provides another path.
 
 The generated job folder should normally contain:
@@ -40,6 +41,27 @@ For standard FedAvg, package shared generated files for all clients. Do not
 replace all-client deployment with explicit per-site deployment unless the
 conversion has real per-site differences such as different scripts, arguments,
 data-split settings, or launch behavior.
+
+## Model Construction Consistency
+
+The model created by `job.py` for the server-side initial model and the model
+created by `client.py` before `load_state_dict` must have matching constructor
+arguments and state-dict shapes. When the original model needs arguments such as
+input dimension, vocabulary size, number of classes, hidden size, or dropout,
+make those values explicit in both places.
+
+Acceptable patterns include:
+
+- a shared `model_args` dict imported by both `job.py` and `client.py`;
+- a small JSON/config file read by both sides;
+- explicit CLI arguments passed through recipe `train_args` and parsed by
+  `client.py`, with the same values used in `job.py`.
+
+Before simulation, validate the generated model construction path when possible
+by instantiating the server-side and client-side model with the same arguments
+and checking that `load_state_dict` can accept the initial parameters. Treat a
+state-dict key or tensor-shape mismatch as a conversion bug, not as a reason to
+change the model architecture without user approval.
 
 ## Evaluation Branch
 

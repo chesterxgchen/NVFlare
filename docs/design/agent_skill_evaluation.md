@@ -195,11 +195,12 @@ Behavior ID evaluation semantics:
 - Explicit user, design, or skill instructions that should be counted as missed
   instructions must be represented by measurable `nvflare.mandatory_behavior`
   IDs in the selected eval case. For example, a "do another review" requirement
-  should be represented by a behavior such as `review-after-fix`, and a "create
-  the converted job in a new folder" requirement should be represented by a
-  behavior such as `separate-generated-job-folder`. Without such a behavior ID
-  or an explicit harness-supplied count, the evaluator has no ground truth for
-  that instruction and must not infer a miss from vague transcript absence.
+  should be represented by a behavior such as `review-after-fix`, and a "use the
+  requested output location without overwriting source files" requirement should
+  be represented by a behavior such as `non-destructive-output-location`.
+  Without such a behavior ID or an explicit harness-supplied count, the
+  evaluator has no ground truth for that instruction and must not infer a miss
+  from vague transcript absence.
 - `nvflare.prohibited_behavior` entries are forbidden observations. If the
   transcript, command log, file diff, or generated artifact shows the behavior
   happened, the eval fails.
