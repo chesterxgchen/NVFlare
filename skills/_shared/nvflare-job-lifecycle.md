@@ -40,21 +40,16 @@ runtime locations under `/tmp/nvflare/` unless the user provides another path:
   unavailable.
 - Report command, status, result directory, and dependency or data blockers.
 
-## Preflight Validation
+## Preflight Before Full Simulation
 
-Before full simulation, run cheap preflight checks when the generated job
-supports them:
+Before `python job.py`, run cheap checks first:
 
-- syntax validation for generated source and config files;
-- recipe/job construction and export to a temporary directory;
-- exported server config inspection for model path and constructor args or
-  config values;
-- exported custom-file inspection, including files required by server config
-  imports such as model or helper modules. Add explicit server-file packaging
-  only if the exported server app is missing required files or the job uses
-  separate server/client app packaging;
-- server/client model-state compatibility, including state-dict compatibility
-  when applicable.
+- Compile generated Python files.
+- Construct the recipe and export to a temporary directory.
+- Inspect exported server config for model path and constructor args.
+- Verify `app/custom` includes files imported by server and client code; add
+  explicit file packaging only when export misses a required file.
+- Check server/client model `state_dict` compatibility.
 
 Use preflight results to fix packaging, config, or model-state issues before
 spending time on full simulation.
