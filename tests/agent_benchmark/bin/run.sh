@@ -7,7 +7,7 @@ export PYTHONPATH="${BENCHMARK_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") COMMAND [--training-code PATH] [--results-root PATH] [PATH]
+Usage: $(basename "$0") COMMAND --prompt PATH [--training-code PATH] [--results-root PATH] [PATH]
 
 Commands:
   one              Run one benchmark case using MODE/USE_PREINSTALLED_SKILLS env.
@@ -20,11 +20,11 @@ Commands:
   without-skills   Shortcut for: MODE=without_skills USE_PREINSTALLED_SKILLS=false one.
 
 Examples:
-  ./bin/run.sh process-eval /path/to/job-folder
-  ./bin/run.sh process-eval --results-root /path/to/results /path/to/job-folder
-  ./bin/run.sh process-eval --output-dir /path/to/exact-run-dir /path/to/job-folder
-  ./bin/run.sh pair --training-code /path/to/job-folder
-  ./bin/run.sh one /path/to/job-folder
+  ./bin/run.sh process-eval --prompt /path/to/prompt.txt /path/to/job-folder
+  ./bin/run.sh process-eval --prompt /path/to/prompt.txt --results-root /path/to/results /path/to/job-folder
+  ./bin/run.sh process-eval --prompt /path/to/prompt.txt --output-dir /path/to/exact-run-dir /path/to/job-folder
+  ./bin/run.sh pair --prompt /path/to/prompt.txt --training-code /path/to/job-folder
+  ./bin/run.sh one --prompt /path/to/prompt.txt /path/to/job-folder
 EOF
 }
 

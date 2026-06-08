@@ -94,15 +94,16 @@ The benchmark image intentionally does not install compiler tooling such as
 `build-essential`. The harness guarantees Python, pip, uv, Codex, and the local
 NVFLARE wheel; job dependency installation remains agent behavior.
 
-The benchmark prompt is not baked into either Docker image. Runtime wrappers
-mount the local `prompts/` directory so prompt edits do not require a rebuild.
+The benchmark prompt is not baked into either Docker image and is not tracked as
+a repository file. Runtime wrappers require `--prompt PATH` and mount that
+host-side file at the fixed in-container path
+`/workspace/prompts/benchmark_prompt.txt`.
 
 ## Interactive Run
 
 ```bash
 cd path/to/NVFlare/tests/agent_benchmark
-${EDITOR:-vi} prompts/benchmark_prompt.txt
-./bin/run.sh interactive /path/to/job-folder
+./bin/run.sh interactive --prompt /path/to/prompt.txt /path/to/job-folder
 ```
 
 Inside the container:
@@ -131,15 +132,13 @@ Use `process-eval` for the three-way comparison that also includes `with_skills_
 
 ```bash
 cd path/to/NVFlare/tests/agent_benchmark
-${EDITOR:-vi} prompts/benchmark_prompt.txt
-./bin/run.sh pair /path/to/job-folder
+./bin/run.sh pair --prompt /path/to/prompt.txt /path/to/job-folder
 ```
 
 Defaults:
 
 - Container job folder mount: `/workspace/input`
-- Prompt directory: `prompts/`, mounted into the container at `/workspace/prompts`
-- Prompt file: `prompts/benchmark_prompt.txt`
+- Prompt file: file passed with `--prompt`, mounted to `/workspace/prompts/benchmark_prompt.txt`
 - Container Codex home: `/workspace/.codex`
 - Result root: `${AGENT_BENCHMARK_RESULTS_ROOT:-./results}/<timestamp>`
 - Skills runtime/report image: `nvflare-agent-benchmark:codex-skills`
@@ -148,42 +147,41 @@ Defaults:
 Run against a different job folder:
 
 ```bash
-./bin/run.sh pair /path/to/job-folder
+./bin/run.sh pair --prompt /path/to/prompt.txt /path/to/job-folder
 ```
 
 The explicit flag is also supported:
 
 ```bash
-./bin/run.sh pair --training-code /path/to/job-folder
+./bin/run.sh pair --prompt /path/to/prompt.txt --training-code /path/to/job-folder
 ```
 
 Write generated timestamped results under another parent directory:
 
 ```bash
-./bin/run.sh process-eval --results-root /path/to/results /path/to/job-folder
+./bin/run.sh process-eval --prompt /path/to/prompt.txt --results-root /path/to/results /path/to/job-folder
 ```
 
 Write one comparison to an exact output directory:
 
 ```bash
-./bin/run.sh process-eval --output-dir /path/to/exact-run-dir /path/to/job-folder
+./bin/run.sh process-eval --prompt /path/to/prompt.txt --output-dir /path/to/exact-run-dir /path/to/job-folder
 ```
 
-To use different prompt text, edit or replace `prompts/benchmark_prompt.txt`.
 The job folder is required as either a positional argument, `--training-code`,
 or `JOB_INPUT_DIR`. `TRAINING_CODE` remains a backward-compatible alias only.
 
 Override the model:
 
 ```bash
-CODEX_MODEL=gpt-5.3-codex ./bin/run.sh pair /path/to/job-folder
+CODEX_MODEL=gpt-5.3-codex ./bin/run.sh pair --prompt /path/to/prompt.txt /path/to/job-folder
 ```
 
 `BENCHMARK_AGENT` defaults to `codex` and is recorded in run metadata. Set it
 only when intentionally changing the benchmarked agent surface:
 
 ```bash
-BENCHMARK_AGENT=codex CODEX_MODEL=gpt-5.3-codex ./bin/run.sh process-eval /path/to/job-folder
+BENCHMARK_AGENT=codex CODEX_MODEL=gpt-5.3-codex ./bin/run.sh process-eval --prompt /path/to/prompt.txt /path/to/job-folder
 ```
 
 Each run writes outputs under its own result directory:
@@ -210,7 +208,7 @@ Important files:
 - `workspace_delta/`: retained changed/generated files for post-run implementation review.
 - `prompt.txt`: verbatim copy of the runtime-mounted prompt file used as measured agent input.
 - `prompt_metadata.json`: prompt hash/byte metadata; `verbatim_copy` must be `true` for valid comparable runs.
-  The runner uses `tests/agent_benchmark/prompts/benchmark_prompt.txt` as the only benchmark prompt.
+  The runner uses the file passed with `--prompt` as the benchmark prompt.
   Mode names, process-record paths, and skill/case report filters are supplied by the harness, not by prompt text.
 - `progress.jsonl`: benchmark progress heartbeat events printed while Codex is running.
 - `runtime_image.json`: runtime image, report image, image kind, the harness process flag, NVFLARE skill-eval flag, agent, agent model, container venv/Python details, pinned Codex/Node/uv image metadata, and local NVFLARE wheel metadata used for the run.
@@ -259,7 +257,7 @@ root:
 The default progress heartbeat interval is 60 seconds. Override it with:
 
 ```bash
-PROGRESS_INTERVAL_SECONDS=120 ./bin/run.sh pair /path/to/job-folder
+PROGRESS_INTERVAL_SECONDS=120 ./bin/run.sh pair --prompt /path/to/prompt.txt /path/to/job-folder
 ```
 
 The NVFLARE performance and benchmark commands summarize process records
@@ -300,7 +298,7 @@ To compare a no-skills baseline against skills-enabled runs with evaluator off
 and on, run the three-case ablation:
 
 ```bash
-./bin/run.sh process-eval /path/to/job-folder
+./bin/run.sh process-eval --prompt /path/to/prompt.txt /path/to/job-folder
 ```
 
 The behavior switch for evaluator-on/off is `NVFLARE_SKILL_EVAL`. The
@@ -318,8 +316,8 @@ The job input must be an existing folder containing the scientist's scripts,
 data, README, and related files:
 
 ```bash
-./bin/run.sh process-eval /path/to/job-folder
-./bin/run.sh process-eval --training-code /path/to/job-folder
+./bin/run.sh process-eval --prompt /path/to/prompt.txt /path/to/job-folder
+./bin/run.sh process-eval --prompt /path/to/prompt.txt --training-code /path/to/job-folder
 ```
 
 The output `process_eval_ablation_summary.json` separates:
@@ -339,14 +337,14 @@ the no-skills baseline plus skills evaluator off/on cases are present.
 `with-skills` is a single-run shortcut for the eval-off skills case:
 
 ```bash
-./bin/run.sh with-skills /path/to/job-folder
+./bin/run.sh with-skills --prompt /path/to/prompt.txt /path/to/job-folder
 ```
 
 Use the explicit eval-on shortcut to enable NVFLARE skill-eval behavior for a
 skills-enabled single run:
 
 ```bash
-./bin/run.sh with-skills-eval-on /path/to/job-folder
+./bin/run.sh with-skills-eval-on --prompt /path/to/prompt.txt /path/to/job-folder
 ```
 
 To run one benchmark directly, choose a known `MODE`. The harness derives skill
@@ -354,9 +352,9 @@ exposure, process metadata, and NVFLARE skill-eval state from that mode and
 rejects contradictory environment overrides:
 
 ```bash
-MODE=with_skills_eval_off ./bin/run.sh one /path/to/job-folder
-MODE=with_skills_eval_on ./bin/run.sh one /path/to/job-folder
-MODE=without_skills ./bin/run.sh one /path/to/job-folder
+MODE=with_skills_eval_off ./bin/run.sh one --prompt /path/to/prompt.txt /path/to/job-folder
+MODE=with_skills_eval_on ./bin/run.sh one --prompt /path/to/prompt.txt /path/to/job-folder
+MODE=without_skills ./bin/run.sh one --prompt /path/to/prompt.txt /path/to/job-folder
 ```
 
 ## Authentication
@@ -369,7 +367,7 @@ Default authentication reuses the host Codex login by mounting:
 Those files are mounted read-only. Disable this behavior with:
 
 ```bash
-MOUNT_HOST_CODEX_AUTH=false ./bin/run.sh pair /path/to/job-folder
+MOUNT_HOST_CODEX_AUTH=false ./bin/run.sh pair --prompt /path/to/prompt.txt /path/to/job-folder
 ```
 
 The wrappers default to `$HOME/.codex` and also expand a literal `~` in
@@ -380,7 +378,7 @@ mounted.
 You can also pass an API key explicitly:
 
 ```bash
-OPENAI_API_KEY="$OPENAI_API_KEY" ./bin/run.sh pair /path/to/job-folder
+OPENAI_API_KEY="$OPENAI_API_KEY" ./bin/run.sh pair --prompt /path/to/prompt.txt /path/to/job-folder
 ```
 
 ## Output Format

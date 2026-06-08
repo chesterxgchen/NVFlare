@@ -29,6 +29,8 @@ from ..common import write_json
 
 SCRIPT_DIR = Path(__file__).resolve().parents[2]
 PROMPT_FILE_NAME = "benchmark_prompt.txt"
+CONTAINER_PROMPT_DIR = "/workspace/prompts"
+CONTAINER_PROMPT_PATH = f"{CONTAINER_PROMPT_DIR}/{PROMPT_FILE_NAME}"
 OUTPUT_LOCK = threading.Lock()
 
 
@@ -73,11 +75,12 @@ def print_usage(command: str) -> None:
         "interactive": "Start an interactive benchmark container with a job folder mounted.",
     }.get(command, "Run an agent benchmark command against a job folder.")
     print(
-        f"Usage: {Path(sys.argv[0]).name} [--training-code PATH] [--results-root PATH] [PATH]\n\n"
+        f"Usage: {Path(sys.argv[0]).name} --prompt PATH [--training-code PATH] [--results-root PATH] [PATH]\n\n"
         f"{usage}\n\n"
         "Arguments:\n"
         "  PATH                    Job folder. Equivalent to --training-code.\n\n"
         "Options:\n"
+        "  --prompt PATH           Prompt file to mount as the measured agent input.\n"
         "  --training-code PATH    Job folder to mount into the benchmark container.\n"
         "  --results-root PATH     Parent directory for generated timestamped result directories.\n"
         "  --output-dir PATH       Exact result directory for this run or comparison.\n"
@@ -90,6 +93,7 @@ def print_usage(command: str) -> None:
 @dataclass(frozen=True)
 class HostCliOptions:
     job_input: Path
+    prompt_path: Path
     results_root: Path | None = None
     result_root: Path | None = None
     result_dir: Path | None = None
@@ -106,6 +110,7 @@ def _option_value(argv: list[str], index: int, option: str) -> tuple[str, int]:
 
 def parse_host_cli_options(argv: list[str], command: str) -> HostCliOptions:
     job_input = os.environ.get("JOB_INPUT_DIR") or os.environ.get("TRAINING_CODE") or ""
+    prompt_input = ""
     set_by_arg = False
     results_root: Path | None = None
     result_root: Path | None = None
@@ -119,6 +124,11 @@ def parse_host_cli_options(argv: list[str], command: str) -> HostCliOptions:
                 raise SystemExit("Expected only one job folder")
             job_input = value
             set_by_arg = True
+        elif arg == "--prompt" or arg.startswith("--prompt="):
+            value, index = _option_value(argv, index, "--prompt")
+            if prompt_input:
+                raise SystemExit("Expected only one --prompt")
+            prompt_input = value
         elif arg == "--results-root" or arg.startswith("--results-root="):
             value, index = _option_value(argv, index, "--results-root")
             if results_root is not None:
@@ -171,9 +181,15 @@ def parse_host_cli_options(argv: list[str], command: str) -> HostCliOptions:
     if not job_input:
         print_usage(command)
         raise SystemExit("Job input folder is required. Pass PATH or --training-code PATH.")
+    if not prompt_input:
+        print_usage(command)
+        raise SystemExit("Prompt file is required. Pass --prompt PATH.")
     path = absolute_path(job_input)
     if not path.is_dir():
         raise SystemExit(f"Job input must be an existing folder: {path}")
+    prompt_path = absolute_path(prompt_input)
+    if not prompt_path.is_file():
+        raise SystemExit(f"Prompt file must be an existing file: {prompt_path}")
     if results_root is not None and (result_root is not None or result_dir is not None):
         raise SystemExit("Use --results-root or an exact output option, not both.")
     if command == "run-one" and result_root is not None:
@@ -182,21 +198,13 @@ def parse_host_cli_options(argv: list[str], command: str) -> HostCliOptions:
         raise SystemExit("--result-dir is only supported for run-one; use --result-root for comparisons.")
     if command == "interactive" and (results_root is not None or result_root is not None or result_dir is not None):
         raise SystemExit("Output directory options are not supported for interactive containers.")
-    return HostCliOptions(job_input=path, results_root=results_root, result_root=result_root, result_dir=result_dir)
-
-
-def parse_job_input(argv: list[str], command: str) -> Path:
-    return parse_host_cli_options(argv, command).job_input
-
-
-def ensure_prompt_dir() -> tuple[Path, Path]:
-    prompt_dir = absolute_path(os.environ.get("PROMPT_DIR", str(SCRIPT_DIR / "prompts")))
-    prompt_path = prompt_dir / PROMPT_FILE_NAME
-    if not prompt_dir.is_dir():
-        raise SystemExit(f"Prompt directory does not exist: {prompt_dir}")
-    if not prompt_path.is_file():
-        raise SystemExit(f"Prompt file does not exist: {prompt_path}")
-    return prompt_dir, prompt_path
+    return HostCliOptions(
+        job_input=path,
+        prompt_path=prompt_path,
+        results_root=results_root,
+        result_root=result_root,
+        result_dir=result_dir,
+    )
 
 
 def emit(message: str = "", *, logs: Iterable[Path] = (), prefix: str | None = None, stderr: bool = False) -> None:
@@ -329,7 +337,6 @@ class CaseConfig:
     nvflare_skill_eval: str
     job_input_dir: Path
     result_dir: Path
-    prompt_dir: Path
     prompt_path: Path
     images: ImageConfig
     progress_interval_seconds: str
@@ -357,9 +364,9 @@ def case_config(
     nvflare_skill_eval: str,
     job_input_dir: Path,
     result_dir: Path,
+    prompt_path: Path,
     images: ImageConfig,
 ) -> CaseConfig:
-    prompt_dir, prompt_path = ensure_prompt_dir()
     return CaseConfig(
         mode=mode,
         use_preinstalled_skills=use_preinstalled_skills,
@@ -367,7 +374,6 @@ def case_config(
         nvflare_skill_eval=nvflare_skill_eval,
         job_input_dir=job_input_dir,
         result_dir=result_dir,
-        prompt_dir=prompt_dir,
         prompt_path=prompt_path,
         images=images,
         progress_interval_seconds=os.environ.get("PROGRESS_INTERVAL_SECONDS", "60"),
@@ -386,10 +392,11 @@ def docker_args_for_case(config: CaseConfig, logs: Iterable[Path] = (), prefix: 
         "-v",
         f"{config.result_dir}:/workspace/results",
         "-v",
-        f"{config.prompt_dir}:/workspace/prompts:ro",
+        f"{config.prompt_path}:{CONTAINER_PROMPT_PATH}:ro",
         *docker_env("CODEX_HOME", "/workspace/.codex"),
         *docker_env("JOB_INPUT_DIR", "/workspace/input"),
         *docker_env("TRAINING_CODE", "/workspace/input"),
+        *docker_env("PROMPT_SOURCE", CONTAINER_PROMPT_PATH),
         *docker_env("MODE", config.mode),
         *docker_env("USE_PREINSTALLED_SKILLS", config.use_preinstalled_skills),
         *docker_env("PROCESS_EVAL", config.process_eval),
@@ -431,6 +438,7 @@ def write_runtime_image(config: CaseConfig) -> None:
             "runtime_image": config.run_image,
             "report_image": config.images.report_image_name,
             "nvflare_image_kind": config.nvflare_image_kind,
+            "container_prompt_source": CONTAINER_PROMPT_PATH,
             "container_python": "/workspace/venv/bin/python",
             "container_virtual_env": "/workspace/venv",
         },
