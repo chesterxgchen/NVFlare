@@ -956,7 +956,7 @@ def run_agent_benchmark() -> int:
         if not config.prompt_source.is_file():
             message = (
                 f"Prompt file is not mounted or does not exist: {config.prompt_source}. "
-                "Mount tests/agent_benchmark/prompts to /workspace/prompts or run through the host wrapper scripts."
+                "Mount a prompt file to /workspace/prompts/benchmark_prompt.txt or pass --prompt through the host wrapper scripts."
             )
             print(message, file=sys.stderr)
             return write_configured_failure(config, RuntimeError(message), 2, phase)

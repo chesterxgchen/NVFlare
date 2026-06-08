@@ -57,8 +57,6 @@ tests/agent_benchmark/
 |-- docker/
 |   |-- Dockerfile
 |   `-- build_context.dockerignore
-|-- prompts/
-|   `-- benchmark_prompt.txt
 |-- harness/
 |   |-- __init__.py
 |   |-- common.py
@@ -670,10 +668,19 @@ WORKFLOW_NAME=SCAFFOLD
 EXPECTED_MODE=with_skills_eval_off
 ```
 
-The rendered prompt must be copied into each run directory as `prompt.txt` with
-hash metadata. Reports should show the prompt hash. The harness must not rely on
-prompt text for mode names, record paths, or evaluator filters; those remain
-harness-supplied environment/config values.
+The measured runtime prompt should be supplied as an input argument such as
+`--prompt PATH`, not as a fixed tracked file under `tests/agent_benchmark/`.
+When scenario-driven prompt rendering is implemented, it may render from tracked
+templates into a generated or user-selected prompt file, then pass that file
+through the same prompt argument.
+
+Docker can keep a stable internal mount target such as
+`/workspace/prompts/benchmark_prompt.txt`, but the host-side source file should
+remain outside the benchmark source tree unless a specific test fixture needs a
+small prompt. The runtime prompt must be copied into each run directory as
+`prompt.txt` with hash metadata. Reports should show the prompt hash. The
+harness must not rely on prompt text for mode names, record paths, or evaluator
+filters; those remain harness-supplied environment/config values.
 
 Workflow instructions can be a short scenario-selected block, for example:
 

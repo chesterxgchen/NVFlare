@@ -28,7 +28,7 @@ from ..common import write_json
 from ..modes import PAIR_RUNS, PROCESS_EVAL_RUNS, ModeSpec, mode_spec
 from ..reports.summaries import write_pair_summary, write_process_eval_ablation_summary
 from .common import (
-    PROMPT_FILE_NAME,
+    CONTAINER_PROMPT_PATH,
     CaseConfig,
     ImageConfig,
     absolute_path,
@@ -39,10 +39,8 @@ from .common import (
     docker_args_for_case,
     docker_env,
     emit,
-    ensure_prompt_dir,
     env_bool,
     parse_host_cli_options,
-    parse_job_input,
     stream_command,
     timestamp_slug,
     write_runtime_image,
@@ -55,8 +53,7 @@ def run_one_case(config: CaseConfig, *, logs: Iterable[Path] = (), prefix: str |
     emit(f"Running mode={config.mode} with runtime image: {config.run_image}", logs=logs, prefix=prefix)
     emit(f"Report image: {config.images.report_image_name}", logs=logs, prefix=prefix)
     emit(f"Job folder: {config.job_input_dir} -> /workspace/input", logs=logs, prefix=prefix)
-    emit(f"Prompt directory: {config.prompt_dir} -> /workspace/prompts", logs=logs, prefix=prefix)
-    emit(f"Prompt file: {config.prompt_path} -> /workspace/prompts/{PROMPT_FILE_NAME}", logs=logs, prefix=prefix)
+    emit(f"Prompt file: {config.prompt_path} -> {CONTAINER_PROMPT_PATH}", logs=logs, prefix=prefix)
     write_runtime_image(config)
     status = stream_command(docker_args_for_case(config, logs=logs, prefix=prefix), logs=logs, prefix=prefix)
     write_json(config.result_dir / "container_exit_code.json", {"exit_code": status})
@@ -116,6 +113,7 @@ def run_one(argv: list[str]) -> int:
         nvflare_skill_eval=nvflare_skill_eval,
         job_input_dir=options.job_input,
         result_dir=single_result_dir(options, mode),
+        prompt_path=options.prompt_path,
         images=images,
     )
     return run_case_safely(config)
@@ -180,6 +178,7 @@ def run_case_spec(
     spec: ModeSpec,
     *,
     job_input: Path,
+    prompt_path: Path,
     result_root: Path,
     images: ImageConfig,
     logs: Iterable[Path] = (),
@@ -209,6 +208,7 @@ def run_case_spec(
         nvflare_skill_eval=spec.nvflare_skill_eval,
         job_input_dir=job_input,
         result_dir=result_root / spec.mode,
+        prompt_path=prompt_path,
         images=images,
     )
     status = run_case_safely(config, logs=case_logs, prefix=spec.mode)
@@ -313,12 +313,14 @@ def run_pair(argv: list[str]) -> int:
     emit(f"Baseline image: {images.baseline_image_name}", logs=logs)
     emit(f"Report image: {images.report_image_name}", logs=logs)
     emit(f"Job folder: {options.job_input}", logs=logs)
+    emit(f"Prompt file: {options.prompt_path} -> {CONTAINER_PROMPT_PATH}", logs=logs)
 
     statuses: dict[str, int] = {}
     for spec in PAIR_RUNS:
         mode, status = run_case_spec(
             spec,
             job_input=options.job_input,
+            prompt_path=options.prompt_path,
             result_root=result_root,
             images=images,
             logs=logs,
@@ -376,6 +378,7 @@ def run_process_eval(argv: list[str]) -> int:
     emit(f"Baseline image: {images.baseline_image_name}", logs=logs)
     emit(f"Report image: {images.report_image_name}", logs=logs)
     emit(f"Job folder: {options.job_input}", logs=logs)
+    emit(f"Prompt file: {options.prompt_path} -> {CONTAINER_PROMPT_PATH}", logs=logs)
     emit("Case execution: sequential", logs=logs)
 
     statuses: dict[str, int] = {}
@@ -383,6 +386,7 @@ def run_process_eval(argv: list[str]) -> int:
         mode, status = run_case_spec(
             spec,
             job_input=options.job_input,
+            prompt_path=options.prompt_path,
             result_root=result_root,
             images=images,
             logs=logs,
@@ -410,9 +414,8 @@ def run_process_eval(argv: list[str]) -> int:
 
 
 def run_interactive(argv: list[str]) -> int:
-    job_input = parse_job_input(argv, "interactive")
+    options = parse_host_cli_options(argv, "interactive")
     images = ImageConfig.from_env()
-    prompt_dir, prompt_path = ensure_prompt_dir()
     host_codex_home = absolute_path(os.environ.get("HOST_CODEX_HOME", str(Path.home() / ".codex")))
     container_codex_home = os.environ.get("CONTAINER_CODEX_HOME", "/workspace/.codex")
     container_records = os.environ.get("CONTAINER_RECORDS", "/tmp/nvflare/process_eval_runs")
@@ -422,20 +425,20 @@ def run_interactive(argv: list[str]) -> int:
         "--rm",
         "-it",
         "-v",
-        f"{job_input}:/workspace/input",
+        f"{options.job_input}:/workspace/input",
         "-v",
-        f"{prompt_dir}:/workspace/prompts:ro",
+        f"{options.prompt_path}:{CONTAINER_PROMPT_PATH}:ro",
         *docker_env("CODEX_HOME", container_codex_home),
         *docker_env("JOB_INPUT_DIR", "/workspace/input"),
         *docker_env("TRAINING_CODE", "/workspace/input"),
+        *docker_env("PROMPT_SOURCE", CONTAINER_PROMPT_PATH),
         *docker_env("PROCESS_EVAL_RECORDS", container_records),
     ]
     add_openai_passthrough_env(args)
     if env_bool("MOUNT_HOST_CODEX_AUTH", "true"):
         add_codex_auth_mounts(args, host_codex_home=host_codex_home, container_codex_home=container_codex_home)
-    emit(f"Mounting job folder: {job_input} -> /workspace/input")
-    emit(f"Mounting prompt directory: {prompt_dir} -> /workspace/prompts")
-    emit(f"Using prompt file: {prompt_path} -> /workspace/prompts/{PROMPT_FILE_NAME}")
+    emit(f"Mounting job folder: {options.job_input} -> /workspace/input")
+    emit(f"Using prompt file: {options.prompt_path} -> {CONTAINER_PROMPT_PATH}")
     try:
         return subprocess.call([*args, images.image_name, "bash"])
     except OSError as exc:
@@ -447,7 +450,7 @@ def main() -> None:
     if len(sys.argv) < 2 or sys.argv[1] in {"-h", "--help"}:
         print(
             "Usage: python -m harness.host.runner {run-one,pair,process-eval,interactive} "
-            "[--training-code PATH] [--results-root PATH] [PATH]"
+            "--prompt PATH [--training-code PATH] [--results-root PATH] [PATH]"
         )
         raise SystemExit(0 if len(sys.argv) >= 2 else 2)
     command, argv = sys.argv[1], sys.argv[2:]

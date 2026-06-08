@@ -30,7 +30,7 @@ def test_codex_event_normalizer_returns_agent_event():
 
 
 def test_host_docker_args_use_migrated_container_entrypoint(tmp_path):
-    from harness.host.common import CaseConfig, ImageConfig, docker_args_for_case
+    from harness.host.common import CONTAINER_PROMPT_PATH, CaseConfig, ImageConfig, docker_args_for_case
 
     job_input = tmp_path / "job"
     prompt_dir = tmp_path / "prompts"
@@ -48,7 +48,6 @@ def test_host_docker_args_use_migrated_container_entrypoint(tmp_path):
         nvflare_skill_eval="",
         job_input_dir=job_input,
         result_dir=result_dir,
-        prompt_dir=prompt_dir,
         prompt_path=prompt_path,
         images=ImageConfig(
             image_name="nvflare-agent-benchmark:codex-skills",
@@ -65,21 +64,26 @@ def test_host_docker_args_use_migrated_container_entrypoint(tmp_path):
     assert "-m" in args
     module_index = args.index("-m") + 1
     assert args[module_index] == "harness.container.agent_run"
+    assert f"{prompt_path}:{CONTAINER_PROMPT_PATH}:ro" in args
+    assert f"PROMPT_SOURCE={CONTAINER_PROMPT_PATH}" in args
 
 
 def test_host_cli_accepts_results_root(tmp_path):
     from harness.host.common import parse_host_cli_options
 
     job_input = tmp_path / "job"
+    prompt = tmp_path / "prompt.txt"
     results_root = tmp_path / "bench-results"
     job_input.mkdir()
+    prompt.write_text("convert this job\n", encoding="utf-8")
 
     options = parse_host_cli_options(
-        ["--results-root", str(results_root), "--training-code", str(job_input)],
+        ["--prompt", str(prompt), "--results-root", str(results_root), "--training-code", str(job_input)],
         "process-eval",
     )
 
     assert options.job_input == job_input
+    assert options.prompt_path == prompt
     assert options.results_root == results_root
     assert options.result_root is None
     assert options.result_dir is None
@@ -89,11 +93,19 @@ def test_host_cli_output_dir_maps_to_exact_result_location(tmp_path):
     from harness.host.common import parse_host_cli_options
 
     job_input = tmp_path / "job"
+    prompt = tmp_path / "prompt.txt"
     output_dir = tmp_path / "exact-output"
     job_input.mkdir()
+    prompt.write_text("convert this job\n", encoding="utf-8")
 
-    comparison_options = parse_host_cli_options(["--output-dir", str(output_dir), str(job_input)], "process-eval")
-    single_options = parse_host_cli_options(["--output-dir", str(output_dir), str(job_input)], "run-one")
+    comparison_options = parse_host_cli_options(
+        ["--prompt", str(prompt), "--output-dir", str(output_dir), str(job_input)],
+        "process-eval",
+    )
+    single_options = parse_host_cli_options(
+        ["--prompt", str(prompt), "--output-dir", str(output_dir), str(job_input)],
+        "run-one",
+    )
 
     assert comparison_options.result_root == output_dir
     assert comparison_options.result_dir is None
@@ -101,12 +113,18 @@ def test_host_cli_output_dir_maps_to_exact_result_location(tmp_path):
     assert single_options.result_root is None
 
 
-def test_benchmark_prompt_requires_installing_source_requirements():
-    prompt = (BENCHMARK_ROOT / "prompts" / "benchmark_prompt.txt").read_text(encoding="utf-8")
+def test_host_cli_requires_prompt_path(tmp_path):
+    from harness.host.common import parse_host_cli_options
 
-    assert "requirements-train.txt" in prompt
-    assert "install the applicable job dependencies" in prompt
-    assert "before treating dependency or import failures as blockers" in prompt
+    job_input = tmp_path / "job"
+    job_input.mkdir()
+
+    try:
+        parse_host_cli_options([str(job_input)], "process-eval")
+    except SystemExit as exc:
+        assert "Prompt file is required" in str(exc)
+    else:
+        raise AssertionError("parse_host_cli_options should require --prompt")
 
 
 def test_shared_lifecycle_requires_dependency_preflight_before_missing_dependency_blocker():
