@@ -1,0 +1,8 @@
+*
+!Dockerfile
+!harness/
+!harness/**
+harness/**/__pycache__/
+harness/**/*.pyc
+!dist/
+!dist/**
