@@ -7,7 +7,7 @@ export PYTHONPATH="${BENCHMARK_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") COMMAND [--training-code PATH] [PATH]
+Usage: $(basename "$0") COMMAND [--training-code PATH] [--results-root PATH] [PATH]
 
 Commands:
   one              Run one benchmark case using MODE/USE_PREINSTALLED_SKILLS env.
@@ -21,6 +21,8 @@ Commands:
 
 Examples:
   ./bin/run.sh process-eval /path/to/job-folder
+  ./bin/run.sh process-eval --results-root /path/to/results /path/to/job-folder
+  ./bin/run.sh process-eval --output-dir /path/to/exact-run-dir /path/to/job-folder
   ./bin/run.sh pair --training-code /path/to/job-folder
   ./bin/run.sh one /path/to/job-folder
 EOF

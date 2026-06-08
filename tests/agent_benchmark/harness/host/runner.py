@@ -41,6 +41,7 @@ from .common import (
     emit,
     ensure_prompt_dir,
     env_bool,
+    parse_host_cli_options,
     parse_job_input,
     stream_command,
     timestamp_slug,
@@ -93,7 +94,7 @@ def run_case_safely(config: CaseConfig, *, logs: Iterable[Path] = (), prefix: st
 
 
 def run_one(argv: list[str]) -> int:
-    job_input = parse_job_input(argv, "run-one")
+    options = parse_host_cli_options(argv, "run-one")
     images = ImageConfig.from_env()
     mode = os.environ.get("MODE", "with_skills_eval_off")
     try:
@@ -113,13 +114,31 @@ def run_one(argv: list[str]) -> int:
         use_preinstalled_skills=use_preinstalled_skills,
         process_eval=process_eval,
         nvflare_skill_eval=nvflare_skill_eval,
-        job_input_dir=job_input,
-        result_dir=absolute_path(
-            os.environ.get("RESULT_DIR", str(default_results_root() / "single" / f"{timestamp_slug()}_{mode}"))
-        ),
+        job_input_dir=options.job_input,
+        result_dir=single_result_dir(options, mode),
         images=images,
     )
     return run_case_safely(config)
+
+
+def single_result_dir(options, mode: str) -> Path:
+    if options.result_dir is not None:
+        return options.result_dir
+    if options.results_root is not None:
+        return options.results_root / "single" / f"{timestamp_slug()}_{mode}"
+    return absolute_path(
+        os.environ.get("RESULT_DIR", str(default_results_root() / "single" / f"{timestamp_slug()}_{mode}"))
+    )
+
+
+def comparison_result_root(options, *, default_prefix: str | None = None) -> Path:
+    if options.result_root is not None:
+        return options.result_root
+    timestamp = timestamp_slug()
+    default_name = f"{default_prefix}_{timestamp}" if default_prefix else timestamp
+    if options.results_root is not None:
+        return options.results_root / default_name
+    return absolute_path(os.environ.get("RESULT_ROOT", str(default_results_root() / default_name)))
 
 
 def checked_bool_override(name: str, expected: bool, mode: str) -> bool:
@@ -280,9 +299,9 @@ def run_root_skill_reports_safely(
 
 def run_pair(argv: list[str]) -> int:
     reject_parallel_comparison_runs("pair")
-    job_input = parse_job_input(argv, "pair")
+    options = parse_host_cli_options(argv, "pair")
     images = ImageConfig.from_env()
-    result_root = absolute_path(os.environ.get("RESULT_ROOT", str(default_results_root() / timestamp_slug())))
+    result_root = comparison_result_root(options)
     result_root.mkdir(parents=True, exist_ok=True)
     console_log = result_root / "console_output.log"
     console_log.write_text("", encoding="utf-8")
@@ -293,13 +312,13 @@ def run_pair(argv: list[str]) -> int:
     emit(f"Skills image: {images.image_name}", logs=logs)
     emit(f"Baseline image: {images.baseline_image_name}", logs=logs)
     emit(f"Report image: {images.report_image_name}", logs=logs)
-    emit(f"Job folder: {job_input}", logs=logs)
+    emit(f"Job folder: {options.job_input}", logs=logs)
 
     statuses: dict[str, int] = {}
     for spec in PAIR_RUNS:
         mode, status = run_case_spec(
             spec,
-            job_input=job_input,
+            job_input=options.job_input,
             result_root=result_root,
             images=images,
             logs=logs,
@@ -344,11 +363,9 @@ def run_pair(argv: list[str]) -> int:
 
 def run_process_eval(argv: list[str]) -> int:
     reject_parallel_comparison_runs("process-eval")
-    job_input = parse_job_input(argv, "process-eval")
+    options = parse_host_cli_options(argv, "process-eval")
     images = ImageConfig.from_env()
-    result_root = absolute_path(
-        os.environ.get("RESULT_ROOT", str(default_results_root() / f"process_eval_{timestamp_slug()}"))
-    )
+    result_root = comparison_result_root(options, default_prefix="process_eval")
     result_root.mkdir(parents=True, exist_ok=True)
     console_log = result_root / "console_output.log"
     console_log.write_text("", encoding="utf-8")
@@ -358,14 +375,14 @@ def run_process_eval(argv: list[str]) -> int:
     emit(f"Skills image: {images.image_name}", logs=logs)
     emit(f"Baseline image: {images.baseline_image_name}", logs=logs)
     emit(f"Report image: {images.report_image_name}", logs=logs)
-    emit(f"Job folder: {job_input}", logs=logs)
+    emit(f"Job folder: {options.job_input}", logs=logs)
     emit("Case execution: sequential", logs=logs)
 
     statuses: dict[str, int] = {}
     for spec in PROCESS_EVAL_RUNS:
         mode, status = run_case_spec(
             spec,
-            job_input=job_input,
+            job_input=options.job_input,
             result_root=result_root,
             images=images,
             logs=logs,
@@ -430,7 +447,7 @@ def main() -> None:
     if len(sys.argv) < 2 or sys.argv[1] in {"-h", "--help"}:
         print(
             "Usage: python -m harness.host.runner {run-one,pair,process-eval,interactive} "
-            "[--training-code PATH] [PATH]"
+            "[--training-code PATH] [--results-root PATH] [PATH]"
         )
         raise SystemExit(0 if len(sys.argv) >= 2 else 2)
     command, argv = sys.argv[1], sys.argv[2:]
