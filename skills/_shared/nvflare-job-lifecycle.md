@@ -38,12 +38,25 @@ runtime locations under `/tmp/nvflare/` unless the user provides another path:
   job file supports direct execution.
 - Prefer synthetic data flags or small fixtures when the original dataset is
   unavailable.
+- Before treating missing Python imports as blockers, discover source-provided
+  dependency files such as `requirements.txt`, `requirements-train.txt`, or
+  other `requirements*.txt` files needed by the training code. Install the
+  applicable files into the active validation environment with
+  `python -m pip install -r <requirements-file>` or the repository's documented
+  equivalent, then rerun the failed compile, import, export, or simulation
+  check.
+- Report missing dependencies as blockers only when no applicable dependency
+  file exists, dependency installation fails, the requirement needs unavailable
+  system/GPU resources, or user approval/network access is required and not
+  available.
 - Report command, status, result directory, and dependency or data blockers.
 
 ## Preflight Before Full Simulation
 
 Before `python job.py`, run cheap checks first:
 
+- Install applicable source-provided Python requirement files for the training
+  code before running import-sensitive checks.
 - Compile generated Python files.
 - Construct the recipe and export to a temporary directory.
 - Inspect exported server config for model path and constructor args.

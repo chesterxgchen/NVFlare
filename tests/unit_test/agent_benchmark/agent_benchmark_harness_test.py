@@ -65,3 +65,21 @@ def test_host_docker_args_use_migrated_container_entrypoint(tmp_path):
     assert "-m" in args
     module_index = args.index("-m") + 1
     assert args[module_index] == "harness.container.agent_run"
+
+
+def test_benchmark_prompt_requires_installing_source_requirements():
+    prompt = (BENCHMARK_ROOT / "prompts" / "benchmark_prompt.txt").read_text(encoding="utf-8")
+
+    assert "requirements-train.txt" in prompt
+    assert "install the applicable training dependencies" in prompt
+    assert "before treating missing Python packages as blockers" in prompt
+
+
+def test_shared_lifecycle_requires_dependency_preflight_before_missing_dependency_blocker():
+    lifecycle = (Path(__file__).resolve().parents[3] / "skills" / "_shared" / "nvflare-job-lifecycle.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "requirements-train.txt" in lifecycle
+    assert "python -m pip install -r <requirements-file>" in lifecycle
+    assert "Report missing dependencies as blockers only when" in lifecycle
