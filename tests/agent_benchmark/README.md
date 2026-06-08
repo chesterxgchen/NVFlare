@@ -247,6 +247,7 @@ root:
 - `report_generator_status.json`: host-side metrics/benchmark-insights report generator exit codes only.
 - `metrics_summary.json`: normalized raw metrics plus deduped per-run metrics, per-case metadata, instruction-following rows, explicit instruction issue counts when measurable, best-effort behavior-status analysis, event counts, phase timing, and token-spend analysis.
 - `metrics_report.html`: browser-friendly summary analysis, instruction-following details, and deduped metric bars.
+- `benchmark_insights.md`: insight-focused Markdown report with metric bars, run outcomes, activity interpretation, and quality caveats.
 - `comprehensive_report.json`: combined console log plus JSON/JSONL/text/Markdown artifact contents.
 - `comprehensive_report.md`: readable run summary, summary analysis, instruction compliance, deduped metrics table, and artifact index.
   The ablation runner also writes `benchmark_insights.md`, an insight-focused Markdown report with embedded metric bars, evaluator-metric availability, structure comparison, plain-language comparisons, activity interpretation, and quality caveats.
