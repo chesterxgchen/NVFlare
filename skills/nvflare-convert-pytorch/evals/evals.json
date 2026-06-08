@@ -20,6 +20,7 @@
         "The generated training code uses nvflare.client receive/send and FLModel for model exchange.",
         "The agent keeps simulation workspaces, exported job folders, and generated runtime outputs under /tmp/nvflare unless the user gives another location.",
         "The agent runs python job.py for local validation when dependencies are available.",
+        "When job documentation, task guidance, or source project guidance declares a primary or target validation metric, the agent configures the FL recipe/global metric to that metric and reports that scalar.",
         "The agent reports recipe choice, validation status, export status, metric or result evidence, exact result paths, and remaining blockers.",
         "The agent records failed generated-job validation as evaluation evidence when the job does not run as expected.",
         "The agent does not submit to POC or production without explicit approval."
@@ -66,6 +67,10 @@
           {
             "id": "local-validation",
             "description": "runs local job validation when dependencies are available"
+          },
+          {
+            "id": "align-primary-metric",
+            "description": "when job documentation, task guidance, or source project guidance declares a primary or target validation metric, configures the FL recipe/global metric to that metric key, returns that numeric scalar in FLModel.metrics, and reports that scalar as validation evidence"
           },
           {
             "id": "report-validation-evidence",
@@ -124,7 +129,7 @@
             },
             {
               "id": "validation_evidence_completeness",
-              "description": "whether the final answer reports validation commands, statuses, metric or result evidence, and exact artifact paths"
+              "description": "whether the final answer reports validation commands, statuses, the declared primary/global metric scalar when applicable, result evidence, and exact artifact paths"
             },
             {
               "id": "elapsed_seconds",

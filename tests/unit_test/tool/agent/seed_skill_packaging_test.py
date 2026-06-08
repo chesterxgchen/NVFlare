@@ -44,6 +44,21 @@ def test_seed_skill_manifest_includes_public_skills_and_skips_shared_references(
     assert all(skill["relative_path"] != "_shared" for skill in manifest["skills"])
 
 
+def test_convert_pytorch_eval_requires_declared_primary_metric_alignment():
+    evals_path = _repo_root() / "skills" / "nvflare-convert-pytorch" / "evals" / "evals.json"
+    data = json.loads(evals_path.read_text(encoding="utf-8"))
+    case = next(item for item in data["evals"] if item["id"] == "pytorch-convert-basic")
+    behaviors = {
+        item["id"]: item["description"] for item in case["nvflare"]["mandatory_behavior"] if isinstance(item, dict)
+    }
+
+    description = behaviors["align-primary-metric"]
+    assert "job documentation, task guidance, or source project guidance" in description
+    assert "FL recipe/global metric" in description
+    assert "FLModel.metrics" in description
+    assert "reports that scalar as validation evidence" in description
+
+
 def test_seed_bundle_copy_includes_references_evals_and_log_fixtures(tmp_path):
     skills_root = _repo_root() / "skills"
     bundle_root = tmp_path / "bundle"
