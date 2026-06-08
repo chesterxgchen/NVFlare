@@ -304,8 +304,28 @@ def collect_evaluator_records(root: Path, mode: str, mode_record: dict[str, Any]
     return records
 
 
+def filter_mode_console(console_text: str, mode: str) -> str:
+    if not console_text:
+        return ""
+    prefix = f"[{mode}] "
+    lines = []
+    for line in console_text.splitlines():
+        if line.startswith(prefix):
+            lines.append(line[len(prefix) :])
+    return "\n".join(lines)
+
+
+def load_text_preview(path: Path, limit: int = 65536) -> str:
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as stream:
+            return stream.read(limit)
+    except Exception:
+        return ""
+
+
 def collect_process_eval_runs(root: Path) -> dict[str, dict[str, Any]]:
     runs: dict[str, dict[str, Any]] = {}
+    root_console_text = load_text(root / "console_output.log")
     for spec in PROCESS_EVAL_MODE_SPECS:
         mode = spec.mode
         summary_path = root / mode / "run_summary.json"
@@ -313,6 +333,13 @@ def collect_process_eval_runs(root: Path) -> dict[str, dict[str, Any]]:
         timing_path = root / mode / "timing.json"
         record_path = root / mode / "process_eval_runs" / f"{mode}_record.json"
         runtime_image_path = root / mode / "runtime_image.json"
+        container_exit_path = root / mode / "container_exit_code.json"
+        host_case_error_path = root / mode / "host_case_error.json"
+        early_failure_path = root / mode / "early_failure.json"
+        late_harness_failure_path = root / mode / "late_harness_failure.json"
+        agent_stderr_path = first_existing_path(root / mode / "agent_stderr.txt", root / mode / "codex_stderr.txt")
+        agent_events_path = first_existing_path(root / mode / "agent_events.jsonl", root / mode / "codex_events.jsonl")
+        console_path = root / f"{mode}.console.log"
         last_message_path = first_existing_path(
             root / mode / "agent_last_message.txt", root / mode / "codex_last_message.txt"
         )
@@ -330,6 +357,11 @@ def collect_process_eval_runs(root: Path) -> dict[str, dict[str, Any]]:
                 last_message_path,
                 prompt_path,
                 status_path,
+                container_exit_path,
+                host_case_error_path,
+                early_failure_path,
+                late_harness_failure_path,
+                runtime_image_path,
             )
         )
         run = load_json(summary_path) or {}
@@ -337,7 +369,14 @@ def collect_process_eval_runs(root: Path) -> dict[str, dict[str, Any]]:
         timing = load_json(timing_path) or {}
         record = load_json(record_path) or {}
         runtime_image = load_json(runtime_image_path) or {}
+        container_exit = load_json(container_exit_path) or {}
+        host_case_error = load_json(host_case_error_path) or {}
+        early_failure = load_json(early_failure_path) or {}
+        late_harness_failure = load_json(late_harness_failure_path) or {}
         last_message = load_text(last_message_path)
+        agent_stderr = load_text(agent_stderr_path)
+        agent_events_text = load_text_preview(agent_events_path)
+        console_text = load_text(console_path) or filter_mode_console(root_console_text, mode)
         prompt_text = load_text(prompt_path)
         status = load_text(status_path).strip() if status_path.exists() else "missing"
         run_payload: dict[str, Any] = {
@@ -351,6 +390,13 @@ def collect_process_eval_runs(root: Path) -> dict[str, dict[str, Any]]:
             "timing": timing,
             "record": record,
             "runtime_image": runtime_image,
+            "container_exit": container_exit,
+            "host_case_error": host_case_error,
+            "early_failure": early_failure,
+            "late_harness_failure": late_harness_failure,
+            "agent_stderr": agent_stderr,
+            "agent_events_text": agent_events_text,
+            "console_text": console_text,
             "last_message": last_message,
             "prompt_text": prompt_text,
             "status": status,
@@ -642,14 +688,182 @@ def dependency_evidence(text: str) -> str | None:
     return f"missing dependencies: {packages}" if packages else "missing dependencies"
 
 
+def run_summary(run: dict[str, Any]) -> dict[str, Any]:
+    return run.get("run") if isinstance(run.get("run"), dict) else {}
+
+
+def container_exit_code(run: dict[str, Any]) -> Any:
+    summary = run_summary(run)
+    value = summary.get("final_container_exit_code")
+    if value is not None:
+        return value
+    container_exit = run.get("container_exit") if isinstance(run.get("container_exit"), dict) else {}
+    return container_exit.get("exit_code")
+
+
+def failure_evidence_text(run: dict[str, Any]) -> str:
+    parts = [
+        str(run.get("console_text") or ""),
+        str(run.get("agent_stderr") or ""),
+        str(run.get("agent_events_text") or ""),
+        str(run.get("last_message") or ""),
+    ]
+    for key in ("host_case_error", "early_failure", "late_harness_failure"):
+        payload = run.get(key)
+        if isinstance(payload, dict):
+            parts.extend(str(payload.get(field) or "") for field in ("error_type", "message", "phase", "traceback"))
+    summary = run_summary(run)
+    error = summary.get("harness_error") if isinstance(summary.get("harness_error"), dict) else {}
+    if error:
+        parts.extend(str(error.get(field) or "") for field in ("error_type", "message", "phase"))
+    return "\n".join(part for part in parts if part)
+
+
+def first_evidence_line(text: str, patterns: tuple[str, ...]) -> str:
+    line = matching_message_line(text, patterns)
+    return line or "No single diagnostic line was captured."
+
+
+def failure_root_cause(run: dict[str, Any]) -> str:
+    if not run.get("available"):
+        return "Run was not executed or no run artifacts were captured."
+    text = failure_evidence_text(run)
+    lowered = text.lower()
+    image_match = re.search(r"unable to find image ['\"]?([^'\"\s]+)", text, flags=re.IGNORECASE)
+    if image_match or "pull access denied" in lowered or "repository does not exist" in lowered:
+        image = image_match.group(1) if image_match else "requested benchmark image"
+        return f"Docker image unavailable in the active Docker context: {image}."
+    if "permission denied" in lowered and "docker" in lowered and "sock" in lowered:
+        return "Docker socket access was denied for the benchmark runner."
+    unsupported_model_match = re.search(
+        r"The\s+'[^']+'\s+model\s+is\s+not\s+supported[^\"\\]*",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if "model is not supported" in lowered or unsupported_model_match:
+        message = (
+            unsupported_model_match.group(0).rstrip(".")
+            if unsupported_model_match
+            else "selected model is not supported"
+        )
+        return f"Codex model selection failed: {message}."
+    dependency = dependency_evidence(text)
+    if dependency:
+        if dependency_install_attempted(run):
+            return f"Job dependency problem after dependency installation attempt: {dependency}."
+        return f"Job dependency preflight failed before a metric-producing run: {dependency}."
+    harness_error = harness_error_display(run)
+    if harness_error != "none":
+        return f"Harness failure: {harness_error}."
+    summary = run_summary(run)
+    codex_exit = summary.get("codex_exit_code")
+    final_exit = container_exit_code(run)
+    wrapper_status = str(run.get("status") or "")
+    if codex_exit not in (None, 0):
+        return f"Agent process exited nonzero ({codex_exit}) before producing a valid FL result."
+    if final_exit not in (None, 0):
+        return f"Benchmark container exited nonzero ({final_exit}) before producing a valid FL result."
+    if wrapper_status and wrapper_status not in {"0", "missing"}:
+        return f"Host wrapper recorded nonzero status ({wrapper_status})."
+    if run_has_result_metric_issue(run):
+        return f"No parseable scalar FL result metric was found ({run_result_metric_status(run)})."
+    return "No failure detected from captured benchmark evidence."
+
+
+def failure_evidence(run: dict[str, Any]) -> str:
+    text = failure_evidence_text(run)
+    lowered = text.lower()
+    if "unable to find image" in lowered or "pull access denied" in lowered or "repository does not exist" in lowered:
+        return first_evidence_line(text, ("unable to find image", "pull access denied", "repository does not exist"))
+    if "permission denied" in lowered and "docker" in lowered:
+        return first_evidence_line(text, ("permission denied",))
+    if "model is not supported" in lowered:
+        match = re.search(r"The\s+'[^']+'\s+model\s+is\s+not\s+supported[^\"\\]*", text, flags=re.IGNORECASE)
+        if match:
+            return match.group(0).rstrip(".") + "."
+        return first_evidence_line(text, ("model is not supported", "invalid_request_error"))
+    dependency = dependency_evidence(text)
+    if dependency:
+        return first_evidence_line(text, ("missing", "not installed", "preflight"))
+    harness_error = harness_error_display(run)
+    if harness_error != "none":
+        return harness_error
+    if text:
+        return first_evidence_line(text, ("error", "failed", "exception", "traceback", "exit"))
+    return "No diagnostic text was captured."
+
+
+def failure_next_action(run: dict[str, Any]) -> str:
+    cause = failure_root_cause(run).lower()
+    if "docker image unavailable" in cause:
+        return "Build the benchmark images with `./bin/build.sh`, or set `IMAGE_NAME`/`BASELINE_IMAGE_NAME` to the tags in the active Docker context."
+    if "docker socket" in cause:
+        return "Start Docker Desktop or fix Docker socket permissions, then rerun the benchmark."
+    if "model selection failed" in cause:
+        return "Use a Codex model supported by the active account, or update the benchmark model/account configuration before rerunning."
+    if "not executed" in cause or "no run artifacts" in cause:
+        return "If this mode is required, rerun the benchmark mode that produces it; otherwise ignore it for a smaller comparison."
+    if "dependency" in cause:
+        return "Install the job's requirements during preflight and rerun export/simulation before declaring a blocker."
+    if "harness failure" in cause:
+        return (
+            "Inspect `early_failure.json`, `late_harness_failure.json`, and `agent_stderr.txt` for the failing phase."
+        )
+    if "no parseable scalar" in cause:
+        return "Make the conversion report one aggregate FL validation metric in the final message or process record."
+    return "Inspect the mode console log, agent stderr, and run summary for the first failing command."
+
+
+def run_failed(run: dict[str, Any]) -> bool:
+    summary = run_summary(run)
+    codex_exit = summary.get("codex_exit_code")
+    final_exit = container_exit_code(run)
+    wrapper_status = str(run.get("status") or "")
+    return (
+        not run.get("available")
+        or codex_exit not in (None, 0)
+        or final_exit not in (None, 0)
+        or bool(wrapper_status and wrapper_status not in {"0", "missing"})
+        or run_has_result_metric_issue(run)
+    )
+
+
+def human_readable_status(run: dict[str, Any]) -> str:
+    summary = run_summary(run)
+    codex_exit = summary.get("codex_exit_code")
+    final_exit = container_exit_code(run)
+    wrapper_status = str(run.get("status") or "")
+    if not run.get("available"):
+        return "not run or artifacts missing"
+    exit_parts = []
+    if codex_exit not in (None, 0):
+        exit_parts.append(f"agent exit {codex_exit}")
+    if final_exit not in (None, 0):
+        exit_parts.append(f"container exit {final_exit}")
+    if wrapper_status and wrapper_status not in {"0", "missing"}:
+        exit_parts.append(f"wrapper status {wrapper_status}")
+    if exit_parts:
+        return "failed: " + ", ".join(exit_parts) + f" - {failure_root_cause(run)}"
+    if run_has_result_metric_issue(run):
+        return f"completed but failed quality gate: {failure_root_cause(run)}"
+    return "completed: scalar FL result metric available"
+
+
+def status_summary(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
+    available_modes = [mode for mode in modes if runs[mode].get("available")]
+    if not available_modes:
+        return "No completed run artifacts."
+    return "; ".join(f"{REPORT_COL_LABELS[mode]}: {human_readable_status(runs[mode])}" for mode in available_modes)
+
+
 def result_issue_explanation(run: dict[str, Any]) -> str:
     reasons: list[str] = []
-    summary = run.get("run") if isinstance(run.get("run"), dict) else {}
+    summary = run_summary(run)
     if not run.get("available"):
         reasons.append("run artifacts are missing")
 
     codex_exit = summary.get("codex_exit_code")
-    final_exit = summary.get("final_container_exit_code")
+    final_exit = container_exit_code(run)
     wrapper_status = str(run.get("status") or "")
     if codex_exit not in (None, 0):
         reasons.append(f"agent exit code {codex_exit}")
@@ -746,6 +960,28 @@ def missing_result_metrics_section(runs: dict[str, dict[str, Any]], modes: list[
         lines.append(
             f"| {REPORT_COL_LABELS[mode]} | {markdown_cell(run_result_metric_status(run))} | "
             f"{markdown_cell(result_issue_explanation(run))} | {markdown_cell(result_issue_action(run))} |"
+        )
+    return "\n".join(lines)
+
+
+def failure_analysis_section(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
+    failed_modes = [mode for mode in modes if run_failed(runs[mode])]
+    if not failed_modes:
+        return ""
+    lines = [
+        "## Failure Analysis",
+        "",
+        "This section summarizes the likely root cause from captured benchmark artifacts. It favors direct evidence from console logs, agent stderr, harness failure JSON, run summaries, and final messages.",
+        "",
+        "| Run | Human-readable status | Likely root cause | Evidence | Next action |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for mode in failed_modes:
+        run = runs[mode]
+        lines.append(
+            f"| {REPORT_COL_LABELS[mode]} | {markdown_cell(human_readable_status(run))} | "
+            f"{markdown_cell(failure_root_cause(run))} | {markdown_cell(truncate(failure_evidence(run), 240))} | "
+            f"{markdown_cell(failure_next_action(run))} |"
         )
     return "\n".join(lines)
 
@@ -2005,12 +2241,18 @@ def process_eval_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
             + ". |"
         )
     available_modes = [mode for mode in modes if runs[mode].get("available")]
-    status_bits = [
-        f"{REPORT_COL_LABELS[mode]} exit={run_value(runs, mode, 'codex_exit_code')}" for mode in available_modes
-    ]
-    lines.append(
-        "| Status | " + markdown_cell("; ".join(status_bits) if status_bits else "No completed run artifacts.") + " |"
-    )
+    lines.append("| Status | " + markdown_cell(status_summary(runs, modes)) + " |")
+    failed_available_modes = [mode for mode in available_modes if run_failed(runs[mode])]
+    if failed_available_modes:
+        lines.append(
+            "| Likely root cause | "
+            + markdown_cell(
+                "; ".join(
+                    f"{REPORT_COL_LABELS[mode]}: {failure_root_cause(runs[mode])}" for mode in failed_available_modes
+                )
+            )
+            + " |"
+        )
     lines.append("| FL result quality gate | " + markdown_cell(benchmark_outcome_summary(runs, modes)) + " |")
     lines.append(f"| FL algorithm | **{markdown_cell(fl_algorithm)}** |")
     lines.append("| Source input protection | " + markdown_cell(source_input_protection_summary(runs, modes)) + " |")
@@ -2026,10 +2268,7 @@ def process_eval_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
         lines.append(
             "| Completion | "
             + markdown_cell(
-                ", ".join(
-                    f"{REPORT_COL_LABELS[mode]} exit={run_value(runs, mode, 'codex_exit_code')}"
-                    for mode in available_modes
-                )
+                ", ".join(f"{REPORT_COL_LABELS[mode]}: {human_readable_status(runs[mode])}" for mode in available_modes)
             )
             + " |"
         )
@@ -2088,6 +2327,10 @@ def process_eval_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
     else:
         lines.append(f"| README metric | Expected `{expected_metric or 'NA'}`; no mismatch detected. |")
     lines.append("")
+    failure_analysis = failure_analysis_section(runs, modes)
+    if failure_analysis:
+        lines.append(failure_analysis)
+        lines.append("")
     missing_results = missing_result_metrics_section(runs, modes)
     if missing_results:
         lines.append(missing_results)
@@ -2357,7 +2600,11 @@ def process_eval_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
     lines.append("")
     lines.append("| Signal | " + " | ".join(REPORT_COL_LABELS[mode] for mode in modes) + " |")
     lines.append("| --- | --- | --- | --- |")
-    lines.append("| Agent/wrapper outcome | " + " | ".join(run_outcome(runs[mode]) for mode in modes) + " |")
+    lines.append(
+        "| Agent/wrapper outcome | "
+        + " | ".join(markdown_cell(human_readable_status(runs[mode])) for mode in modes)
+        + " |"
+    )
     lines.append(
         "| Agent process | " + " | ".join(markdown_cell(process_pass_display(runs[mode])) for mode in modes) + " |"
     )

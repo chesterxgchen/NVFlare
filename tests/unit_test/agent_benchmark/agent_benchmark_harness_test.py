@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import sys
 from pathlib import Path
 
@@ -135,6 +136,69 @@ def test_skipped_skill_reports_include_markdown_benchmark(tmp_path):
     benchmark = tmp_path / "skill_benchmark.md"
     assert benchmark.is_file()
     assert "Skipped: no evaluator-backed records" in benchmark.read_text(encoding="utf-8")
+
+
+def test_benchmark_insights_explains_docker_image_failures(tmp_path):
+    from harness.modes import NO_SKILLS_MODE
+    from harness.reports.benchmark_insights import collect_process_eval_runs, failure_root_cause, human_readable_status
+
+    mode_dir = tmp_path / NO_SKILLS_MODE
+    mode_dir.mkdir()
+    (mode_dir / "container_exit_code.json").write_text(json.dumps({"exit_code": 1}) + "\n", encoding="utf-8")
+    (tmp_path / "console_output.log").write_text(
+        "[without_skills] Unable to find image 'nvflare-agent-benchmark:codex-baseline' locally\n"
+        "[without_skills] docker: Error response from daemon: pull access denied for nvflare-agent-benchmark\n",
+        encoding="utf-8",
+    )
+
+    run = collect_process_eval_runs(tmp_path)[NO_SKILLS_MODE]
+
+    assert run["available"] is True
+    assert "Docker image unavailable" in failure_root_cause(run)
+    assert "container exit 1" in human_readable_status(run)
+
+
+def test_status_summary_is_human_readable_for_failures():
+    from harness.modes import NO_SKILLS_MODE
+    from harness.reports.benchmark_insights import status_summary
+
+    runs = {
+        NO_SKILLS_MODE: {
+            "available": True,
+            "container_exit": {"exit_code": 1},
+            "console_text": "docker: Error response from daemon: pull access denied for nvflare-agent-benchmark",
+            "run": {},
+            "status": "missing",
+            "validation_metric": {},
+        }
+    }
+
+    summary = status_summary(runs, [NO_SKILLS_MODE])
+
+    assert "No skills baseline: failed" in summary
+    assert "container exit 1" in summary
+    assert "Docker image unavailable" in summary
+    assert "exit=1" not in summary
+
+
+def test_failure_analysis_extracts_unsupported_model_message():
+    from harness.reports.benchmark_insights import failure_evidence, failure_root_cause
+
+    run = {
+        "available": True,
+        "agent_events_text": "The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account.",
+        "container_exit": {"exit_code": 1},
+        "run": {"codex_exit_code": 1},
+        "status": "missing",
+        "validation_metric": {},
+    }
+
+    assert failure_root_cause(run) == (
+        "Codex model selection failed: The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account."
+    )
+    assert failure_evidence(run) == (
+        "The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account."
+    )
 
 
 def test_shared_lifecycle_requires_dependency_preflight_before_missing_dependency_blocker():
