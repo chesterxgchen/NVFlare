@@ -352,7 +352,8 @@ def run_pair(argv: list[str]) -> int:
             "metrics_report",
             [str(result_root), "--title", "NVFLARE Codex Skills Benchmark Metrics"],
             logs=logs,
-        )
+        ),
+        "benchmark_insights": run_report_generator("benchmark_insights", [str(result_root)], logs=logs),
     }
     write_host_report_status(
         result_root,

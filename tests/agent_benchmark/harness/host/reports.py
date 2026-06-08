@@ -58,6 +58,10 @@ def write_skipped_reports(
 ) -> None:
     payload: dict[str, Any] = {"status": "skipped", "reason": reason}
     write_json(result_dir / "skill_benchmark.json", payload)
+    (result_dir / "skill_benchmark.md").write_text(
+        f"# NVFLARE Skill Benchmark\n\nSkipped: {reason}\n",
+        encoding="utf-8",
+    )
     write_json(result_dir / "skill_performance.json", payload)
     (result_dir / "skill_performance.txt").write_text(f"skipped: {reason}\n", encoding="utf-8")
     status: dict[str, Any] = {"status": "skipped", "reason": reason}

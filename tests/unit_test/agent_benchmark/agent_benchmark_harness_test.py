@@ -127,6 +127,16 @@ def test_host_cli_requires_prompt_path(tmp_path):
         raise AssertionError("parse_host_cli_options should require --prompt")
 
 
+def test_skipped_skill_reports_include_markdown_benchmark(tmp_path):
+    from harness.host.reports import write_skipped_reports
+
+    write_skipped_reports(tmp_path, "no evaluator-backed records")
+
+    benchmark = tmp_path / "skill_benchmark.md"
+    assert benchmark.is_file()
+    assert "Skipped: no evaluator-backed records" in benchmark.read_text(encoding="utf-8")
+
+
 def test_shared_lifecycle_requires_dependency_preflight_before_missing_dependency_blocker():
     lifecycle = (Path(__file__).resolve().parents[3] / "skills" / "_shared" / "nvflare-job-lifecycle.md").read_text(
         encoding="utf-8"
