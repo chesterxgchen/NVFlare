@@ -1,10 +1,17 @@
 # Agent Benchmark Harness Architecture Proposal
 
-This document is a design proposal, not an implementation plan that has already
-been applied. It covers two future tasks:
+This document is the design source of truth for the agent benchmark harness. It
+contains both the current implementation shape and the future generalized
+architecture. The current implementation is intentionally Codex-only; Claude and
+future agents are deferred until their CLI, auth, event, usage, and final-message
+contracts are known.
+
+It covers the applied repository migration and the remaining generalization
+work:
 
 - Move the current `codex_docker` harness into the NVFLARE repository as a
-  benchmark tool.
+  benchmark tool. The initial repository migration has been applied for the
+  Codex harness.
 - Generalize the harness from Codex-only to Codex, Claude, and future agents.
 
 The benchmark target remains intentionally loose: a job input is a folder with
@@ -16,18 +23,26 @@ do the agent's conversion work.
 The current harness has the right high-level boundary:
 
 - `run.sh` and `build.sh` are thin shell wrappers.
-- `harness/host_*.py` owns host-side Docker orchestration, image build, and
-  host-side report generation.
-- `harness/agent_run.py` owns in-container execution.
+- `harness/host/` owns host-side Docker orchestration, image build, and
+  host-side report generation. Compatibility modules such as
+  `harness/host_runner.py` may remain temporarily for migrated entry points.
+- `harness/container/agent_run.py` owns in-container lifecycle ordering and
+  failure handling.
 - `harness/modes.py` defines the benchmark modes.
 - `harness/artifacts.py`, `records.py`, `events.py`, `timing.py`, and
   `quality_signals.py` own measurement semantics.
-- `generate_benchmark_insights.py` and `generate_metrics_report.py` own report
-  generation.
+- `harness/reports/benchmark_insights.py` and
+  `harness/reports/metrics_report.py` own report generation.
 
 The weak point is naming and agent coupling. Many artifact names and parser
 functions are Codex-specific even when the underlying concept is agent-neutral:
 events, final message, token usage, activity, model, and exit status.
+
+The current Codex-only state is not a defect. The architectural risk is allowing
+configuration such as `BENCHMARK_AGENT=claude` to appear runnable before the
+adapter, Docker stage, auth mounts, command runner, and parser exist. Until a
+non-Codex adapter is implemented, the harness should fail fast for any agent
+other than `codex`.
 
 ## Target NVFLARE Layout
 
@@ -36,7 +51,6 @@ Recommended destination inside NVFLARE:
 ```text
 tests/agent_benchmark/
 |-- README.md
-|-- ARCHITECTURE.md
 |-- bin/
 |   |-- build.sh
 |   `-- run.sh
@@ -92,6 +106,10 @@ tests/agent_benchmark/
     `-- README.md
 ```
 
+`docs/design/agent_benchmark_harness.md` is the architecture document. Do not
+duplicate the same design text under `tests/agent_benchmark/ARCHITECTURE.md`;
+the harness-local README should describe how to build and run the current tool.
+
 Why this location:
 
 - It is benchmark/test infrastructure, not NVFLARE product code.
@@ -129,22 +147,30 @@ only small synthetic job folders, sample agent event streams, and sample records
 used by unit, adapter, and smoke tests. It should not accumulate real benchmark
 datasets or ad-hoc run outputs.
 
-## Migration Strategy
+## Current Migration State
 
-Move in stages rather than renaming everything at once.
+The initial migration has already been applied. The current tool lives under
+`tests/agent_benchmark/`, keeps `run.sh` and `build.sh` as thin entry points,
+uses explicit `harness/host/`, `harness/container/`, `harness/agents/`, and
+`harness/reports/` subpackages, builds local NVFLARE wheels into Docker images,
+and writes agent-neutral artifacts such as `agent_events.jsonl` while preserving
+Codex compatibility aliases.
 
-1. Copy the current harness into `tests/agent_benchmark/`.
-2. Keep public behavior stable: same modes, same result folders, same prompt
-   contract, same wheel packaging comparison.
-3. Rename Python modules for layout clarity, but preserve artifact keys for old
-   result compatibility.
-4. Introduce agent-neutral artifact names while keeping Codex aliases:
-   `agent_events.jsonl` plus legacy `codex_events.jsonl`,
-   `agent_last_message.txt` plus legacy `codex_last_message.txt`, and so on.
-5. Add a Codex adapter that exactly wraps current behavior.
-6. Add Claude only after Codex passes unchanged through the adapter layer.
-7. Do not make the job folder structured. The only required job input contract
-   should remain: the argument is a folder.
+The migration deliberately preserved the legacy Codex public behavior: the same
+`one`, `pair`, and `process-eval` entry points; the same unstructured job-folder
+contract; and the same skills/no-skills wheel comparison. Future work should not
+revisit those migration goals unless behavior compatibility must intentionally
+change.
+
+Remaining architecture work is generalization, not migration:
+
+- make Codex-only support explicit with a fast-fail guard for unsupported agents;
+- separate agent command execution from the in-container lifecycle coordinator;
+- add scenario parsing, run-plan expansion, repeats, and comparison summaries;
+- move reports and summary schemas from Codex-named fields to agent-neutral
+  source-of-truth fields while keeping Codex aliases for old results;
+- generalize Docker stages only when adding a real non-Codex adapter;
+- add Claude only after the Codex adapter path reproduces current results.
 
 ## Agent Abstraction
 
@@ -197,8 +223,8 @@ agent_activity.json
 agent_last_message.txt
 agent_stderr.txt
 run_summary.json
-process_eval_runs/<mode>_agent_record.json
-process_eval_runs/<mode>_record.json
+records/<mode>_agent_record.json
+records/<mode>_record.json
 ```
 
 Codex-specific compatibility files can be written for old reports:
@@ -212,6 +238,63 @@ codex_stderr.txt
 ```
 
 The neutral files should become the source of truth for new code.
+
+Use `records/` as the target directory name for agent/evaluator/process records.
+The current runnable Codex copy may continue writing its existing record path
+while the architecture changes are staged, but new scenario/run-plan code should
+standardize on `records/` instead of carrying a process-eval-specific directory
+name forward.
+
+## Container Lifecycle Ownership
+
+`harness/container/agent_run.py` should remain the in-container lifecycle
+coordinator, not the owner of benchmark measurement semantics. Its job is to
+read runtime configuration, validate mounted inputs, order the lifecycle phases,
+preserve failure records, and call the lower-level modules that own specific
+semantics.
+
+Current ownership boundaries are:
+
+- `harness/container/agent_run.py`: lifecycle ordering, container-local
+  environment setup, skill exposure setup, prompt copy metadata, agent execution
+  handoff, failure fallback records, report command orchestration, and final
+  status wiring.
+- `harness/artifacts.py`: workspace baseline and bounded delta capture.
+- `harness/events.py`: event-derived usage and activity parsing.
+- `harness/records.py`: evaluator-record selection, process-record synthesis,
+  runtime-field normalization, instruction compliance, quality signals, and
+  run-summary payloads.
+- `harness/reports/reporting.py`: report filter discovery and evaluator-backed
+  record detection.
+- `harness/timing.py`: timing payload finalization.
+
+Do not split `agent_run.py` broadly by apparent topic if that only moves
+orchestration code around. The useful extraction is narrower: separate
+agent-specific process execution from lifecycle orchestration. The lifecycle
+runner should call a generic function such as:
+
+```python
+agent_start, agent_end, agent_exit = run_agent(config, progress)
+```
+
+The selected agent implementation should own command construction, model
+selection, final-message output path, raw event stream handling, and stderr
+capture. For Codex, this means moving the current `codex exec --json ...`
+launch logic out of `agent_run.py` into an agent execution module or the Codex
+adapter while leaving artifact capture, record synthesis, and reporting
+delegation where they already belong.
+
+Adapters must not own benchmark phases or measurement semantics. In particular,
+an adapter must not decide timing boundaries, collect workspace artifacts,
+synthesize or merge process records, run benchmark report generation, apply
+source-input immutability policy, or choose evaluator/report filters. Those
+remain harness responsibilities so Codex, Claude, and future agents are measured
+through the same lifecycle contract.
+
+Adapters may expose candidate metadata, such as an agent-reported skill name,
+model name, CLI version, or raw usage object. The coordinator and report layer
+decide whether that metadata is trustworthy enough to use, including whether a
+skill identity should become a report filter.
 
 ## Codex Adapter
 
@@ -495,7 +578,7 @@ results/
                                 |-- agent_usage.json
                                 |-- agent_activity.json
                                 |-- agent_last_message.txt
-                                |-- process_eval_runs/
+                                |-- records/
                                 `-- workspace_delta_manifest.json
 ```
 
@@ -786,27 +869,59 @@ Integration smoke tests:
 Long agent runs should remain opt-in and should not block normal NVFLARE unit
 tests.
 
-## Migration Checklist
+## Forward Checklist
 
-- Move harness under `tests/agent_benchmark/`.
-- Move tests for the tool under `tests/unit_test/agent_benchmark/` and
-  `tests/integration_test/agent_benchmark/`.
-- Keep shell wrappers thin.
-- Add parser/unit tests before changing behavior.
-- Split host/container modules into explicit subpackages.
-- Create shared `harness/common.py` and `harness/events.py`.
+Near-term guardrails:
+
+- Document and enforce the current supported agent set: `codex` only.
+- Fail fast when `BENCHMARK_AGENT` is not implemented.
+- Validate unsupported agents before Docker image resolution, Docker build, or
+  container launch so an unsupported value cannot silently select a misleading
+  image tag.
+- Keep Docker build context explicit and allowlisted: Dockerfile, harness
+  modules, staged wheel artifacts, and build metadata only. The local NVFLARE
+  checkout remains build input, not runtime context.
+- Keep the unstructured job-folder input contract unchanged.
+
+Agent-neutral execution:
+
+- Extract Codex process launch from `harness/container/agent_run.py` into a
+  narrow agent execution path.
+- Keep lifecycle orchestration in `agent_run.py`; do not move record, artifact,
+  timing, or report semantics out of their existing owner modules unless a
+  concrete new responsibility requires it.
+- Add adapter tests proving Codex raw events, final message, usage, activity,
+  stderr, and exit status still produce the same neutral artifacts.
+
+Scenario architecture:
+
 - Add scenario definitions for CI smoke, model comparison, multi-agent
   comparison, workflow sweep, and job-size sweep.
-- Add `harness/scenarios.py` for validation, run-plan expansion, and sequential
-  execution.
-- Add canonical result directory layout.
+- Add `harness/scenarios.py` for schema validation, run-plan expansion,
+  preflight checks, and sequential execution.
+- Add canonical result directory layout with stable slugs for scenario axes.
 - Add prompt rendering from scenario workflow fields.
 - Add repeat-level and scenario-level summary aggregation.
+- Keep legacy `one`, `pair`, and `process-eval` commands as compatibility
+  wrappers that construct equivalent scenario/run-plan executions once the
+  scenario engine exists.
+
+Reporting and schema:
+
+- Make run summaries expose agent-neutral source-of-truth fields such as
+  `agent_exit_code` and `agent_process_passed`, while preserving Codex fields as
+  aliases for old artifacts.
+- Make report readers prefer neutral artifacts and fall back to Codex names.
+- Make skill report filtering explicit for multi-skill or multi-case scenario
+  result trees instead of selecting the first discovered identity.
 - Add observed skill identity capture from agent/evaluator artifacts and skip
   skill-specific reports when identity is unknown.
-- Add `agents/base.py` and move current Codex execution into `agents/codex.py`.
-- Write neutral `agent_*` artifacts while preserving Codex aliases.
-- Make report readers prefer neutral artifacts and fall back to Codex names.
-- Convert Docker build from Codex-specific args to agent-specific stages.
-- Keep local NVFLARE repo out of Docker context.
-- Add Claude adapter only after Codex adapter reproduces current results.
+
+Future multi-agent support:
+
+- Convert Docker build from Codex-specific args to agent-specific stages only
+  when another real agent adapter is ready.
+- Keep local NVFLARE repo out of Docker context; continue using built wheels and
+  metadata as runtime inputs.
+- Add Claude adapter only after Codex adapter reproduces current results and the
+  Claude CLI/auth/event/usage/final-message contract is confirmed.

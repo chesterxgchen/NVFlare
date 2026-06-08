@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 FLOAT_PATTERN = r"(?<![A-Za-z0-9_])([0-9]+\.[0-9]+)(?![A-Za-z0-9_])"
+GENERIC_VALIDATION_METRIC_PATTERN = r"\b(?:(?:aggregated|aggregate|global|server)\s+)?(?:best\s+)?validation\s+metric\b"
 METRIC_ALIAS_PATTERNS = {
     "AUROC": r"\b(?:AUROC|AUC)\b|\b(?:valid|validation)[_-]?auroc\b",
     "accuracy": r"\baccuracy\b|\b(?:valid|validation)[_-]?accuracy\b|\bacc\b",
@@ -59,6 +60,10 @@ def parse_float(value: str) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def is_numeric_metric_value(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def line_value_after_metric(line: str, match: re.Match[str]) -> float | None:
@@ -176,28 +181,83 @@ def is_site_label(label: Any) -> bool:
     return re.search(r"\bsite[-_ ]?\d+\b", str(label or ""), flags=re.IGNORECASE) is not None
 
 
+def is_fl_summary_metric_label(label: Any) -> bool:
+    text = str(label or "")
+    return (
+        not is_site_label(text) and re.search(GENERIC_VALIDATION_METRIC_PATTERN, text, flags=re.IGNORECASE) is not None
+    )
+
+
+def generic_validation_metric_entries(text: str) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        label = label_from_metric_line(line)
+        for match in re.finditer(GENERIC_VALIDATION_METRIC_PATTERN, line, flags=re.IGNORECASE):
+            value = line_value_after_metric(line, match)
+            if value is None:
+                continue
+            entries.append(metric_value_entry(value, label or match.group(0).strip()))
+    return entries
+
+
+def merge_metric_entries(*entry_groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, float]] = set()
+    for entries in entry_groups:
+        for entry in entries:
+            value = entry.get("value")
+            if not is_numeric_metric_value(value):
+                continue
+            key = (str(entry.get("label") or "").strip().lower(), float(value))
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(entry)
+    return merged
+
+
+def fl_summary_metric_entry(entries: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for entry in reversed(entries):
+        value = entry.get("value")
+        if is_numeric_metric_value(value) and is_fl_summary_metric_label(entry.get("label")):
+            return entry
+    return None
+
+
 def reported_metric_payload(name: str, entries: list[dict[str, Any]]) -> dict[str, Any]:
-    values = [entry["value"] for entry in entries if isinstance(entry.get("value"), (int, float))]
+    values = [entry["value"] for entry in entries if is_numeric_metric_value(entry.get("value"))]
     labels = [entry.get("label") for entry in entries]
+    site_entries = [
+        entry for entry in entries if is_numeric_metric_value(entry.get("value")) and is_site_label(entry.get("label"))
+    ]
+    summary_entry = fl_summary_metric_entry(entries)
     has_single_value = len(values) == 1
-    has_site_labels = bool(values) and all(is_site_label(label) for label in labels)
-    if has_single_value:
+    has_site_labels = bool(values) and len(site_entries) == len(values)
+    if summary_entry:
+        value = summary_entry["value"]
+        value_scope = "fl_summary_metric"
+    elif has_single_value:
+        value = values[0]
         value_scope = "reported_scalar"
     elif has_site_labels:
+        value = None
         value_scope = "site_values_only"
     elif values:
+        value = None
         value_scope = "reported_values_only"
     else:
+        value = None
         value_scope = "not_available"
     return {
         "name": canonical_metric_name(name),
-        "value": values[0] if has_single_value else None,
+        "value": value,
         "reported_values": values,
         "reported_value_labels": labels,
         "reported_value_entries": entries,
-        "site_values": values if has_site_labels else [],
-        "site_value_labels": labels if has_site_labels else [],
-        "site_value_count": len(values) if has_site_labels else 0,
+        "site_values": [entry["value"] for entry in site_entries],
+        "site_value_labels": [entry.get("label") for entry in site_entries],
+        "site_value_count": len(site_entries),
+        "summary_value_label": summary_entry.get("label") if summary_entry else None,
         "value_scope": value_scope,
         "source": "codex_last_message",
     }
@@ -206,8 +266,8 @@ def reported_metric_payload(name: str, entries: list[dict[str, Any]]) -> dict[st
 def primary_metric_from_readme(readme_text: str) -> str | None:
     patterns = [
         r"^\s*[-*]?\s*([A-Za-z][A-Za-z0-9_./ -]{0,40}?)\s+is\s+the\s+main\s+metric\b",
-        r"\bmain\s+metric\s+(?:to\s+watch\s+)?(?:is|:)\s*([A-Za-z][A-Za-z0-9_./ -]{0,40})",
-        r"\bprimary\s+(?:validation\s+)?metric\s+(?:is|:)\s*([A-Za-z][A-Za-z0-9_./ -]{0,40})",
+        r"\bmain\s+metric\s*(?:to\s+watch\s+)?(?:is|:)\s*([A-Za-z][A-Za-z0-9_./ -]{0,40})",
+        r"\bprimary\s+(?:validation\s+)?metric\s*(?:is|:)\s*([A-Za-z][A-Za-z0-9_./ -]{0,40})",
     ]
     for pattern in patterns:
         match = re.search(pattern, readme_text, flags=re.IGNORECASE | re.MULTILINE)
@@ -221,31 +281,15 @@ def primary_metric_from_readme(readme_text: str) -> str | None:
 
 def reported_validation_metric(last_message: str, expected_metric: str | None) -> dict[str, Any]:
     detected = []
+    generic_entries = generic_validation_metric_entries(last_message)
     for name in ("AUROC", "accuracy"):
         entries = metric_value_entries(name, last_message)
         if entries or metric_mentioned(name, last_message):
             detected.append(reported_metric_payload(name, entries))
-    generic_value = first_float(
-        r"(?:best )?(?:validation metric|global best validation metric)[^0-9`]*`?([0-9]+\.[0-9]+)`?",
-        last_message,
-    )
-    if generic_value is not None:
-        detected.append(
-            {
-                "name": "validation metric",
-                "value": generic_value,
-                "reported_values": [generic_value],
-                "reported_value_labels": [None],
-                "reported_value_entries": [{"value": generic_value}],
-                "site_values": [],
-                "site_value_labels": [],
-                "site_value_count": 0,
-                "value_scope": "reported_scalar",
-                "source": "codex_last_message",
-            }
-        )
+    if generic_entries:
+        detected.append(reported_metric_payload("validation metric", generic_entries))
     if expected_metric and metric_mentioned(expected_metric, last_message):
-        entries = metric_value_entries(expected_metric, last_message)
+        entries = merge_metric_entries(metric_value_entries(expected_metric, last_message), generic_entries)
         return reported_metric_payload(expected_metric, entries)
     if detected:
         return detected[0]
@@ -283,20 +327,45 @@ def metric_signal(readme_path: Path | None, readme_text: str, final_message: str
     site_values = reported.get("site_values")
     if not isinstance(site_values, list):
         site_values = []
-    has_value = isinstance(value, (int, float)) and not isinstance(value, bool)
-    aligned = has_value and canonical_metric_name(reported.get("name")) == canonical_metric_name(expected)
+    has_value = is_numeric_metric_value(value)
+    numeric_reported_values = [
+        reported_value for reported_value in reported_values if is_numeric_metric_value(reported_value)
+    ]
+    has_reported_numeric = has_value or bool(numeric_reported_values)
+    reported_name = canonical_metric_name(reported.get("name"))
+    expected_name = canonical_metric_name(expected)
+    names_match = bool(reported.get("name")) and reported_name == expected_name
+    aligned = names_match and has_reported_numeric
+    mismatch = bool(reported.get("name")) and not names_match
     if aligned:
         status = "pass"
-        evidence = (
-            f"README declares {expected} as the primary metric, and the final response reported "
-            f"{reported.get('name')} {value:.4f}."
-        )
-    elif reported.get("name") and has_value:
+        if has_value:
+            evidence = (
+                f"README declares {expected} as the primary metric, and the final response reported "
+                f"{reported.get('name')} {value:.4f}."
+            )
+        elif site_values:
+            evidence = (
+                f"README declares {expected} as the primary metric, and the final response reported "
+                f"{len(site_values)} site-level {reported.get('name')} values."
+            )
+        else:
+            evidence = (
+                f"README declares {expected} as the primary metric, and the final response reported "
+                f"{len(numeric_reported_values)} {reported.get('name')} values."
+            )
+    elif mismatch:
         status = "fail"
-        evidence = (
-            f"README declares {expected} as the primary metric, but the final response reported "
-            f"{reported.get('name')}" + (f" {value:.4f}." if isinstance(value, float) else ".")
-        )
+        if has_value:
+            evidence = (
+                f"README declares {expected} as the primary metric, but the final response reported "
+                f"{reported.get('name')}" + (f" {value:.4f}." if isinstance(value, float) else ".")
+            )
+        else:
+            evidence = (
+                f"README declares {expected} as the primary metric, but the final response reported "
+                f"{reported.get('name')}."
+            )
     elif reported.get("name"):
         status = "missing"
         if site_values:
@@ -322,9 +391,10 @@ def metric_signal(readme_path: Path | None, readme_text: str, final_message: str
         {
             "status": status,
             "evidence": evidence,
-            "metric_value_available": has_value,
+            "metric_value_available": has_reported_numeric,
+            "metric_scalar_available": has_value,
             "aligned_with_readme": aligned,
-            "mismatch": not aligned,
+            "mismatch": mismatch,
         }
     )
     return signal

@@ -1144,14 +1144,13 @@ def validation_chart_label(run: dict[str, Any] | None) -> str:
         return "NA"
     metric = run.get("validation_metric")
     metric = metric if isinstance(metric, dict) else {}
-    name = str(metric.get("name") or "").strip()
     value = metric.get("value")
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return f"{name} {value:.4f}" if name else f"{value:.4f}"
+        return f"{value:.4f}"
     if metric_reported_value_count(metric):
-        return f"{name} partial" if name else "partial"
-    if name:
-        return f"{name} missing"
+        return "partial"
+    if metric.get("name"):
+        return "missing"
     return "missing"
 
 
@@ -1208,7 +1207,31 @@ def format_chart_value(value: Any, kind: str, run: dict[str, Any] | None = None)
     return f"{int(round(numeric))}"
 
 
-def benchmark_chart_metrics() -> list[tuple[str, Callable[[str, dict[str, dict[str, Any]]], Any], str, float | None]]:
+def validation_metric_chart_name(runs: dict[str, dict[str, Any]]) -> str | None:
+    names = []
+    for mode in REPORT_MODE_ORDER:
+        run = runs.get(mode)
+        metric = run.get("validation_metric") if isinstance(run, dict) else None
+        if not isinstance(metric, dict):
+            continue
+        name = canonical_metric_name(metric.get("name"))
+        if name and name not in names:
+            names.append(name)
+    if len(names) == 1:
+        return names[0]
+    if len(names) > 1:
+        return "mixed"
+    return None
+
+
+def validation_metric_chart_title(runs: dict[str, dict[str, Any]]) -> str:
+    metric_name = validation_metric_chart_name(runs)
+    return f"Metrics ({metric_name})" if metric_name else "Metrics"
+
+
+def benchmark_chart_metrics(
+    runs: dict[str, dict[str, Any]],
+) -> list[tuple[str, Callable[[str, dict[str, dict[str, Any]]], Any], str, float | None]]:
     return [
         ("Runtime seconds", lambda mode, runs: run_value(runs, mode, "elapsed_seconds"), "int", None),
         (
@@ -1223,7 +1246,7 @@ def benchmark_chart_metrics() -> list[tuple[str, Callable[[str, dict[str, dict[s
         ),
         ("Commands", lambda mode, runs: activity_value(runs, mode, "command_count"), "int", None),
         ("Structure score", lambda mode, runs: structure_score(runs[mode]), "percent", 100),
-        ("FL scalar result", lambda mode, runs: reported_metric_value(runs[mode]), "validation", None),
+        (validation_metric_chart_title(runs), lambda mode, runs: reported_metric_value(runs[mode]), "validation", None),
         ("Evaluator pass", lambda mode, runs: evaluator_bool_numeric(runs[mode], "eval_passed"), "bool", 1),
         ("Evaluator score", lambda mode, runs: evaluator_score_value(runs[mode]), "score", 5),
         ("Conversion quality", lambda mode, runs: evaluator_process_value(runs[mode], "conversion_quality"), "int", 5),
@@ -1250,7 +1273,7 @@ def embedded_bar_chart(runs: dict[str, dict[str, Any]]) -> str:
         SKILLS_EVAL_ON_MODE: "Eval on",
         NO_SKILLS_MODE: "No skills",
     }
-    metric_groups = benchmark_chart_metrics()
+    metric_groups = benchmark_chart_metrics(runs)
     width, height = 1180, 720
     margin_left, margin_top = 40, 115
     panel_w, panel_h = 210, 220
@@ -1533,7 +1556,7 @@ def outcome_metrics_table(runs: dict[str, dict[str, Any]], modes: list[str]) -> 
         ("Evaluator availability", lambda run: evaluator_availability_display(run)),
         ("Evaluator pass", lambda run: fmt_yes_no(evaluator_bool_value(run, "eval_passed"))),
         ("Evaluator source", lambda run: (run.get("record") or {}).get("eval_passed_source") or "unavailable"),
-        ("FL scalar result", fl_result_status_display),
+        (validation_metric_chart_title(runs), fl_result_status_display),
         ("FL result quality gate", benchmark_outcome),
     ]
     lines = [
@@ -1928,7 +1951,7 @@ def process_eval_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
         runs[mode]["validation_metric_aligned"] = (
             bool(expected_metric)
             and canonical_metric_name(metric.get("name")) == canonical_metric_name(expected_metric)
-            and metric_has_value(metric)
+            and (metric_has_value(metric) or metric_reported_value_count(metric) > 0)
         )
 
     runtime_winner = lowest_mode(modes, lambda mode: run_value(runs, mode, "elapsed_seconds"))
