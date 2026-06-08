@@ -120,3 +120,122 @@ def test_shared_lifecycle_requires_dependency_preflight_before_missing_dependenc
     assert "python -m pip install -r <requirements-file>" in lifecycle
     assert "dependency or import failures" in lifecycle
     assert "Report missing dependencies as blockers only when" in lifecycle
+
+
+def test_readme_metric_alignment_uses_aggregated_validation_metric_scalar():
+    from harness.quality_signals import metric_signal
+
+    signal = metric_signal(
+        None,
+        "AUROC is the main metric.\n",
+        """
+Round 2 validation AUROC by site:
+- `site-1`: `0.7659574468`
+- `site-2`: `0.7554566645`
+- `site-3`: `0.7373779931`
+- aggregated best validation metric: `0.7529307015`
+""",
+    )
+
+    metric = signal["reported_validation_metric"]
+    assert signal["status"] == "pass"
+    assert signal["aligned_with_readme"] is True
+    assert signal["metric_value_available"] is True
+    assert signal["metric_scalar_available"] is True
+    assert metric["name"] == "AUROC"
+    assert metric["value"] == 0.7529307015
+    assert metric["value_scope"] == "fl_summary_metric"
+    assert metric["site_value_count"] == 3
+    assert metric["summary_value_label"] == "aggregated best validation metric"
+
+
+def test_readme_metric_alignment_uses_server_best_validation_metric_scalar():
+    from harness.quality_signals import metric_signal
+
+    signal = metric_signal(
+        None,
+        "Primary validation metric: AUROC.\n",
+        """
+Final round metrics:
+- `site-1`: valid AUROC `0.7696`, test AUROC `0.7331`
+- `site-2`: valid AUROC `0.7148`, test AUROC `0.7771`
+- `site-3`: valid AUROC `0.7708`, test AUROC `0.7352`
+- Server best validation metric at round 2: `0.7517306189541327`
+""",
+    )
+
+    metric = signal["reported_validation_metric"]
+    assert signal["status"] == "pass"
+    assert signal["aligned_with_readme"] is True
+    assert metric["name"] == "AUROC"
+    assert metric["value"] == 0.7517306189541327
+    assert metric["value_scope"] == "fl_summary_metric"
+    assert metric["site_value_count"] == 6
+    assert metric["summary_value_label"] == "Server best validation metric at round 2"
+
+
+def test_readme_metric_alignment_passes_for_site_level_values_without_scalar():
+    from harness.quality_signals import metric_signal
+
+    signal = metric_signal(
+        None,
+        "Primary validation metric: AUROC.\n",
+        """
+Final round metrics:
+- `site-1`: valid AUROC `0.7696`
+- `site-2`: valid AUROC `0.7148`
+- `site-3`: valid AUROC `0.7708`
+""",
+    )
+
+    metric = signal["reported_validation_metric"]
+    assert signal["status"] == "pass"
+    assert signal["aligned_with_readme"] is True
+    assert signal["metric_value_available"] is True
+    assert signal["metric_scalar_available"] is False
+    assert signal["mismatch"] is False
+    assert metric["name"] == "AUROC"
+    assert metric["value"] is None
+    assert metric["value_scope"] == "site_values_only"
+
+
+def test_metrics_chart_names_metric_once_in_panel_title():
+    from harness.modes import NO_SKILLS_MODE, SKILLS_EVAL_OFF_MODE, SKILLS_EVAL_ON_MODE
+    from harness.reports.benchmark_insights import embedded_bar_chart, outcome_metrics_table
+
+    def run(label: str, value: float) -> dict:
+        return {
+            "label": label,
+            "available": True,
+            "status": "0",
+            "run": {"elapsed_seconds": 1, "token_count": 1, "codex_exit_code": 0, "final_container_exit_code": 0},
+            "activity": {"command_count": 1},
+            "record": {},
+            "evaluator_records": [],
+            "workspace_delta": {},
+            "validation_metric": {"name": "AUROC", "value": value},
+        }
+
+    chart = embedded_bar_chart(
+        {
+            SKILLS_EVAL_OFF_MODE: run("With skills, skill eval off", 0.7529),
+            SKILLS_EVAL_ON_MODE: run("With skills, skill eval on", 0.7517),
+            NO_SKILLS_MODE: run("No skills baseline", 0.7562),
+        }
+    )
+    table = outcome_metrics_table(
+        {
+            SKILLS_EVAL_OFF_MODE: run("With skills, skill eval off", 0.7529),
+            SKILLS_EVAL_ON_MODE: run("With skills, skill eval on", 0.7517),
+            NO_SKILLS_MODE: run("No skills baseline", 0.7562),
+        },
+        [SKILLS_EVAL_OFF_MODE, SKILLS_EVAL_ON_MODE, NO_SKILLS_MODE],
+    )
+
+    assert "Metrics (AUROC)" in chart
+    assert "FL scalar result" not in chart
+    assert "AUROC 0." not in chart
+    assert chart.count("AUROC") == 1
+    assert ">0.7529<" in chart
+    assert "| Metrics (AUROC) | AUROC 0.7529 | AUROC 0.7517 | AUROC 0.7562 |" in table
+    assert "FL scalar result" not in table
