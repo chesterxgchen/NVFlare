@@ -1265,7 +1265,7 @@ def embedded_bar_chart(runs: dict[str, dict[str, Any]]) -> str:
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         '<rect width="100%" height="100%" fill="#ffffff"/>',
         '<text x="30" y="35" font-family="Arial, sans-serif" font-size="22" font-weight="700" fill="#111827">Benchmark Metrics Comparison</text>',
-        '<text x="30" y="62" font-family="Arial, sans-serif" font-size="13" fill="#4b5563">Per-run metrics are shown directly. Missing evaluator or validation values are kept visible as NA.</text>',
+        '<text x="30" y="62" font-family="Arial, sans-serif" font-size="13" fill="#4b5563">Per-run metrics are shown directly. FL result status is shown even when no scalar bar can be drawn.</text>',
     ]
     for index, (metric_name, getter, kind, max_override) in enumerate(metric_groups):
         col = index % columns
@@ -1296,10 +1296,11 @@ def embedded_bar_chart(runs: dict[str, dict[str, Any]]) -> str:
             color = colors.get(mode, fallback_colors[bar_index % len(fallback_colors)])
             label = short_labels.get(mode, truncate(mode.replace("_", " "), 12))
             if value is None:
+                missing_text = format_chart_value(value, kind, runs[mode])
                 parts.extend(
                     [
                         f'<rect x="{bx:.1f}" y="{axis_y - 26}" width="{bar_w:.1f}" height="22" fill="#e5e7eb" rx="3"/>',
-                        f'<text x="{bx + bar_w / 2}" y="{axis_y - 10}" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#4b5563">NA</text>',
+                        f'<text x="{bx + bar_w / 2}" y="{axis_y - 10}" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#4b5563">{html.escape(truncate(missing_text, 13))}</text>',
                         f'<text x="{bx + bar_w / 2}" y="{axis_y + 18}" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#374151">{html.escape(label)}</text>',
                     ]
                 )
