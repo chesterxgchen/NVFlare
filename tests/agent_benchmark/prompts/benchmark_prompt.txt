@@ -1,3 +1,3 @@
 Convert the training code in the current directory into an NVIDIA FLARE federated learning job using the FedAvg algorithm.
-If the training project provides requirement files such as requirements.txt, requirements-train.txt, or other requirements*.txt files, install the applicable training dependencies before treating missing Python packages as blockers.
+If the training project provides requirement files such as requirements.txt, requirements-train.txt, or other requirements*.txt files, install the applicable job dependencies before treating dependency or import failures as blockers.
 Run a local simulation with 3 sites for 3 rounds after installing source-provided requirements when the dataset and runtime permit it.
