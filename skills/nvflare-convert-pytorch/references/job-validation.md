@@ -6,6 +6,10 @@
   `load_state_dict` or a deliberate compatible mapping.
 - Confirm that `job.py` server model config includes every required
   constructor argument and that exported server config preserves those values.
+- After export, verify `app/custom` contains files required by server config
+  imports, such as `model.py`; add explicit server-file packaging only if the
+  exported server app is missing a required file or the job uses separate
+  server/client app packaging.
 - Validate that outbound `FLModel.params` comes from the trained model's
   `state_dict` and does not include optimizer or dataloader objects.
 - Confirm that checkpoint loading, metric collection, and device placement still
