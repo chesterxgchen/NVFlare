@@ -71,8 +71,8 @@ def test_benchmark_prompt_requires_installing_source_requirements():
     prompt = (BENCHMARK_ROOT / "prompts" / "benchmark_prompt.txt").read_text(encoding="utf-8")
 
     assert "requirements-train.txt" in prompt
-    assert "install the applicable training dependencies" in prompt
-    assert "before treating missing Python packages as blockers" in prompt
+    assert "install the applicable job dependencies" in prompt
+    assert "before treating dependency or import failures as blockers" in prompt
 
 
 def test_shared_lifecycle_requires_dependency_preflight_before_missing_dependency_blocker():
@@ -80,6 +80,9 @@ def test_shared_lifecycle_requires_dependency_preflight_before_missing_dependenc
         encoding="utf-8"
     )
 
+    assert "all generated NVFLARE jobs" in lifecycle
+    assert "recipe-, framework-, and algorithm-independent" in lifecycle
     assert "requirements-train.txt" in lifecycle
     assert "python -m pip install -r <requirements-file>" in lifecycle
+    assert "dependency or import failures" in lifecycle
     assert "Report missing dependencies as blockers only when" in lifecycle

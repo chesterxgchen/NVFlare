@@ -38,10 +38,13 @@ runtime locations under `/tmp/nvflare/` unless the user provides another path:
   job file supports direct execution.
 - Prefer synthetic data flags or small fixtures when the original dataset is
   unavailable.
-- Before treating missing Python imports as blockers, discover source-provided
-  dependency files such as `requirements.txt`, `requirements-train.txt`, or
-  other `requirements*.txt` files needed by the training code. Install the
-  applicable files into the active validation environment with
+- Dependency installation is recipe-, framework-, and algorithm-independent and
+  applies to all generated NVFLARE jobs.
+- Before treating dependency or import failures as blockers, discover
+  source-provided dependency files such as `requirements.txt`,
+  `requirements-train.txt`, or other `requirements*.txt` files needed by the
+  training code. Install the applicable files into the active validation
+  environment with
   `python -m pip install -r <requirements-file>` or the repository's documented
   equivalent, then rerun the failed compile, import, export, or simulation
   check.
