@@ -73,36 +73,79 @@ def print_usage(command: str) -> None:
         "interactive": "Start an interactive benchmark container with a job folder mounted.",
     }.get(command, "Run an agent benchmark command against a job folder.")
     print(
-        f"Usage: {Path(sys.argv[0]).name} [--training-code PATH] [PATH]\n\n"
+        f"Usage: {Path(sys.argv[0]).name} [--training-code PATH] [--results-root PATH] [PATH]\n\n"
         f"{usage}\n\n"
         "Arguments:\n"
         "  PATH                    Job folder. Equivalent to --training-code.\n\n"
         "Options:\n"
         "  --training-code PATH    Job folder to mount into the benchmark container.\n"
+        "  --results-root PATH     Parent directory for generated timestamped result directories.\n"
+        "  --output-dir PATH       Exact result directory for this run or comparison.\n"
+        "  --result-root PATH      Exact result directory for pair/process-eval comparisons.\n"
+        "  --result-dir PATH       Exact result directory for run-one.\n"
         "  -h, --help              Show this help."
     )
 
 
-def parse_job_input(argv: list[str], command: str) -> Path:
+@dataclass(frozen=True)
+class HostCliOptions:
+    job_input: Path
+    results_root: Path | None = None
+    result_root: Path | None = None
+    result_dir: Path | None = None
+
+
+def _option_value(argv: list[str], index: int, option: str) -> tuple[str, int]:
+    arg = argv[index]
+    if arg.startswith(f"{option}="):
+        return arg.split("=", 1)[1], index + 1
+    if index + 1 >= len(argv):
+        raise SystemExit(f"{option} requires a path")
+    return argv[index + 1], index + 2
+
+
+def parse_host_cli_options(argv: list[str], command: str) -> HostCliOptions:
     job_input = os.environ.get("JOB_INPUT_DIR") or os.environ.get("TRAINING_CODE") or ""
     set_by_arg = False
+    results_root: Path | None = None
+    result_root: Path | None = None
+    result_dir: Path | None = None
     index = 0
     while index < len(argv):
         arg = argv[index]
-        if arg == "--training-code":
-            if index + 1 >= len(argv):
-                raise SystemExit("--training-code requires a path")
+        if arg == "--training-code" or arg.startswith("--training-code="):
+            value, index = _option_value(argv, index, "--training-code")
             if set_by_arg:
                 raise SystemExit("Expected only one job folder")
-            job_input = argv[index + 1]
+            job_input = value
             set_by_arg = True
-            index += 2
-        elif arg.startswith("--training-code="):
-            if set_by_arg:
-                raise SystemExit("Expected only one job folder")
-            job_input = arg.split("=", 1)[1]
-            set_by_arg = True
-            index += 1
+        elif arg == "--results-root" or arg.startswith("--results-root="):
+            value, index = _option_value(argv, index, "--results-root")
+            if results_root is not None:
+                raise SystemExit("Expected only one --results-root")
+            results_root = absolute_path(value)
+        elif arg == "--result-root" or arg.startswith("--result-root="):
+            value, index = _option_value(argv, index, "--result-root")
+            if result_root is not None:
+                raise SystemExit("Expected only one --result-root")
+            result_root = absolute_path(value)
+        elif arg == "--result-dir" or arg.startswith("--result-dir="):
+            value, index = _option_value(argv, index, "--result-dir")
+            if result_dir is not None:
+                raise SystemExit("Expected only one --result-dir")
+            result_dir = absolute_path(value)
+        elif arg == "--output-dir" or arg.startswith("--output-dir="):
+            value, index = _option_value(argv, index, "--output-dir")
+            if command == "run-one":
+                if result_dir is not None:
+                    raise SystemExit("Expected only one exact output directory")
+                result_dir = absolute_path(value)
+            elif command in {"pair", "process-eval"}:
+                if result_root is not None:
+                    raise SystemExit("Expected only one exact output directory")
+                result_root = absolute_path(value)
+            else:
+                raise SystemExit(f"--output-dir is not supported for {command}")
         elif arg in {"-h", "--help"}:
             print_usage(command)
             raise SystemExit(0)
@@ -131,7 +174,19 @@ def parse_job_input(argv: list[str], command: str) -> Path:
     path = absolute_path(job_input)
     if not path.is_dir():
         raise SystemExit(f"Job input must be an existing folder: {path}")
-    return path
+    if results_root is not None and (result_root is not None or result_dir is not None):
+        raise SystemExit("Use --results-root or an exact output option, not both.")
+    if command == "run-one" and result_root is not None:
+        raise SystemExit("--result-root is only supported for pair and process-eval; use --result-dir for run-one.")
+    if command in {"pair", "process-eval"} and result_dir is not None:
+        raise SystemExit("--result-dir is only supported for run-one; use --result-root for comparisons.")
+    if command == "interactive" and (results_root is not None or result_root is not None or result_dir is not None):
+        raise SystemExit("Output directory options are not supported for interactive containers.")
+    return HostCliOptions(job_input=path, results_root=results_root, result_root=result_root, result_dir=result_dir)
+
+
+def parse_job_input(argv: list[str], command: str) -> Path:
+    return parse_host_cli_options(argv, command).job_input
 
 
 def ensure_prompt_dir() -> tuple[Path, Path]:

@@ -67,6 +67,40 @@ def test_host_docker_args_use_migrated_container_entrypoint(tmp_path):
     assert args[module_index] == "harness.container.agent_run"
 
 
+def test_host_cli_accepts_results_root(tmp_path):
+    from harness.host.common import parse_host_cli_options
+
+    job_input = tmp_path / "job"
+    results_root = tmp_path / "bench-results"
+    job_input.mkdir()
+
+    options = parse_host_cli_options(
+        ["--results-root", str(results_root), "--training-code", str(job_input)],
+        "process-eval",
+    )
+
+    assert options.job_input == job_input
+    assert options.results_root == results_root
+    assert options.result_root is None
+    assert options.result_dir is None
+
+
+def test_host_cli_output_dir_maps_to_exact_result_location(tmp_path):
+    from harness.host.common import parse_host_cli_options
+
+    job_input = tmp_path / "job"
+    output_dir = tmp_path / "exact-output"
+    job_input.mkdir()
+
+    comparison_options = parse_host_cli_options(["--output-dir", str(output_dir), str(job_input)], "process-eval")
+    single_options = parse_host_cli_options(["--output-dir", str(output_dir), str(job_input)], "run-one")
+
+    assert comparison_options.result_root == output_dir
+    assert comparison_options.result_dir is None
+    assert single_options.result_dir == output_dir
+    assert single_options.result_root is None
+
+
 def test_benchmark_prompt_requires_installing_source_requirements():
     prompt = (BENCHMARK_ROOT / "prompts" / "benchmark_prompt.txt").read_text(encoding="utf-8")
 

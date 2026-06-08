@@ -157,6 +157,18 @@ The explicit flag is also supported:
 ./bin/run.sh pair --training-code /path/to/job-folder
 ```
 
+Write generated timestamped results under another parent directory:
+
+```bash
+./bin/run.sh process-eval --results-root /path/to/results /path/to/job-folder
+```
+
+Write one comparison to an exact output directory:
+
+```bash
+./bin/run.sh process-eval --output-dir /path/to/exact-run-dir /path/to/job-folder
+```
+
 To use different prompt text, edit or replace `prompts/benchmark_prompt.txt`.
 The job folder is required as either a positional argument, `--training-code`,
 or `JOB_INPUT_DIR`. `TRAINING_CODE` remains a backward-compatible alias only.
