@@ -209,7 +209,7 @@ Important files:
   The harness also clears `$CODEX_HOME/skills` defensively before Codex starts.
 - `skills_build_install.json`: build-time skill install record, present only for skills-enabled runs.
 - `skills_list.json`: installed skill list or baseline disabled marker.
-- `process_eval_runs/<mode>_agent_record.json`: mode-specific process record synthesized by the harness from NVFLARE evaluator records when available, otherwise from Codex process outcome and runtime metadata.
+- `process_eval_runs/<mode>_agent_record.json`: mode-specific process record synthesized by the harness from NVFLARE evaluator records when available, otherwise from agent process outcome and runtime metadata.
 - `process_eval_runs/<mode>_record.json`: harness-normalized run record.
   It records timing, token, image, skill-exposure, evaluator-state metadata, and skill/case identity.
   `agent_record_source` distinguishes official evaluator records from harness outcome-proxy records.

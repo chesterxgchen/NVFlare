@@ -150,6 +150,67 @@ def run_has_result_metric_issue(run: dict[str, Any]) -> bool:
     return not metric_has_value(metric)
 
 
+def dependency_install_attempted(run: dict[str, Any]) -> bool:
+    for command in commands_for_run(run):
+        lowered = command.lower()
+        if "pip install" in lowered or "uv pip install" in lowered or "python -m pip" in lowered:
+            return True
+    return False
+
+
+def benchmark_outcome(run: dict[str, Any]) -> str:
+    if not run.get("available"):
+        return "fail: run artifacts missing"
+    summary = run.get("run") if isinstance(run.get("run"), dict) else {}
+    codex_exit = summary.get("codex_exit_code")
+    final_exit = summary.get("final_container_exit_code")
+    wrapper_status = str(run.get("status") or "")
+    if codex_exit not in (None, 0):
+        return f"fail: agent exit {codex_exit}"
+    if final_exit not in (None, 0):
+        return f"fail: final container exit {final_exit}"
+    if wrapper_status and wrapper_status not in {"0", "missing"}:
+        return f"fail: wrapper status {wrapper_status}"
+    if run_has_result_metric_issue(run):
+        return f"fail: no scalar FL result ({run_result_metric_status(run)})"
+    return "pass: scalar FL result available"
+
+
+def benchmark_outcome_summary(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
+    return "; ".join(f"{REPORT_COL_LABELS[mode]}={benchmark_outcome(runs[mode])}" for mode in modes)
+
+
+def process_pass_display(run: dict[str, Any]) -> str:
+    summary = run.get("run") if isinstance(run.get("run"), dict) else {}
+    record = run.get("record") if isinstance(run.get("record"), dict) else {}
+    value = summary.get("codex_process_passed")
+    if not isinstance(value, bool):
+        value = record.get("codex_process_passed")
+    if isinstance(value, bool):
+        return "pass" if value else "fail"
+    codex_exit = summary.get("codex_exit_code")
+    if codex_exit == 0:
+        return "pass"
+    if codex_exit is None:
+        return "NA"
+    return "fail"
+
+
+def evaluator_availability_display(run: dict[str, Any]) -> str:
+    record = run.get("record") if isinstance(run.get("record"), dict) else {}
+    metrics = record.get("process_metrics") if isinstance(record.get("process_metrics"), dict) else {}
+    available = metrics.get("eval_passed_available")
+    if isinstance(available, (int, float)) and not isinstance(available, bool):
+        return "available" if available else "unavailable"
+    if isinstance(record.get("eval_passed"), bool):
+        return "available"
+    return "unavailable"
+
+
+def fl_result_status_display(run: dict[str, Any]) -> str:
+    return run_result_metric_status(run)
+
+
 def algorithm_display(run: dict[str, Any]) -> str:
     signal = run.get("algorithm_signal")
     signal = signal if isinstance(signal, dict) else algorithm_signal(run)
@@ -313,8 +374,10 @@ def collect_extra_run_names(root: Path, known_modes: set[str]) -> list[str]:
         return names
     marker_names = {
         "run_summary.json",
+        "agent_activity.json",
         "codex_activity.json",
         "timing.json",
+        "agent_last_message.txt",
         "codex_last_message.txt",
         "prompt.txt",
     }
@@ -560,6 +623,14 @@ def dependency_evidence(text: str) -> str | None:
     if preflight_match:
         packages = re.sub(r"[`]", "", preflight_match.group(1)).strip().strip(".")
         return f"preflight missing dependencies: {packages}"
+    runtime_match = re.search(
+        r"missing\s+runtime\s+dependencies.*?((?:`[^`]+`(?:\s*(?:,|and)\s*)?)+)\s+are\s+not\s+installed",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if runtime_match:
+        packages = ", ".join(re.findall(r"`([^`]+)`", runtime_match.group(1)))
+        return f"missing dependencies: {packages}" if packages else "missing dependencies"
     match = re.search(
         r"missing\s+(?:required\s+)?(?:python\s+)?package(?:\(s\))?\s*:? ([^\n.]+)",
         text,
@@ -595,6 +666,8 @@ def result_issue_explanation(run: dict[str, Any]) -> str:
     dependency = dependency_evidence(last_message)
     if dependency:
         reasons.append(dependency)
+        if not dependency_install_attempted(run):
+            reasons.append("no dependency installation command was attempted")
     line = None
     for patterns in (
         (
@@ -616,6 +689,11 @@ def result_issue_explanation(run: dict[str, Any]) -> str:
             break
     if line and line not in reasons:
         reasons.append(line)
+        lowered_line = line.lower()
+        if ("not installed" in lowered_line or "missing depend" in lowered_line) and not dependency_install_attempted(
+            run
+        ):
+            reasons.append("no dependency installation command was attempted")
 
     workspace_delta = run.get("workspace_delta") if isinstance(run.get("workspace_delta"), dict) else {}
     if workspace_delta and workspace_delta.get("runtime_artifact_count") == 0:
@@ -634,10 +712,10 @@ def result_issue_action(run: dict[str, Any]) -> str:
     explanation = result_issue_explanation(run).lower()
     status = run_result_metric_status(run)
     if "missing dependencies" in explanation or "preflight" in explanation or "not installed" in explanation:
-        return "Treat as no-result: FL simulation/export did not run to metric-producing completion."
+        return "Benchmark failure: FL simulation/export did not run to metric-producing completion."
     if status.startswith("partial"):
-        return "Do not compare scalar quality; require the agent/FL job to report one aggregate validation metric."
-    return "Treat as no-result until the run produces parseable FL validation metrics."
+        return "Benchmark failure for scalar-quality comparison; require one aggregate FL validation metric."
+    return "Benchmark failure until the run produces parseable FL validation metrics."
 
 
 def result_issue_modes(runs: dict[str, dict[str, Any]], modes: list[str]) -> list[str]:
@@ -658,7 +736,7 @@ def missing_result_metrics_section(runs: dict[str, dict[str, Any]], modes: list[
     lines = [
         "## Missing Or Partial Result Metrics",
         "",
-        "This section is shown because at least one run did not produce a parseable scalar FL result metric. These rows explain why the run should not be treated as a quality-success result just because the agent process exited.",
+        "This section is shown because at least one run did not produce a parseable scalar FL result metric. A run with no scalar FL result is a benchmark quality failure for comparison purposes, even if the agent process exited or an evaluator record says the final code shape was accepted.",
         "",
         "| Run | Result metric status | Why results are missing or partial | Report action |",
         "| --- | --- | --- | --- |",
@@ -986,6 +1064,28 @@ def evaluator_score_max(run: dict[str, Any]) -> Any:
     return score.get("max") if isinstance(score, dict) else None
 
 
+def evaluator_score_rationale(run: dict[str, Any]) -> str:
+    record = primary_evaluator_record(run)
+    parts: list[str] = []
+    score = record.get("score") if isinstance(record, dict) else None
+    if isinstance(score, dict) and score.get("rationale"):
+        parts.append(str(score["rationale"]))
+    first_pass = record.get("first_pass") if isinstance(record, dict) else None
+    if isinstance(first_pass, dict):
+        accepted = first_pass.get("accepted")
+        violations = first_pass.get("violations")
+        if accepted is False:
+            if isinstance(violations, list) and violations:
+                parts.append("First pass rejected: " + "; ".join(str(item) for item in violations[:3]))
+            else:
+                parts.append("First pass rejected.")
+    if run_has_result_metric_issue(run):
+        parts.append(f"No scalar FL result metric: {run_result_metric_status(run)}.")
+    if not parts:
+        return "No score rationale captured."
+    return " ".join(dict.fromkeys(parts))
+
+
 def evaluator_process_value(run: dict[str, Any], key: str) -> Any:
     record = primary_evaluator_record(run)
     metrics = record.get("process_metrics") if isinstance(record, dict) else None
@@ -1039,6 +1139,22 @@ def reported_metric_value(run: dict[str, Any]) -> Any:
     return None
 
 
+def validation_chart_label(run: dict[str, Any] | None) -> str:
+    if not run:
+        return "NA"
+    metric = run.get("validation_metric")
+    metric = metric if isinstance(metric, dict) else {}
+    name = str(metric.get("name") or "").strip()
+    value = metric.get("value")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{name} {value:.4f}" if name else f"{value:.4f}"
+    if metric_reported_value_count(metric):
+        return f"{name} partial" if name else "partial"
+    if name:
+        return f"{name} missing"
+    return "missing"
+
+
 def fmt_na(value: Any) -> str:
     return "NA" if as_number(value) is None else fmt_short(value)
 
@@ -1073,6 +1189,8 @@ def fmt_yes_no(value: Any) -> str:
 
 
 def format_chart_value(value: Any, kind: str, run: dict[str, Any] | None = None) -> str:
+    if kind == "validation":
+        return validation_chart_label(run)
     numeric = as_number(value)
     if numeric is None:
         return "NA"
@@ -1087,8 +1205,6 @@ def format_chart_value(value: Any, kind: str, run: dict[str, Any] | None = None)
     if kind == "score":
         max_value = evaluator_score_max(run or {}) if run else None
         return fmt_score_value(numeric, max_value)
-    if kind == "validation":
-        return f"{numeric:.4f}"
     return f"{int(round(numeric))}"
 
 
@@ -1107,7 +1223,7 @@ def benchmark_chart_metrics() -> list[tuple[str, Callable[[str, dict[str, dict[s
         ),
         ("Commands", lambda mode, runs: activity_value(runs, mode, "command_count"), "int", None),
         ("Structure score", lambda mode, runs: structure_score(runs[mode]), "percent", 100),
-        ("Reported validation", lambda mode, runs: reported_metric_value(runs[mode]), "validation", None),
+        ("FL scalar result", lambda mode, runs: reported_metric_value(runs[mode]), "validation", None),
         ("Evaluator pass", lambda mode, runs: evaluator_bool_numeric(runs[mode], "eval_passed"), "bool", 1),
         ("Evaluator score", lambda mode, runs: evaluator_score_value(runs[mode]), "score", 5),
         ("Conversion quality", lambda mode, runs: evaluator_process_value(runs[mode], "conversion_quality"), "int", 5),
@@ -1392,6 +1508,39 @@ def evaluator_metric_availability_table(runs: dict[str, dict[str, Any]], modes: 
             + " | ".join(markdown_cell(formatter(values[mode], runs[mode])) for mode in modes)
             + f" | {markdown_cell(note)} |"
         )
+    return "\n".join(lines)
+
+
+def evaluator_score_rationale_table(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
+    lines = [
+        "| Run | Evaluator score | FL result quality gate | Why the score/outcome is reduced |",
+        "| --- | ---: | --- | --- |",
+    ]
+    for mode in modes:
+        lines.append(
+            f"| {REPORT_COL_LABELS[mode]} | "
+            f"{fmt_score_value(evaluator_score_value(runs[mode]), evaluator_score_max(runs[mode]))} | "
+            f"{markdown_cell(benchmark_outcome(runs[mode]))} | "
+            f"{markdown_cell(evaluator_score_rationale(runs[mode]))} |"
+        )
+    return "\n".join(lines)
+
+
+def outcome_metrics_table(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
+    rows = [
+        ("Agent process", lambda run: process_pass_display(run)),
+        ("Evaluator availability", lambda run: evaluator_availability_display(run)),
+        ("Evaluator pass", lambda run: fmt_yes_no(evaluator_bool_value(run, "eval_passed"))),
+        ("Evaluator source", lambda run: (run.get("record") or {}).get("eval_passed_source") or "unavailable"),
+        ("FL scalar result", fl_result_status_display),
+        ("FL result quality gate", benchmark_outcome),
+    ]
+    lines = [
+        "| Metric | " + " | ".join(REPORT_COL_LABELS[mode] for mode in modes) + " |",
+        "| --- | " + " | ".join("---" for _ in modes) + " |",
+    ]
+    for label, getter in rows:
+        lines.append(f"| {label} | " + " | ".join(markdown_cell(getter(runs[mode])) for mode in modes) + " |")
     return "\n".join(lines)
 
 
@@ -1838,6 +1987,7 @@ def process_eval_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
     lines.append(
         "| Status | " + markdown_cell("; ".join(status_bits) if status_bits else "No completed run artifacts.") + " |"
     )
+    lines.append("| FL result quality gate | " + markdown_cell(benchmark_outcome_summary(runs, modes)) + " |")
     lines.append(f"| FL algorithm | **{markdown_cell(fl_algorithm)}** |")
     lines.append("| Source input protection | " + markdown_cell(source_input_protection_summary(runs, modes)) + " |")
     if result_issue_modes(runs, modes):
@@ -1918,6 +2068,14 @@ def process_eval_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
     if missing_results:
         lines.append(missing_results)
         lines.append("")
+    lines.append("## Outcome Metrics")
+    lines.append("")
+    lines.append(
+        "These metrics are intentionally separate: a run can have a passing agent process, no evaluator result, and still fail the FL-result quality gate when no scalar FL metric is available."
+    )
+    lines.append("")
+    lines.append(outcome_metrics_table(runs, modes))
+    lines.append("")
     lines.append("## Skill Eval Added Signals")
     lines.append("")
     lines.append(
@@ -1928,6 +2086,15 @@ def process_eval_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
     lines.append(f"Extra cost: {skill_eval_extra_cost_summary(runs)}.")
     lines.append("")
     lines.append(evaluator_added_signal_table(runs))
+    lines.append("")
+    lines.append("### Evaluator Score Rationale")
+    lines.append("")
+    lines.append(
+        "Evaluator pass/fail is reported as captured, but benchmark quality requires a scalar FL result metric. "
+        "A missing scalar result fails the FL-result quality gate even when the evaluator record says the final code shape was accepted."
+    )
+    lines.append("")
+    lines.append(evaluator_score_rationale_table(runs, modes))
     lines.append("")
     lines.append("## Metrics Comparison")
     lines.append("")
@@ -1987,6 +2154,19 @@ def process_eval_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
     lines.append("| --- | ---: | ---: | ---: |")
     lines.append("| Agent | " + " | ".join(markdown_cell(agent_display(runs[mode])) for mode in modes) + " |")
     lines.append("| Model | " + " | ".join(markdown_cell(agent_model_display(runs[mode])) for mode in modes) + " |")
+    lines.append(
+        "| Agent process | " + " | ".join(markdown_cell(process_pass_display(runs[mode])) for mode in modes) + " |"
+    )
+    lines.append(
+        "| Evaluator availability | "
+        + " | ".join(markdown_cell(evaluator_availability_display(runs[mode])) for mode in modes)
+        + " |"
+    )
+    lines.append(
+        "| FL result quality gate | "
+        + " | ".join(markdown_cell(benchmark_outcome(runs[mode])) for mode in modes)
+        + " |"
+    )
     lines.append(
         "| FL algorithm | " + " | ".join(markdown_cell(algorithm_display(runs[mode])) for mode in modes) + " |"
     )
@@ -2154,6 +2334,19 @@ def process_eval_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
     lines.append("| Signal | " + " | ".join(REPORT_COL_LABELS[mode] for mode in modes) + " |")
     lines.append("| --- | --- | --- | --- |")
     lines.append("| Agent/wrapper outcome | " + " | ".join(run_outcome(runs[mode]) for mode in modes) + " |")
+    lines.append(
+        "| Agent process | " + " | ".join(markdown_cell(process_pass_display(runs[mode])) for mode in modes) + " |"
+    )
+    lines.append(
+        "| Evaluator availability | "
+        + " | ".join(markdown_cell(evaluator_availability_display(runs[mode])) for mode in modes)
+        + " |"
+    )
+    lines.append(
+        "| FL result quality gate | "
+        + " | ".join(markdown_cell(benchmark_outcome(runs[mode])) for mode in modes)
+        + " |"
+    )
     lines.append(
         "| Harness error | " + " | ".join(markdown_cell(harness_error_display(runs[mode])) for mode in modes) + " |"
     )
