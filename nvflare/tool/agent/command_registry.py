@@ -54,20 +54,6 @@ AGENT_COMMANDS = (
         "mutating": False,
         "streaming": False,
     },
-    {
-        "name": "skills performance",
-        "command": "nvflare agent skills performance",
-        "status": "available",
-        "mutating": False,
-        "streaming": False,
-    },
-    {
-        "name": "skills benchmark",
-        "command": "nvflare agent skills benchmark",
-        "status": "available",
-        "mutating": True,
-        "streaming": False,
-    },
 )
 
 

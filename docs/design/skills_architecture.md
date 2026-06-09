@@ -1,8 +1,8 @@
 # FLARE Agent Skill Architecture
 
 This is a picture of what is implemented today for the `nvflare agent` skill
-system: the agent-facing CLI, the packaged skills, the install/list/reporting
-paths, and the benchmark harness that measures skill impact.
+system: the agent-facing CLI, the packaged skills, the install/list paths, and
+the benchmark harness that measures skill impact.
 
 ## High-Level System View
 
@@ -17,10 +17,10 @@ flowchart TB
     AgentRuntime --> AgentCLI["Agent-Facing NVFLARE CLI: info, inspect, doctor, skills"]
     AgentRuntime --> NVFLAREWork["NVFLARE Workflows: recipes, job.py, simulator, job CLI"]
 
-    EvalHarness["Evaluation Harness: assist_tools/skills_benchmark"] --> AgentRuntime
-    AgentRuntime --> Evidence["Run Evidence: events, usage, workspace delta, records"]
-    Evidence --> Reporting["Reporting: skill performance, benchmark, scenario report"]
-    Reporting --> Authoring
+    HarnessCore["Harness Core: scenarios, Docker orchestration, agent adapters, container runs"] --> AgentRuntime
+    AgentRuntime --> Evidence["Run Evidence: events, usage, workspace delta, benchmark records"]
+    Evidence --> HarnessReporting["Harness Reporting: scenario reports, benchmark insights, metrics reports"]
+    HarnessReporting --> Authoring
 ```
 
 ## System Layers
@@ -32,7 +32,8 @@ flowchart TB
 | Python packaging hook | `setup.py`, `nvflare.tool.agent.bundled_skills`, `manifest.json` | Standard wheel-build hook that copies released skills into the NVFLARE package or writes an empty bundle for no-skill builds. |
 | Skill install CLI | `nvflare agent skills install/list`, `skill_manager.py` | CLI copy/install tool that installs managed skills into Codex or Claude target directories with hashes, locks, backups, and symlink checks. |
 | Runtime agent surface | Codex/Claude skill loading, `nvflare agent inspect`, `nvflare agent doctor`, recipe/job CLI | The agent reads skill instructions and uses NVFLARE commands to inspect, convert, validate, or diagnose. |
-| Evaluation and reporting | `assist_tools/skills_benchmark`, `skill_performance.py`, `skill_benchmark.py` | Runs with-skill vs no-skill comparisons and summarizes runtime evidence. |
+| Harness core | `assist_tools/skills_benchmark/bin`, `nvidia.skills.harness.host`, `nvidia.skills.harness.container`, `nvidia.skills.harness.agents`, `scenarios.py`, `records.py` | Runs with-skill vs no-skill comparisons, builds/selects images, launches agent CLIs, applies skill exposure, captures events, usage, workspace deltas, timing, and benchmark records. |
+| Harness reporting | `nvidia.skills.harness.reports`, report generation paths in the host runner | Consumes captured records and summaries to render scenario reports, benchmark insights, and metrics reports. It does not run agents or change skill behavior. |
 
 ## Implemented Architecture
 
@@ -46,8 +47,6 @@ flowchart LR
     NVCLI --> Inspect["inspect: static AST scan"]
     NVCLI --> Doctor["doctor: readiness check"]
     NVCLI --> SkillOps["skills install/list"]
-    NVCLI --> Perf["skills performance"]
-    NVCLI --> Bench["skills benchmark"]
 
     SkillSource["repo-root skills: editable checkout"] --> SkillOps
     WheelBundle["nvflare.tool.agent.bundled_skills: wheel package bundle"] --> SkillOps
@@ -103,25 +102,44 @@ flowchart LR
     Diagnose --> Cause["Likely cause + next action"]
 ```
 
-## Benchmark Harness
+## Harness Core
 
 ```mermaid
 flowchart TD
     Host["assist_tools/skills_benchmark/bin/run.sh"] --> Plan["scenario / run_plan"]
-    Plan --> Docker["Docker run"]
+    Plan --> HostRunner["host runner"]
+    HostRunner --> Docker["Docker run"]
 
     Docker --> Baseline["baseline image: NVFLARE wheel without skills"]
     Docker --> Skills["skills image: NVFLARE wheel with packaged skills"]
 
     Skills --> Preinstall["nvflare agent skills install into agent home"]
-    Preinstall --> AgentRun["Run Codex/Claude with same prompt + input"]
-    Baseline --> AgentRun
+    Preinstall --> ContainerRun["container agent_run"]
+    Baseline --> ContainerRun
+    ContainerRun --> AgentRun["Run Codex/Claude with same prompt + input"]
 
     AgentRun --> Events["agent_events.jsonl"]
     AgentRun --> Usage["agent_usage.json"]
     AgentRun --> Delta["workspace_delta"]
     AgentRun --> Records["process records / run_summary"]
-    Records --> Reports["scenario report, skill performance, skill benchmark"]
+    AgentRun --> LastMessage["agent_last_message.txt"]
+```
+
+## Harness Reporting
+
+```mermaid
+flowchart TD
+    Records["benchmark records and run summaries"] --> ScenarioSummary["scenario_summary.json"]
+    Records --> QualitySignals["quality signals"]
+    Records --> Timing["timing and usage summaries"]
+
+    ScenarioSummary --> ScenarioReport["reports/scenario_report.md and json"]
+    QualitySignals --> BenchmarkInsights["benchmark_insights.md"]
+    Timing --> MetricsReports["metrics_report.md, json, html"]
+
+    ScenarioReport --> Review["human review and skill iteration"]
+    BenchmarkInsights --> Review
+    MetricsReports --> Review
 ```
 
 ## Key Implementation Points
@@ -136,7 +154,8 @@ flowchart TD
 - Static inspection: `/Users/chesterc/projects/NVFlare/nvflare/tool/agent/inspector.py`
 - Readiness checks: `/Users/chesterc/projects/NVFlare/nvflare/tool/agent/doctor.py`
 - Packaging hook: `/Users/chesterc/projects/NVFlare/setup.py:116`
-- Benchmark runtime: `/Users/chesterc/projects/NVFlare/assist_tools/skills_benchmark`
+- Harness core: `/Users/chesterc/projects/NVFlare/assist_tools/skills_benchmark/nvidia/skills/harness`
+- Harness reporting: `/Users/chesterc/projects/NVFlare/assist_tools/skills_benchmark/nvidia/skills/harness/reports`
 
 The important boundary: NVFLARE does not run a custom agent runtime for these
 skills. It packages, installs, validates, and measures skill files that
