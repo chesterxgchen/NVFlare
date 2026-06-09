@@ -65,20 +65,31 @@ ACTIVITY_PARSERS = {
 }
 
 
+def validate_event_parser(parser_id: str) -> None:
+    if parser_id not in EVENT_PARSERS:
+        raise ValueError(f"Unknown agent event parser: {parser_id}")
+
+
+def validate_usage_parser(parser_id: str) -> None:
+    if parser_id not in USAGE_PARSERS:
+        raise ValueError(f"Unknown agent usage parser: {parser_id}")
+
+
+def validate_activity_parser(parser_id: str) -> None:
+    if parser_id not in ACTIVITY_PARSERS:
+        raise ValueError(f"Unknown agent activity parser: {parser_id}")
+
+
 def normalize_event_with_parser(raw_line: str, parser_id: str) -> dict[str, Any] | None:
-    try:
-        parser = EVENT_PARSERS[parser_id]
-    except KeyError as exc:
-        raise ValueError(f"Unknown agent event parser: {parser_id}") from exc
+    validate_event_parser(parser_id)
+    parser = EVENT_PARSERS[parser_id]
     return parser(raw_line)
 
 
 def parse_usage_from_events(events_path: Path, usage_config: Any) -> dict[str, Any]:
     parser_id = getattr(usage_config, "parser", None) or "generic_cli_usage"
-    try:
-        parser = USAGE_PARSERS[parser_id]
-    except KeyError as exc:
-        raise ValueError(f"Unknown agent usage parser: {parser_id}") from exc
+    validate_usage_parser(parser_id)
+    parser = USAGE_PARSERS[parser_id]
     usage = parser(events_path)
     usage.setdefault("parser_id", parser_id)
     return usage
@@ -86,10 +97,8 @@ def parse_usage_from_events(events_path: Path, usage_config: Any) -> dict[str, A
 
 def parse_activity_from_events(events_path: Path, activity_config: Any) -> dict[str, Any]:
     parser_id = getattr(activity_config, "parser", None) or "generic_jsonl_activity"
-    try:
-        parser = ACTIVITY_PARSERS[parser_id]
-    except KeyError as exc:
-        raise ValueError(f"Unknown agent activity parser: {parser_id}") from exc
+    validate_activity_parser(parser_id)
+    parser = ACTIVITY_PARSERS[parser_id]
     activity = parser(events_path)
     activity.setdefault("parser_id", parser_id)
     return activity

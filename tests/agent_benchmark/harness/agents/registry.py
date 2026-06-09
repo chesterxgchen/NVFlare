@@ -24,6 +24,7 @@ from .base import AgentAdapter
 from .config import ConfigurableAgentAdapter
 
 AGENTS_DIR = Path(__file__).resolve().parent
+DEFAULT_BENCHMARK_AGENT = "codex"
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,16 @@ def get_agent_adapter(agent: str) -> AgentAdapter:
 
 def load_agent_adapter(agent: str) -> AgentAdapter:
     return get_agent_adapter(agent)
+
+
+def clear_agent_adapter_cache() -> None:
+    """Reset adapter instances cached from YAML configs.
+
+    Tests that patch registry entries or config files should call this before
+    reloading adapters.
+    """
+
+    get_agent_adapter.cache_clear()
 
 
 def normalize_agent_event(agent: str, raw_line: str) -> dict | None:

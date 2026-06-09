@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
@@ -80,6 +82,36 @@ def remove_directory_contents(root: Path) -> list[str]:
     return disabled
 
 
+def run_exposure_action(action: list[str], result_dir: Path, name: str, env: dict[str, str]) -> tuple[str, str | None]:
+    if not action:
+        return "skipped", None
+    output_path = result_dir / f"skills_{name}_output.txt"
+    result = subprocess.run(
+        action,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ, **env},
+    )
+    output_path.write_text(result.stdout or "", encoding="utf-8")
+    if result.returncode != 0:
+        write_json(
+            result_dir / "skills_state.json",
+            {
+                "status": "error",
+                "reason": f"{name}_action_failed",
+                "exit_code": result.returncode,
+                "mechanism_type": "action",
+                "command": action,
+                "output_ref": str(output_path),
+            },
+        )
+        raise SystemExit(2)
+    return "passed", str(output_path)
+
+
 def apply_skill_exposure(
     *,
     spec: SkillExposureSpec,
@@ -102,6 +134,9 @@ def apply_skill_exposure(
         return result
 
     if skills_enabled:
+        setup_status, setup_output_ref = run_exposure_action(
+            spec.setup_action, result_dir, "setup_action", spec.environment
+        )
         if spec.skill_root and (
             not spec.skill_root.is_dir() or not any(path.is_dir() for path in spec.skill_root.iterdir())
         ):
@@ -115,23 +150,40 @@ def apply_skill_exposure(
             )
             raise SystemExit(2)
         metadata_files = copy_metadata_paths(spec.metadata_files, result_dir)
+        probe_status, probe_output_ref = run_exposure_action(
+            spec.probe_action, result_dir, "probe_action", spec.environment
+        )
         write_json(
             result_dir / "skills_state.json",
             {
-                "status": "enabled",
+                "status": "prepared",
                 "source": nvflare_image_kind,
                 "skills_enabled": True,
                 "mechanism_type": spec.mechanism_type,
+                "setup_status": setup_status,
+                "setup_output_ref": setup_output_ref,
+                "probe_status": probe_status,
+                "probe_output_ref": probe_output_ref,
             },
         )
         return SkillExposureResult(
-            status="enabled",
+            status="prepared",
             mechanism_type=spec.mechanism_type,
             installed_paths=[str(spec.skill_root)] if spec.skill_root else [],
+            launch_args=list(spec.launch_args),
+            environment=dict(spec.environment),
+            probe_status=probe_status,
+            probe_output_ref=probe_output_ref,
             metadata_files=metadata_files,
         )
 
+    disable_status, disable_output_ref = run_exposure_action(
+        spec.disable_action, result_dir, "disable_action", spec.environment
+    )
     disabled_paths = remove_directory_contents(spec.skill_root) if spec.skill_root else []
+    parser_warnings = []
+    if not spec.skill_root:
+        parser_warnings.append("no skill_root configured for disabled skill exposure")
     bundled_root = bundled_skills_root() if spec.disable_packaged_source else None
     removed_packaged_source = False
     if bundled_root:
@@ -150,6 +202,9 @@ def apply_skill_exposure(
             "image_kind": nvflare_image_kind,
             "mechanism_type": spec.mechanism_type,
             "disabled_paths": disabled_paths,
+            "disable_status": disable_status,
+            "disable_output_ref": disable_output_ref,
+            "note": parser_warnings[0] if parser_warnings else "",
             "packaged_skill_source_removed_during_agent": removed_packaged_source,
             "packaged_skill_source_path": bundled_root,
             "reporting_note": (
@@ -166,4 +221,5 @@ def apply_skill_exposure(
         status="disabled",
         mechanism_type=spec.mechanism_type,
         disabled_paths=disabled_paths,
+        parser_warnings=parser_warnings,
     )

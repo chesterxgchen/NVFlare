@@ -80,6 +80,8 @@ def apply_record_runtime_fields(
     record["skills_enabled"] = skills_enabled
     record["agent_process_passed"] = agent_exit == 0
     record["agent_process_exit_code"] = agent_exit
+    record["agent_elapsed_seconds"] = elapsed_seconds
+    record["elapsed_seconds"] = elapsed_seconds
     record["timestamp"] = record.get("timestamp") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     if agent_record_present is not None:
         record["agent_record_present"] = agent_record_present
@@ -93,6 +95,7 @@ def apply_record_runtime_fields(
     metrics.update(
         {
             "elapsed_seconds": elapsed_seconds,
+            "agent_elapsed_seconds": elapsed_seconds,
             "token_count": usage.get("total_tokens"),
             "agent_exit_code": agent_exit,
             "agent_process_passed": 1 if agent_exit == 0 else 0,
@@ -799,13 +802,24 @@ def merge_record(
 def write_run_summary(final_record_path: Path, summary_path: Path, *, print_summary: bool = True) -> None:
     record = load_json(final_record_path, {}) or {}
     metrics = record.get("process_metrics") or {}
+    prompt_metadata = load_json(summary_path.parent / "prompt_metadata.json", {}) or {}
+    if not isinstance(prompt_metadata, dict):
+        prompt_metadata = {}
+    agent_elapsed = metrics.get("agent_elapsed_seconds")
+    if agent_elapsed is None:
+        agent_elapsed = record.get("agent_elapsed_seconds")
+    if agent_elapsed is None:
+        agent_elapsed = metrics.get("elapsed_seconds")
     summary = {
         "mode": record.get("mode"),
         "run_mode": record.get("run_mode"),
         "skill": record.get("skill"),
         "skill_name": record.get("skill_name"),
         "case_id": record.get("case_id"),
+        "agent_elapsed_seconds": agent_elapsed,
         "elapsed_seconds": metrics.get("elapsed_seconds"),
+        "prompt_hash": prompt_metadata.get("prompt_sha256"),
+        "prompt_source": prompt_metadata.get("template_path"),
         "token_count": metrics.get("token_count"),
         "conversion_quality": metrics.get("conversion_quality"),
         "correction_count": metrics.get("correction_count"),
@@ -832,7 +846,7 @@ def write_run_summary(final_record_path: Path, summary_path: Path, *, print_summ
         "prohibited_behavior": record.get("prohibited_behavior") or {},
         "optional_behavior": record.get("optional_behavior") or {},
         "skill_discovery": record.get("skill_discovery") or {},
-        "agent_usage": record.get("agent_usage") or record.get("codex_usage") or {},
+        "agent_usage": record.get("agent_usage") or {},
         "workspace_delta": record.get("workspace_delta") or {},
         "source_input_delta": record.get("source_input_delta") or {},
         "source_input_immutable_policy": record.get("source_input_immutable_policy") or {},
@@ -873,7 +887,7 @@ def main() -> None:
     synth.add_argument("run_start_time_ns", type=int)
     synth.add_argument("workspace_delta_manifest", type=Path)
     synth.add_argument("input_delta_manifest", nargs="?", type=Path)
-    synth.add_argument("--agent", default=os.environ.get("BENCHMARK_AGENT", "codex"))
+    synth.add_argument("--agent", default=os.environ.get("BENCHMARK_AGENT", "unknown"))
 
     merge = subparsers.add_parser("merge")
     merge.add_argument("agent_record", type=Path)
@@ -885,7 +899,7 @@ def main() -> None:
     merge.add_argument("skills_enabled")
     merge.add_argument("skill_run_mode")
     merge.add_argument("agent_model")
-    merge.add_argument("--agent", default=os.environ.get("BENCHMARK_AGENT", "codex"))
+    merge.add_argument("--agent", default=os.environ.get("BENCHMARK_AGENT", "unknown"))
 
     summary = subparsers.add_parser("summary")
     summary.add_argument("final_record", type=Path)

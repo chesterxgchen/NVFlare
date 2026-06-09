@@ -35,8 +35,15 @@ from .base import (
     SkillExposureContext,
     SkillExposureSpec,
 )
-from .classifiers import classify_exit
-from .parsers import normalize_event_with_parser, parse_activity_from_events, parse_usage_from_events
+from .classifiers import classify_exit, validate_exit_classifier
+from .parsers import (
+    normalize_event_with_parser,
+    parse_activity_from_events,
+    parse_usage_from_events,
+    validate_activity_parser,
+    validate_event_parser,
+    validate_usage_parser,
+)
 
 PROMPT_TEXT_PLACEHOLDER = "prompt_text"
 UNSPECIFIED_MODEL = "unspecified_default"
@@ -104,6 +111,15 @@ class AgentConfig:
         if prompt_input_mode not in {"stdin", "file_arg"}:
             raise ValueError(f"{config_path}: launch.prompt_input_mode must be stdin or file_arg")
 
+        events = parser_config(data, "events", config_path)
+        usage = parser_config(data, "usage", config_path)
+        activity = parser_config(data, "activity", config_path)
+        exit_classifier = str(required_mapping(data, "exit", config_path).get("classifier") or "")
+        validate_event_parser(events.parser)
+        validate_usage_parser(usage.parser)
+        validate_activity_parser(activity.parser)
+        validate_exit_classifier(exit_classifier)
+
         return cls(
             source_path=config_path,
             raw=data,
@@ -120,10 +136,10 @@ class AgentConfig:
             launch=launch,
             skill_exposure=required_mapping(data, "skill_exposure", config_path),
             final_message=required_mapping(data, "final_message", config_path),
-            events=parser_config(data, "events", config_path),
-            usage=parser_config(data, "usage", config_path),
-            activity=parser_config(data, "activity", config_path),
-            exit_classifier=str(required_mapping(data, "exit", config_path).get("classifier") or ""),
+            events=events,
+            usage=usage,
+            activity=activity,
+            exit_classifier=exit_classifier,
             availability_probe=[str(item) for item in data.get("availability_probe") or []],
         )
 
@@ -408,6 +424,16 @@ class ConfigurableAgentAdapter(AgentAdapter):
         return FinalMessageSource(
             source_type=source_type,
             path=maybe_render_path(self._cfg.final_message.get("path"), render_values),
+            event_selector=(
+                dict(self._cfg.final_message["event_selector"])
+                if isinstance(self._cfg.final_message.get("event_selector"), dict)
+                else None
+            ),
+            tail_bytes=(
+                int(self._cfg.final_message["tail_bytes"])
+                if self._cfg.final_message.get("tail_bytes") is not None
+                else None
+            ),
             parser=str(self._cfg.final_message["parser"]) if self._cfg.final_message.get("parser") else None,
         )
 
