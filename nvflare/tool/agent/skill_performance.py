@@ -176,23 +176,31 @@ def _process_metrics(eval_case: dict) -> list[dict]:
 
 def _load_records(records_path: Path) -> tuple[list[dict], str]:
     if not records_path.exists():
-        raise ValueError(f"process records path does not exist: {records_path}")
+        raise SkillPerformanceError(
+            "PROCESS_RECORDS_PATH_NOT_FOUND",
+            f"Process records path does not exist: {records_path}.",
+            "Pass an existing --records file or directory.",
+        )
 
     if records_path.is_file():
         return _read_record_file(records_path), "loaded"
 
     record_files = []
-    for path in records_path.rglob("*"):
-        if path.is_symlink() or not path.is_file():
-            continue
-        if path.suffix in (".json", ".jsonl"):
-            record_files.append(path)
-            if len(record_files) >= MAX_RECORD_FILES + 1:
-                raise SkillPerformanceError(
-                    "PROCESS_RECORD_FILE_LIMIT_EXCEEDED",
-                    f"Process records path has more than {MAX_RECORD_FILES} JSON/JSONL files: {records_path}.",
-                    "Pass a narrower --records path or archive older benchmark records.",
-                )
+    for dirpath, dirnames, filenames in os.walk(records_path, followlinks=False):
+        root = Path(dirpath)
+        dirnames[:] = [dirname for dirname in dirnames if not (root / dirname).is_symlink()]
+        for filename in filenames:
+            path = root / filename
+            if path.is_symlink() or not path.is_file():
+                continue
+            if path.suffix in (".json", ".jsonl"):
+                record_files.append(path)
+                if len(record_files) >= MAX_RECORD_FILES + 1:
+                    raise SkillPerformanceError(
+                        "PROCESS_RECORD_FILE_LIMIT_EXCEEDED",
+                        f"Process records path has more than {MAX_RECORD_FILES} JSON/JSONL files: {records_path}.",
+                        "Pass a narrower --records path or archive older benchmark records.",
+                    )
     records = []
     for path in sorted(record_files):
         records.extend(_read_record_file(path))
@@ -206,20 +214,32 @@ def _read_record_file(path: Path) -> list[dict]:
     _validate_record_file_size(path)
     if path.suffix == ".jsonl":
         records = []
-        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError as e:
+            raise SkillPerformanceError(
+                "PROCESS_RECORD_FILE_UNREADABLE",
+                f"Could not read process record file {path}: {e}.",
+                "Fix record file permissions or pass a different --records path.",
+            ) from e
+        for line_no, line in enumerate(lines, start=1):
             stripped = line.strip()
             if not stripped:
                 continue
             try:
                 record = json.loads(stripped)
             except json.JSONDecodeError as e:
-                raise ValueError(f"invalid JSONL record in {path}:{line_no}: {e}") from e
+                raise SkillPerformanceError(
+                    "INVALID_PROCESS_RECORD_JSONL",
+                    f"Invalid JSONL process record in {path}:{line_no}: {e}.",
+                    "Fix or remove the malformed process record file.",
+                ) from e
             if isinstance(record, dict):
                 _validate_record(record, path)
                 records.append(_with_record_metadata(record, path))
         return records
 
-    data = _read_json_file(path)
+    data = _read_record_json_file(path)
     if isinstance(data, list):
         records = []
         for record in data:
@@ -244,7 +264,11 @@ def _validate_record_file_size(path: Path) -> None:
     try:
         size = path.stat().st_size
     except OSError as e:
-        raise ValueError(f"could not stat process record file {path}: {e}") from e
+        raise SkillPerformanceError(
+            "PROCESS_RECORD_FILE_UNREADABLE",
+            f"Could not stat process record file {path}: {e}.",
+            "Fix record file permissions or pass a different --records path.",
+        ) from e
     if size > MAX_RECORD_BYTES:
         raise SkillPerformanceError(
             "PROCESS_RECORD_FILE_TOO_LARGE",
@@ -252,6 +276,23 @@ def _validate_record_file_size(path: Path) -> None:
             "Pass a narrower --records path, remove oversized files, or raise NVFLARE_AGENT_MAX_RECORD_BYTES.",
             detail=f"size_bytes={size}",
         )
+
+
+def _read_record_json_file(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise SkillPerformanceError(
+            "INVALID_PROCESS_RECORD_JSON",
+            f"Invalid JSON process record in {path}: {e}.",
+            "Fix or remove the malformed process record file.",
+        ) from e
+    except (OSError, UnicodeDecodeError) as e:
+        raise SkillPerformanceError(
+            "PROCESS_RECORD_FILE_UNREADABLE",
+            f"Could not read process record file {path}: {e}.",
+            "Fix record file permissions, encoding, or pass a different --records path.",
+        ) from e
 
 
 def _read_json_file(path: Path) -> Any:
@@ -329,7 +370,7 @@ def _record_sort_timestamp(record: dict, path: Path) -> int:
     try:
         return path.stat().st_mtime_ns
     except OSError:
-        return 0
+        return -1
 
 
 def _filter_records(records: list[dict], *, selected_names: set[str], case_id: Optional[str]) -> list[dict]:
@@ -381,9 +422,7 @@ def _summaries(records: list[dict], skills: list[dict]) -> list[dict]:
 def _summary_key(
     skill: Optional[str], skill_version: Optional[str], case_id: Optional[str], run_mode: Any, source_hash: Any
 ) -> tuple:
-    key_run_mode = run_mode if run_mode is not None else None
-    key_source_hash = source_hash if source_hash is not None else None
-    return (skill, skill_version, case_id, key_run_mode, key_source_hash)
+    return (skill, skill_version, case_id, run_mode, source_hash)
 
 
 def _sortable_summary_key(key: tuple) -> tuple:

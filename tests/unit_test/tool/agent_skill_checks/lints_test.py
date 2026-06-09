@@ -14,7 +14,18 @@
 
 import json
 
-from nvflare.tool.agent_skill_checks.lints import MAX_SKILL_TEXT_FILE_BYTES, V1_LINT_IDS, run_v1_lints, validate_skills
+import pytest
+
+from nvflare.tool.agent_skill_checks import lints as lints_module
+from nvflare.tool.agent_skill_checks.lints import (
+    MAX_SKILL_TEXT_FILE_BYTES,
+    V1_LINT_IDS,
+    _parse_conversion_table,
+    _parse_product_catalog,
+    _run_v1_lints_with_records,
+    run_v1_lints,
+    validate_skills,
+)
 
 LINT_SKILL_FRONTMATTER = "skill-frontmatter-lint"
 LINT_SKILL_MD_SIZE = "skill-md-size-lint"
@@ -86,6 +97,24 @@ def test_run_v1_lints_reports_skill_md_size(tmp_path):
 
     assert _has_finding(result, LINT_SKILL_MD_SIZE, "skill-md-too-large")
     _assert_structured_findings(result)
+
+
+def test_run_v1_lints_does_not_parse_oversized_skill_md(monkeypatch, tmp_path):
+    skill_dir = _write_skill(tmp_path / "skills", "nvflare-large-skill")
+    with skill_dir.joinpath("SKILL.md").open("ab") as stream:
+        stream.truncate(MAX_SKILL_TEXT_FILE_BYTES + 1)
+    monkeypatch.setattr(
+        lints_module,
+        "_try_parse_frontmatter",
+        lambda _path: (_ for _ in ()).throw(AssertionError("oversized SKILL.md should not be parsed")),
+    )
+
+    result, records = _run_v1_lints_with_records(tmp_path / "skills", checks=[LINT_SKILL_MD_SIZE])
+
+    assert records[0].metadata == {}
+    assert records[0].text == ""
+    assert records[0].body == ""
+    assert _has_finding(result, LINT_SKILL_MD_SIZE, "skill-md-too-large")
 
 
 def test_run_v1_lints_reports_missing_trigger_evals(tmp_path):
@@ -206,6 +235,20 @@ def test_run_v1_lints_reports_helper_script_without_test(tmp_path):
     _assert_structured_findings(result)
 
 
+def test_run_v1_lints_helper_script_ignores_symlink_loop(tmp_path):
+    skill_dir = _write_skill(tmp_path / "skills", "nvflare-helper-skill")
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir()
+    scripts_dir.joinpath("helper.py").write_text("print('{}')\n", encoding="utf-8")
+    _symlink_dir_or_skip(scripts_dir, scripts_dir / "loop")
+    docs_root = _write_design_docs(tmp_path, ["nvflare-helper-skill"])
+
+    result = run_v1_lints(tmp_path / "skills", docs_root=docs_root, checks=[LINT_SKILL_HELPER_SCRIPT])
+
+    assert _has_finding(result, LINT_SKILL_HELPER_SCRIPT, "skill-helper-tests-missing")
+    _assert_structured_findings(result)
+
+
 def test_run_v1_lints_skips_oversized_helper_script_content_checks(tmp_path):
     skill_dir = _write_skill(tmp_path / "skills", "nvflare-helper-skill")
     scripts_dir = skill_dir / "scripts"
@@ -234,6 +277,72 @@ def test_run_v1_lints_reports_missing_fixture_file(tmp_path):
     result = run_v1_lints(tmp_path / "skills", docs_root=docs_root)
 
     assert _has_finding(result, LINT_SKILL_FIXTURE, "skill-fixture-file-missing")
+    _assert_structured_findings(result)
+
+
+def test_run_v1_lints_fixture_file_check_ignores_symlink_loop(tmp_path):
+    evals = _default_evals("nvflare-fixture-skill")
+    evals["evals"][0]["files"] = ["evals/files/input.py"]
+    skill_dir = _write_skill(tmp_path / "skills", "nvflare-fixture-skill", evals=evals, write_fixture=False)
+    files_dir = skill_dir / "evals" / "files"
+    files_dir.mkdir()
+    files_dir.joinpath("input.py").write_text("print('hello')\n", encoding="utf-8")
+    _symlink_dir_or_skip(files_dir, files_dir / "loop")
+    docs_root = _write_design_docs(tmp_path, ["nvflare-fixture-skill"])
+
+    result = run_v1_lints(tmp_path / "skills", docs_root=docs_root, checks=[LINT_SKILL_FIXTURE])
+
+    assert _has_finding(result, LINT_SKILL_FIXTURE, "skill-fixture-notes-missing")
+    _assert_structured_findings(result)
+
+
+def test_run_v1_lints_does_not_require_fixtures_for_conceptual_file_mentions(tmp_path):
+    evals = {
+        "skill_name": "nvflare-fixture-skill",
+        "evals": [
+            {
+                "id": "conceptual-file-guidance",
+                "prompt": "Explain how to create a dataset file naming convention.",
+                "expected_output": "A written explanation, not edited files.",
+                "files": [],
+                "assertions": ["Mentions file naming without creating artifacts."],
+                "nvflare": {"expected_skill": "nvflare-fixture-skill"},
+            }
+        ],
+        "nvflare": {"category": "conversion"},
+    }
+    _write_skill(tmp_path / "skills", "nvflare-fixture-skill", evals=evals, write_fixture=False)
+    docs_root = _write_design_docs(tmp_path, ["nvflare-fixture-skill"])
+
+    result = run_v1_lints(tmp_path / "skills", docs_root=docs_root, checks=[LINT_SKILL_FIXTURE])
+
+    assert result["status"] == "ok"
+    assert result["findings"] == []
+
+
+def test_run_v1_lints_reference_text_scan_ignores_symlink_loop(tmp_path):
+    skill_dir = _write_skill(tmp_path / "skills", "nvflare-command-skill")
+    references_dir = skill_dir / "references"
+    references_dir.mkdir()
+    references_dir.joinpath("guide.md").write_text("Run `nvflare unknown --format json`.\n", encoding="utf-8")
+    _symlink_dir_or_skip(references_dir, references_dir / "loop")
+    docs_root = _write_design_docs(tmp_path, ["nvflare-command-skill"])
+
+    result = run_v1_lints(tmp_path / "skills", docs_root=docs_root, checks=[LINT_SKILL_COMMAND_DRIFT])
+
+    assert _has_finding(result, LINT_SKILL_COMMAND_DRIFT, "skill-command-drift")
+    _assert_structured_findings(result)
+
+
+def test_run_v1_lints_rejects_fixture_paths_that_escape_skill_dir(tmp_path):
+    evals = _default_evals("nvflare-fixture-skill")
+    evals["evals"][0]["files"] = ["../outside.py"]
+    _write_skill(tmp_path / "skills", "nvflare-fixture-skill", evals=evals)
+    docs_root = _write_design_docs(tmp_path, ["nvflare-fixture-skill"])
+
+    result = run_v1_lints(tmp_path / "skills", docs_root=docs_root, checks=[LINT_SKILL_FIXTURE])
+
+    assert _has_finding(result, LINT_SKILL_FIXTURE, "skill-fixture-path-escape")
     _assert_structured_findings(result)
 
 
@@ -290,6 +399,32 @@ def test_run_v1_lints_records_doc_dependent_overlap_skip(tmp_path):
 
     assert result["status"] == "ok"
     assert result["skipped_checks"] == [{"id": LINT_SKILL_TRIGGER_OVERLAP, "reason": "docs root is not available"}]
+
+
+def test_run_v1_lints_doc_crosslinks_skip_oversized_doc(tmp_path):
+    _write_skill(tmp_path / "skills", "nvflare-valid-skill")
+    docs_root = _write_design_docs(tmp_path, ["nvflare-valid-skill"])
+    doc_path = docs_root / "agent_implementation_plan.md"
+    doc_path.write_text("[Broken](missing.md)\n", encoding="utf-8")
+    with doc_path.open("ab") as stream:
+        stream.truncate(MAX_SKILL_TEXT_FILE_BYTES + 1)
+
+    result = run_v1_lints(tmp_path / "skills", docs_root=docs_root, checks=[LINT_AGENT_DOC_CROSSLINK])
+
+    assert result["status"] == "ok"
+    assert result["findings"] == []
+
+
+def test_catalog_parsers_skip_oversized_docs(tmp_path):
+    docs_root = _write_design_docs(tmp_path, ["nvflare-valid-skill"])
+    product_doc = docs_root / "agent_integration.md"
+    conversion_doc = docs_root / "agent_skill_authoring.md"
+    for doc_path in (product_doc, conversion_doc):
+        with doc_path.open("ab") as stream:
+            stream.truncate(MAX_SKILL_TEXT_FILE_BYTES + 1)
+
+    assert _parse_product_catalog(product_doc) == {}
+    assert _parse_conversion_table(conversion_doc) == {}
 
 
 def test_validate_skills_filters_summary_to_requested_skill(tmp_path):
@@ -405,6 +540,13 @@ def _write_design_docs(tmp_path, skills, *, category="Conversion", tier="bundle"
         encoding="utf-8",
     )
     return docs_root
+
+
+def _symlink_dir_or_skip(target, link):
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except (NotImplementedError, OSError) as e:
+        pytest.skip(f"directory symlink is not available in this environment: {e}")
 
 
 def _default_evals(name, *, category="conversion", adjacent_negative=True, include_behavior_ids=True):

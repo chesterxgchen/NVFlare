@@ -350,8 +350,9 @@ def _load_skill_records(skills_root: Path, findings: list[LintFinding]) -> list[
         if should_skip_skill_dir(child):
             continue
         skill_file = child / SKILL_FILE_NAME
-        text = skill_file.read_text(encoding="utf-8-sig") if skill_file.is_file() else ""
-        metadata = _try_parse_frontmatter(skill_file) if skill_file.is_file() else {}
+        text = _read_bounded_text(skill_file) if skill_file.is_file() else None
+        metadata = _try_parse_frontmatter(skill_file) if text is not None else {}
+        text = text or ""
         evals_path = child / "evals" / "evals.json"
         evals, evals_error = _load_evals(evals_path)
         records.append(
@@ -414,6 +415,22 @@ def _has_valid_name(metadata: dict[str, Any]) -> bool:
 def _lint_md_size(context: LintContext) -> None:
     for record in context.records:
         if not record.skill_file.is_file():
+            continue
+        if _is_oversized_text_file(record.skill_file):
+            if _has_bounded_size_exception(record.skill_file):
+                continue
+            context.findings.append(
+                _finding(
+                    "skill-md-size-lint",
+                    FINDING_ERROR,
+                    record.skill_file,
+                    f"SKILL.md exceeds the readable size limit of {MAX_SKILL_TEXT_FILE_BYTES} bytes",
+                    "Move detailed workflow notes into references/ or add an approved exception marker near the top.",
+                    code="skill-md-too-large",
+                    skill=record.name,
+                    line=1,
+                )
+            )
             continue
         lines = record.text.splitlines()
         max_lines = context.max_skill_md_lines
@@ -805,7 +822,7 @@ def _lint_helper_scripts(context: LintContext) -> None:
         scripts_dir = record.skill_dir / "scripts"
         if not scripts_dir.is_dir():
             continue
-        script_files = [p for p in sorted(scripts_dir.rglob("*")) if p.is_file()]
+        script_files = list(_iter_files_no_follow(scripts_dir))
         if script_files and not _skill_has_helper_tests(record.skill_dir):
             context.findings.append(
                 _finding(
@@ -897,6 +914,21 @@ def _lint_fixtures(context: LintContext) -> None:
 
             for rel_path in files:
                 fixture_path = record.skill_dir / str(rel_path)
+                resolved_fixture_path = fixture_path.resolve(strict=False)
+                resolved_skill_dir = record.skill_dir.resolve()
+                if not resolved_fixture_path.is_relative_to(resolved_skill_dir):
+                    context.findings.append(
+                        _finding(
+                            "skill-fixture-lint",
+                            FINDING_ERROR,
+                            record.evals_path,
+                            f"eval fixture path escapes skill directory: {rel_path}",
+                            "Use fixture paths relative to the skill directory.",
+                            code="skill-fixture-path-escape",
+                            skill=record.name,
+                        )
+                    )
+                    continue
                 if not fixture_path.is_file():
                     context.findings.append(
                         _finding(
@@ -932,15 +964,18 @@ def _lint_doc_crosslinks(context: LintContext) -> None:
         return
 
     text_by_path = {
-        doc_path: doc_path.read_text(encoding="utf-8", errors="replace")
+        doc_path: text
         for doc_path in _iter_existing_doc_files(docs_root)
+        if (text := _read_bounded_text(doc_path)) is not None
     }
     anchors_by_path = {doc_path.resolve(): _markdown_anchors(text) for doc_path, text in text_by_path.items()}
 
     def anchors_for_path(path: Path) -> set[str]:
         resolved = path.resolve()
         if resolved not in anchors_by_path and path.suffix.lower() in {".md", ".markdown"} and path.is_file():
-            anchors_by_path[resolved] = _markdown_anchors(path.read_text(encoding="utf-8", errors="replace"))
+            text = _read_bounded_text(path)
+            if text is not None:
+                anchors_by_path[resolved] = _markdown_anchors(text)
         return anchors_by_path.get(resolved, set())
 
     for doc_path, text in text_by_path.items():
@@ -978,19 +1013,20 @@ def _lint_doc_crosslinks(context: LintContext) -> None:
 
     eval_doc = docs_root / "agent_skill_evaluation.md"
     if eval_doc.is_file():
-        text = text_by_path.get(eval_doc) or eval_doc.read_text(encoding="utf-8", errors="replace")
-        for lint_id in V1_LINT_IDS:
-            if f"`{lint_id}`" not in text:
-                context.findings.append(
-                    _finding(
-                        "agent-doc-crosslink-lint",
-                        FINDING_ERROR,
-                        eval_doc,
-                        f"lint id '{lint_id}' is missing from the canonical evaluation doc",
-                        "Keep agent_skill_evaluation.md#v1-engineering-lints as the canonical lint table.",
-                        code="agent-doc-lint-id-missing",
+        text = text_by_path.get(eval_doc)
+        if text is not None:
+            for lint_id in V1_LINT_IDS:
+                if f"`{lint_id}`" not in text:
+                    context.findings.append(
+                        _finding(
+                            "agent-doc-crosslink-lint",
+                            FINDING_ERROR,
+                            eval_doc,
+                            f"lint id '{lint_id}' is missing from the canonical evaluation doc",
+                            "Keep agent_skill_evaluation.md#v1-engineering-lints as the canonical lint table.",
+                            code="agent-doc-lint-id-missing",
+                        )
                     )
-                )
 
     for doc_path, text in text_by_path.items():
         if doc_path.name == "agent_skills_deferred_roadmap.md":
@@ -1190,11 +1226,12 @@ def _category_map(context: LintContext) -> dict[str, str]:
 
 
 def _parse_product_catalog(path: Path) -> dict[str, dict[str, str]]:
-    if not path.is_file():
+    text = _read_bounded_text(path)
+    if text is None:
         return {}
     rows = {}
     in_table = False
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in text.splitlines():
         stripped = line.strip()
         if stripped.startswith("| Category | Skill | Tier | Purpose |"):
             in_table = True
@@ -1215,11 +1252,12 @@ def _parse_product_catalog(path: Path) -> dict[str, dict[str, str]]:
 
 
 def _parse_conversion_table(path: Path) -> dict[str, str]:
-    if not path.is_file():
+    text = _read_bounded_text(path)
+    if text is None:
         return {}
     rows = {}
     in_table = False
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in text.splitlines():
         stripped = line.strip()
         if stripped.startswith("| Code Family | Skill | Scope | Current Repo Evidence | Tier |"):
             in_table = True
@@ -1324,9 +1362,9 @@ def _looks_like_value(token: str) -> bool:
 
 def _skill_has_helper_tests(skill_dir: Path) -> bool:
     tests_dir = skill_dir / "tests"
-    if tests_dir.is_dir() and any(path.is_file() for path in tests_dir.rglob("*")):
+    if tests_dir.is_dir() and any(True for _path in _iter_files_no_follow(tests_dir)):
         return True
-    return any(path.name.endswith(("_test.py", ".test.py")) for path in skill_dir.rglob("*") if path.is_file())
+    return any(path.name.endswith(("_test.py", ".test.py")) for path in _iter_files_no_follow(skill_dir))
 
 
 def _skill_text_contains(skill_dir: Path, needle: str) -> bool:
@@ -1338,11 +1376,13 @@ def _iter_skill_text_files(skill_dir: Path, *, include_scripts: bool = False) ->
     candidates = [skill_dir / SKILL_FILE_NAME]
     references_dir = skill_dir / "references"
     if references_dir.is_dir():
-        candidates.extend(sorted(path for path in references_dir.rglob("*") if path.suffix.lower() in {".md", ".txt"}))
+        candidates.extend(
+            path for path in _iter_files_no_follow(references_dir) if path.suffix.lower() in {".md", ".txt"}
+        )
     if include_scripts:
         scripts_dir = skill_dir / "scripts"
         if scripts_dir.is_dir():
-            candidates.extend(sorted(path for path in scripts_dir.rglob("*") if path.is_file()))
+            candidates.extend(_iter_files_no_follow(scripts_dir))
     for path in candidates:
         if path.is_file():
             try:
@@ -1355,11 +1395,28 @@ def _iter_skill_text_files(skill_dir: Path, *, include_scripts: bool = False) ->
 
 def _eval_mentions_file_editing(item: dict[str, Any]) -> bool:
     text = _eval_text(item).lower()
-    return any(term in text for term in ("edit", "generate", "create", "export", "artifact", "file"))
+    patterns = (
+        r"\b(?:edit|modify|update|rewrite|write|create|generate|export)s?\s+(?:a\s+|an\s+|the\s+)?file\b",
+        r"\b(?:edit|modify|update|rewrite|write|create|generate|export)s?\s+(?:source|code|artifact)s?\b",
+        r"\b(?:file|artifact)s?\s+(?:is|are|must be|should be)?\s*(?:created|generated|written|exported|modified)\b",
+        r"\boutput\s+(?:file|artifact|directory)\b",
+    )
+    return any(re.search(pattern, text) for pattern in patterns)
 
 
 def _has_files(path: Path) -> bool:
-    return path.is_dir() and any(child.is_file() for child in path.rglob("*"))
+    return path.is_dir() and any(True for _child in _iter_files_no_follow(path))
+
+
+def _iter_files_no_follow(root: Path) -> Iterable[Path]:
+    if root.is_symlink() or not root.is_dir():
+        return
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = sorted(name for name in dirnames if not (Path(dirpath) / name).is_symlink())
+        for filename in sorted(filenames):
+            path = Path(dirpath) / filename
+            if path.is_file():
+                yield path
 
 
 def _has_fixture_notes(skill_dir: Path) -> bool:
@@ -1369,6 +1426,33 @@ def _has_fixture_notes(skill_dir: Path) -> bool:
         skill_dir / "evals" / "files" / "SOURCE.md",
     )
     return any(path.is_file() for path in note_paths)
+
+
+def _read_bounded_text(path: Path) -> Optional[str]:
+    if not path.is_file():
+        return None
+    if _is_oversized_text_file(path):
+        return None
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def _is_oversized_text_file(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > MAX_SKILL_TEXT_FILE_BYTES
+    except OSError:
+        return False
+
+
+def _has_bounded_size_exception(path: Path) -> bool:
+    try:
+        with path.open("rb") as stream:
+            prefix = stream.read(16 * 1024)
+    except OSError:
+        return False
+    return _has_size_exception(prefix.decode("utf-8", errors="replace"))
 
 
 def _iter_existing_doc_files(docs_root: Path) -> Iterable[Path]:

@@ -899,7 +899,8 @@ def test_agent_skills_benchmark_writes_explicit_output(capsys, monkeypatch, tmp_
             )
         ],
     )
-    output = tmp_path / "out" / "BENCHMARK.md"
+    monkeypatch.chdir(tmp_path)
+    output = os.path.join("out", "BENCHMARK.md")
 
     exit_code = _run_main(
         [
@@ -923,7 +924,7 @@ def test_agent_skills_benchmark_writes_explicit_output(capsys, monkeypatch, tmp_
     data = payload["data"]
     assert data["written"] is True
     assert data["output_path"] == str(output)
-    assert output.read_text(encoding="utf-8") == data["content"]
+    assert (tmp_path / output).read_text(encoding="utf-8") == data["content"]
     assert "| nvflare-test-skill | test-conversion |" in data["content"]
     assert "Generated from runtime process records" in data["content"]
     assert "Pass Rate" not in data["content"]

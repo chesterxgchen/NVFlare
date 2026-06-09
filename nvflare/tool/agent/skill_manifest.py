@@ -28,6 +28,18 @@ MANIFEST_FILE_NAME = "manifest.json"
 MANIFEST_SCHEMA_VERSION = "1"
 IGNORED_SKILL_FILE_NAMES = {"__pycache__", "*.pyc", "*.pyo"}
 SHARED_SKILL_REFERENCE_DIR = "_shared"
+HASH_READ_CHUNK_BYTES = 1024 * 1024
+
+
+class SkillManifestError(ValueError):
+    """Manifest loading error surfaced through agent CLI structured error handling."""
+
+    def __init__(self, code: str, message: str, hint: str = "", detail: str = ""):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.hint = hint
+        self.detail = detail
 
 
 def skill_tree_hash(skill_dir: Path, *, exclude_names: Optional[set[str]] = None) -> str:
@@ -40,7 +52,9 @@ def skill_tree_hash(skill_dir: Path, *, exclude_names: Optional[set[str]] = None
         rel_path = file_path.relative_to(skill_dir).as_posix()
         digest.update(rel_path.encode("utf-8"))
         digest.update(b"\0")
-        digest.update(file_path.read_bytes())
+        with file_path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(HASH_READ_CHUNK_BYTES), b""):
+                digest.update(chunk)
         digest.update(b"\0")
     return digest.hexdigest()
 
@@ -99,7 +113,32 @@ def write_manifest(manifest: dict, manifest_path: Path | str) -> None:
 
 
 def load_manifest(manifest_path: Path | str) -> dict:
-    return json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    path = Path(manifest_path)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SkillManifestError(
+            "AGENT_SKILL_MANIFEST_READ_FAILED",
+            f"Could not read skill manifest: {path}",
+            "Rebuild or reinstall the NVFLARE agent skill bundle.",
+            detail=str(exc),
+        ) from exc
+    try:
+        manifest = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SkillManifestError(
+            "AGENT_SKILL_MANIFEST_INVALID_JSON",
+            f"Skill manifest is not valid JSON: {path}",
+            "Rebuild or reinstall the NVFLARE agent skill bundle.",
+            detail=str(exc),
+        ) from exc
+    if not isinstance(manifest, dict):
+        raise SkillManifestError(
+            "AGENT_SKILL_MANIFEST_INVALID",
+            f"Skill manifest must contain a JSON object: {path}",
+            "Rebuild or reinstall the NVFLARE agent skill bundle.",
+        )
+    return manifest
 
 
 def copy_released_skills_to_bundle(

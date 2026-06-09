@@ -75,10 +75,10 @@ timing, quality-signal, and report modules.
 
 ## Repository Layout
 
-The target benchmark harness layout lives under `tests/agent_benchmark/`:
+The target benchmark harness layout lives under `assist_tools/skills_benchmark/`:
 
 ```text
-tests/agent_benchmark/
+assist_tools/skills_benchmark/
 |-- README.md
 |-- bin/
 |   |-- build.sh
@@ -86,71 +86,68 @@ tests/agent_benchmark/
 |-- docker/
 |   |-- Dockerfile
 |   `-- build_context.dockerignore
-|-- harness/
-|   |-- __init__.py
-|   |-- common.py
-|   |-- modes.py
-|   |-- artifacts.py
-|   |-- events.py
-|   |-- quality_signals.py
-|   |-- case_metadata.py
-|   |-- scenarios.py
-|   |-- timing.py
-|   |-- records.py
-|   |-- record_identity.py
-|   |-- host/
-|   |   |-- build.py
-|   |   |-- common.py
-|   |   `-- runner.py
-|   |-- container/
-|   |   |-- agent_run.py
-|   |   |-- progress.py
-|   |   `-- skills.py
-|   |-- agents/
-|   |   |-- base.py
-|   |   |-- config.py
-|   |   |-- registry.py
-|   |   |-- parsers.py
-|   |   |-- classifiers.py
-|   |   |-- codex.yaml
-|   |   |-- claude.yaml
-|   |   |-- hermes.yaml        # illustrative/planned
-|   |   `-- openclaw.yaml      # illustrative/planned
-|   `-- reports/
-|       |-- scenario_report.py
-|       `-- structure_tree.py
-|-- scenarios/
-|   |-- ci_smoke.yaml
-|   |-- codex_models.yaml
-|   |-- multi_agent.yaml
-|   |-- workflows.yaml
-|   `-- jobs.yaml
-`-- fixtures/
-    |-- jobs/
-    |-- events/
-    |-- records/
-    `-- README.md
+|-- examples/
+|   |-- mode_ablation.yaml
+|   `-- model_comparison.yaml
+`-- nvidia/
+    `-- skills/
+        `-- harness/
+            |-- __init__.py
+            |-- common.py
+            |-- modes.py
+            |-- artifacts.py
+            |-- events.py
+            |-- quality_signals.py
+            |-- case_metadata.py
+            |-- scenarios.py
+            |-- timing.py
+            |-- records.py
+            |-- record_identity.py
+            |-- host/
+            |   |-- build.py
+            |   |-- common.py
+            |   `-- runner.py
+            |-- container/
+            |   |-- agent_run.py
+            |   |-- progress.py
+            |   `-- skills.py
+            |-- agents/
+            |   |-- base.py
+            |   |-- config.py
+            |   |-- registry.py
+            |   |-- parsers.py
+            |   |-- classifiers.py
+            |   |-- codex.yaml
+            |   |-- claude.yaml
+            |   |-- hermes.yaml        # illustrative/planned
+            |   `-- openclaw.yaml      # illustrative/planned
+            `-- reports/
+                |-- scenario_report.py
+                `-- structure_tree.py
 ```
 
-This location keeps the harness close to test infrastructure while keeping it
-outside `nvflare/` product packages. Unit tests for the harness live under
-`tests/unit_test/agent_benchmark/`. Integration tests that validate Docker
-execution live under `tests/integration_test/agent_benchmark/`.
+This location keeps the harness outside `nvflare/` product packages while
+making it an importable assist-tool package. Unit tests for the harness live
+under `tests/unit_test/skills_benchmark/`. Integration tests that validate
+Docker execution live under `tests/integration_test/skills_benchmark/`.
 
 `docs/design/agent_benchmark_harness.md` is the architecture document. The
 harness-local README explains how to build and run the tool.
 
-The nested `harness/host/`, `harness/container/`, `harness/agents/`, and
-`harness/reports/` packages are the canonical implementation locations. Flat
-compatibility modules such as `harness/host_runner.py` or `harness/agent_run.py`
-may exist only as explicit re-export shims with deprecation comments. They must
-not own independent logic.
+The nested `nvidia/skills/harness/host/`,
+`nvidia/skills/harness/container/`, `nvidia/skills/harness/agents/`, and
+`nvidia/skills/harness/reports/` packages are the canonical implementation
+locations. Flat compatibility modules such as
+`nvidia/skills/harness/host_runner.py` or
+`nvidia/skills/harness/agent_run.py` may exist only as explicit re-export shims
+with deprecation comments. They must not own independent logic.
 The layout is normative for the target architecture. Modules listed here are
 the canonical destinations for the corresponding responsibilities; runnable
-scenario YAML support requires `harness/scenarios.py` to compile the YAML into
-`run_plan.json` before any Docker execution.
-Future supported agents add an agent config file under `harness/agents/`, for
-example `harness/agents/<agent>.yaml`. They do not add a per-agent adapter
+scenario YAML support requires `nvidia/skills/harness/scenarios.py` to compile
+the YAML into `run_plan.json` before any Docker execution.
+Future supported agents add an agent config file under
+`nvidia/skills/harness/agents/`, for example
+`nvidia/skills/harness/agents/<agent>.yaml`. They do not add a per-agent adapter
 subclass when existing launch, skill-exposure, event-parser, usage-parser,
 final-message, and exit-classifier registries cover the agent.
 
@@ -1091,6 +1088,12 @@ container runtime still calls `skill_exposure()` to record the spec;
 `setup_action` and `disable_action` are absent and the container runtime skips
 execution.
 
+The design vocabulary includes `cli_install`, `launch_flag`,
+`directory_mount`, `config_file`, `preinstalled_home`, and `none`. The current
+runtime implementation supports `launch_flag`, `preinstalled_home`, and `none`.
+Adapter configs that use other mechanism types fail validation until the
+corresponding container-side execution logic is implemented.
+
 ### Artifact Layer
 
 `harness/artifacts.py` owns bounded artifact capture:
@@ -1319,7 +1322,9 @@ Prompt templates use a strict variable renderer: every placeholder must have a
 value, unknown placeholders fail preflight, and rendered prompts are plain text.
 Template variables are substitutions only. They do not authorize the harness to
 auto-inject job metadata, workflow text, mode names, or output expectations.
-Direct prompt files are treated as already rendered prompts.
+Direct prompt files are treated as already rendered prompts. Rendered scenario
+templates are materialized under the result root during scenario write/execution
+so scenario compilation does not mutate the scenario source directory.
 
 For skill-ablation comparisons such as `without_skills` versus `with_skills`,
 compared mode legs must receive identical prompt bytes unless the scenario is
@@ -1500,10 +1505,13 @@ required_validation_metric_status in {present, not_required}
 critical_quality_checks_failed == false
 ```
 
-Scenarios may override the gate by naming required checks and required metric
-families, but every override is recorded in `quality_gate`. A run that does not
-meet the gate can still appear in reports, but it is not eligible to win a
-cost/performance comparison.
+Scenarios may override the implemented gate fields shown above, and every
+override is recorded in `quality_gate`. The current implementation does not yet
+support the broader design vocabulary for named required checks or required
+metric families. Unsupported quality-gate fields fail validation instead of
+silently changing comparison semantics. A run that does not meet the gate can
+still appear in reports, but it is not eligible to win a cost/performance
+comparison.
 
 The default winner policy is
 `median_agent_elapsed_seconds_then_tokens_with_quality_gate`:
@@ -1616,8 +1624,6 @@ Replay mode is for parser, record, and report development. It must not claim to
 measure fresh agent performance, mutate the original job input, or refresh
 token/cost data. Replay reports must identify their source run and mark
 `agent_invocation` as `replayed`.
-Until the host runner exposes a replay command, captured replay fixtures are
-test inputs for record and report code, not runnable benchmark scenarios.
 
 ## Reporting Language
 

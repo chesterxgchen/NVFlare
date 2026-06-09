@@ -21,8 +21,10 @@ import pytest
 
 from nvflare.tool.agent import bundled_skills, skill_manifest
 from nvflare.tool.agent.skill_manifest import (
+    SkillManifestError,
     build_skill_manifest,
     copy_released_skills_to_bundle,
+    load_manifest,
     skill_tree_hash,
     write_empty_skill_bundle,
 )
@@ -58,6 +60,17 @@ def test_skill_tree_hash_changes_when_skill_content_changes(tmp_path):
     skill_dir.joinpath("references", "notes.md").write_text("new reference\n", encoding="utf-8")
 
     assert skill_tree_hash(skill_dir) != first_hash
+
+
+def test_skill_tree_hash_reads_file_contents_in_chunks(tmp_path, monkeypatch):
+    skill_dir = _write_skill(tmp_path, "nvflare-test-skill")
+
+    def fail_read_bytes(_path):
+        raise AssertionError("skill_tree_hash should not load whole files with read_bytes")
+
+    monkeypatch.setattr(type(skill_dir), "read_bytes", fail_read_bytes)
+
+    assert isinstance(skill_tree_hash(skill_dir), str)
 
 
 def test_build_skill_manifest_reports_invalid_skill_findings(tmp_path):
@@ -242,6 +255,24 @@ def test_bundled_skill_manifest_resource_exists():
 
     assert manifest.is_file()
     assert json.loads(manifest.read_text(encoding="utf-8"))["schema_version"] == "1"
+
+
+def test_load_manifest_wraps_read_and_json_errors(tmp_path):
+    missing = tmp_path / "missing.json"
+    with pytest.raises(SkillManifestError) as read_exc:
+        load_manifest(missing)
+    assert read_exc.value.code == "AGENT_SKILL_MANIFEST_READ_FAILED"
+
+    corrupt = tmp_path / "manifest.json"
+    corrupt.write_text("{not json\n", encoding="utf-8")
+    with pytest.raises(SkillManifestError) as json_exc:
+        load_manifest(corrupt)
+    assert json_exc.value.code == "AGENT_SKILL_MANIFEST_INVALID_JSON"
+
+    corrupt.write_text("[]\n", encoding="utf-8")
+    with pytest.raises(SkillManifestError) as shape_exc:
+        load_manifest(corrupt)
+    assert shape_exc.value.code == "AGENT_SKILL_MANIFEST_INVALID"
 
 
 def _write_skill(root, name):
