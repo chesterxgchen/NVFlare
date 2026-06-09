@@ -441,6 +441,7 @@ class ConfigurableAgentAdapter(AgentAdapter):
                 else None
             ),
             parser=str(self._cfg.final_message["parser"]) if self._cfg.final_message.get("parser") else None,
+            parser_warnings=[str(item) for item in self._cfg.final_message.get("parser_warnings") or []],
         )
 
     def metadata(self) -> dict[str, Any]:

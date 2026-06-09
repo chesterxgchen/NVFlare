@@ -10,50 +10,86 @@ images:
   baseline: nvflare-agent-benchmark:{agent}-baseline
   report: nvflare-agent-benchmark:{agent}-skills
 
+build:
+  args:
+    BENCHMARK_DOCKER_AGENT: claude
+    BENCHMARK_AGENT_HOME: /workspace/.claude
+    CLAUDE_CLI_VERSION:
+      env: CLAUDE_CLI_VERSION
+      default: latest
+
 auth:
   host_home_env: HOST_CLAUDE_HOME
   mount_env: MOUNT_HOST_CLAUDE_AUTH
-  files: []
+  files:
+    - source: .credentials.json
+      target: .credentials.json
+      read_only: true
+      description: Claude credentials
+    - source: settings.json
+      target: settings.json
+      read_only: true
+      description: Claude settings
 
 runtime_env:
   CLAUDE_CONFIG_DIR: "{container_home}"
+
+passthrough_env:
+  - ANTHROPIC_API_KEY
+  - ANTHROPIC_AUTH_TOKEN
+  - ANTHROPIC_BASE_URL
 
 launch:
   prompt_input_mode: stdin
   argv:
     - claude
+    - --dangerously-skip-permissions
+    - --output-format
+    - stream-json
+    - --verbose
     - --print
   model_argv:
     - --model
     - "{model}"
+  sandbox_flags:
+    - --dangerously-skip-permissions
+  bypass_reason: "isolated benchmark container; writable state is limited to mounted result/workspace paths"
   environment:
     CLAUDE_CONFIG_DIR: "{container_home}"
 
 skill_exposure:
   mechanism_type: launch_flag
   skill_root: "{container_home}/skills"
+  metadata_files:
+    - "{container_home}/nvflare_skills_build_install.json"
+    - "{container_home}/nvflare_skills_list.json"
   launch_args:
     - --add-dir
     - "{skills_dir}"
 
 final_message:
-  source_type: stdout_tail
-  parser: generic_stdout_last_message
+  source_type: structured_event
+  event_selector:
+    type: result
+    subtype: success
+  parser: generic_structured_event_message
+  parser_warnings:
+    - "final message from last result event; may be truncated at context limit"
 
 events:
-  parser: generic_jsonl
-  format: jsonl
+  parser: claude_stream_json
+  format: stream-json
 
 usage:
-  parser: generic_cli_usage
-  fidelity: unavailable
+  parser: claude_stream_usage
+  fidelity: parsed
   is_cumulative: false
 
 activity:
-  parser: generic_jsonl_activity
+  parser: claude_stream_activity
 
 exit:
-  classifier: generic_cli
+  classifier: claude_cli
 
 availability_probe:
   - claude

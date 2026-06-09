@@ -129,12 +129,12 @@ def test_known_pending_agent_is_rejected(tmp_path):
     from harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
-    raw["agents"] = [{"name": "claude"}]
+    raw["agents"] = [{"name": "hermes"}]
 
     try:
         compile_scenario(raw, base_dir=tmp_path)
     except ScenarioValidationError as exc:
-        assert "BENCHMARK_AGENT='claude'" in str(exc)
+        assert "BENCHMARK_AGENT='hermes'" in str(exc)
         assert "known but not implemented" in str(exc)
     else:
         raise AssertionError("known-pending agents should fail preflight")

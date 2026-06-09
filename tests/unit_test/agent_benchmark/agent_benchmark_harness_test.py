@@ -27,13 +27,13 @@ def test_codex_event_normalizer_returns_agent_event():
     assert event["harness_timestamp"]
 
 
-def test_unsupported_agent_event_normalizer_fails_fast():
+def test_known_pending_agent_event_normalizer_fails_fast():
     from harness.agents.registry import load_agent_adapter
 
     try:
-        load_agent_adapter("claude")
+        load_agent_adapter("hermes")
     except ValueError as exc:
-        assert "BENCHMARK_AGENT='claude'" in str(exc)
+        assert "BENCHMARK_AGENT='hermes'" in str(exc)
         assert "known but not implemented" in str(exc)
     else:
         raise AssertionError("unsupported benchmark agent should fail before event parsing")
@@ -62,7 +62,156 @@ def test_claude_agent_config_uses_config_dir_and_valid_final_message_source():
     config = AgentConfig.load(config_path)
 
     assert config.agent_home_env == "CLAUDE_CONFIG_DIR"
-    assert config.final_message["source_type"] == "stdout_tail"
+    assert config.final_message["source_type"] == "structured_event"
+    assert config.events.parser == "claude_stream_json"
+    assert config.usage.parser == "claude_stream_usage"
+    assert config.activity.parser == "claude_stream_activity"
+    assert config.exit_classifier == "claude_cli"
+
+
+def test_claude_adapter_launch_spec_uses_stream_json_without_prompt_text(tmp_path):
+    from harness.agents.base import AgentLaunchContext
+    from harness.agents.registry import load_agent_adapter
+
+    result_dir = tmp_path / "results"
+    workspace_dir = tmp_path / "workspace"
+    prompt_file = tmp_path / "prompt.txt"
+    result_dir.mkdir()
+    workspace_dir.mkdir()
+    prompt_file.write_text("Convert this job.\n", encoding="utf-8")
+    config = AgentLaunchContext(
+        model="claude-test",
+        model_was_explicit=True,
+        result_dir=result_dir,
+        workspace_dir=workspace_dir,
+        prompt_file=prompt_file,
+        events_dest=result_dir / "agent_events.jsonl",
+        stderr_dest=result_dir / "agent_stderr.txt",
+        final_message_dest=result_dir / "agent_last_message.txt",
+    )
+
+    spec = load_agent_adapter("claude").launch_spec(config)
+
+    rendered_argv = " ".join(spec.argv)
+    assert spec.prompt_input_mode == "stdin"
+    assert "--output-format" in spec.argv
+    assert "stream-json" in spec.argv
+    assert "--dangerously-skip-permissions" in spec.sandbox_flags
+    assert "Convert this job" not in rendered_argv
+    assert "claude-test" in spec.argv
+
+
+def test_claude_stream_parser_normalizes_event_usage_and_activity(tmp_path):
+    from harness.agents.registry import load_agent_adapter
+
+    adapter = load_agent_adapter("claude")
+    events_path = tmp_path / "agent_events.jsonl"
+    raw_events = [
+        {
+            "type": "system",
+            "subtype": "init",
+            "session_id": "session-1",
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "text", "text": "running"},
+                    {"type": "tool_use", "name": "Bash", "input": {"command": "python job.py --export"}},
+                ],
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            },
+        },
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": "Final AUROC 0.75",
+            "total_cost_usd": 0.01,
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_creation_input_tokens": 3,
+                "cache_read_input_tokens": 7,
+            },
+        },
+    ]
+    with events_path.open("w", encoding="utf-8") as stream:
+        for raw_event in raw_events:
+            normalized = adapter.normalize_event(json.dumps(raw_event))
+            stream.write(json.dumps(normalized) + "\n")
+
+    usage = adapter.parse_usage(events_path)
+    activity = adapter.parse_activity(events_path)
+
+    assert usage["parser_id"] == "claude_stream_usage"
+    assert usage["total_tokens"] == 130
+    assert usage["total_cost_usd"] == 0.01
+    assert activity["parser_id"] == "claude_stream_activity"
+    assert activity["event_types"]["result.success"] == 1
+    assert activity["tool_counts"]["Bash"] == 1
+    assert activity["commands"] == ["python job.py --export"]
+    result_event = json.loads(events_path.read_text(encoding="utf-8").splitlines()[-1])
+    assert result_event["final_message"] == "Final AUROC 0.75"
+
+
+def test_claude_final_message_source_materializes_structured_result_event(tmp_path):
+    from collections import deque
+
+    from harness.agents.registry import load_agent_adapter
+    from harness.container.agent_run import AgentRunConfig, materialize_final_message
+
+    adapter = load_agent_adapter("claude")
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+    config = AgentRunConfig(
+        mode="with_skills",
+        use_preinstalled_skills=True,
+        job_input_dir=tmp_path / "job",
+        result_dir=result_dir,
+        records_dir=result_dir / "records",
+        run_root=tmp_path / "run",
+        prompt_source=tmp_path / "prompt.txt",
+        progress_interval_seconds=0,
+        nvflare_image_kind="test-skills",
+        agent="claude",
+        agent_model="claude-test",
+        agent_home=tmp_path / ".claude",
+        agent_model_was_explicit=True,
+    )
+    with config.agent_events_path.open("w", encoding="utf-8") as stream:
+        stream.write(json.dumps(adapter.normalize_event(json.dumps({"type": "assistant", "message": {}}))) + "\n")
+        stream.write(
+            json.dumps(
+                adapter.normalize_event(
+                    json.dumps({"type": "result", "subtype": "success", "result": "Final Claude response"})
+                )
+            )
+            + "\n"
+        )
+
+    materialize_final_message(config, adapter, deque())
+
+    assert config.agent_last_message_path.read_text(encoding="utf-8") == "Final Claude response"
+    metadata = json.loads((result_dir / "final_message_source.json").read_text(encoding="utf-8"))
+    assert metadata["source_type"] == "structured_event"
+    assert metadata["status"] == "materialized"
+    assert metadata["parser_warnings"]
+
+
+def test_claude_exit_classifier_detects_auth_and_model_failures(tmp_path):
+    from harness.agents.registry import load_agent_adapter
+
+    adapter = load_agent_adapter("claude")
+    stderr = tmp_path / "stderr.txt"
+    stderr.write_text("Authentication failed: please login to Claude Code.\n", encoding="utf-8")
+
+    auth_summary = adapter.exit_summary(1, stderr)
+    stderr.write_text("Model is not supported in this account.\n", encoding="utf-8")
+    model_summary = adapter.exit_summary(1, stderr)
+
+    assert auth_summary["classifier"] == "claude_cli"
+    assert auth_summary["failure_category"] == "agent_auth_failure"
+    assert model_summary["failure_category"] == "agent_model_unsupported"
 
 
 def test_agent_config_rejects_unknown_parser_id(tmp_path):
@@ -117,7 +266,7 @@ def test_agent_config_rejects_unknown_final_message_parser(tmp_path):
     config_path = tmp_path / "bad_final_parser.yaml"
     config_path.write_text(
         source_path.read_text(encoding="utf-8").replace(
-            "parser: generic_stdout_last_message", "parser: missing_final_parser"
+            "parser: generic_structured_event_message", "parser: missing_final_parser"
         )
     )
 
@@ -144,8 +293,50 @@ def test_codex_adapter_build_args_use_default_and_env_override(monkeypatch):
 
     adapter = load_agent_adapter("codex")
     monkeypatch.delenv("CODEX_CLI_VERSION", raising=False)
-    assert adapter.build_args_from_env({})["CODEX_CLI_VERSION"] == "0.137.0"
+    default_args = adapter.build_args_from_env({})
+    assert default_args["BENCHMARK_DOCKER_AGENT"] == "codex"
+    assert default_args["BENCHMARK_AGENT_HOME"] == "/workspace/.codex"
+    assert default_args["CODEX_CLI_VERSION"] == "0.137.0"
     assert adapter.build_args_from_env({"CODEX_CLI_VERSION": "0.200.0"})["CODEX_CLI_VERSION"] == "0.200.0"
+
+
+def test_claude_adapter_build_auth_and_skill_exposure_contract(tmp_path):
+    from types import SimpleNamespace
+
+    from harness.agents.base import SkillExposureContext
+    from harness.agents.registry import load_agent_adapter
+
+    adapter = load_agent_adapter("claude")
+    default_args = adapter.build_args_from_env({})
+    override_args = adapter.build_args_from_env({"CLAUDE_CLI_VERSION": "2.1.0"})
+
+    assert default_args["BENCHMARK_DOCKER_AGENT"] == "claude"
+    assert default_args["BENCHMARK_AGENT_HOME"] == "/workspace/.claude"
+    assert default_args["CLAUDE_CLI_VERSION"] == "latest"
+    assert override_args["CLAUDE_CLI_VERSION"] == "2.1.0"
+    assert "ANTHROPIC_API_KEY" in adapter.passthrough_env_names()
+
+    host_home = tmp_path / ".claude"
+    host_home.mkdir()
+    (host_home / ".credentials.json").write_text("{}\n", encoding="utf-8")
+    mounts = adapter.auth_mounts(SimpleNamespace(host_agent_home=host_home))
+    assert any(mount.container_path == "/workspace/.claude/.credentials.json" for mount in mounts)
+
+    spec = adapter.skill_exposure(
+        SkillExposureContext(
+            result_dir=tmp_path / "results",
+            container_home=tmp_path / ".claude-container",
+            mode="with_skills",
+            skills_enabled=True,
+            nvflare_image_kind="test-skills",
+        )
+    )
+    assert spec.mechanism_type == "launch_flag"
+    assert spec.launch_args == ["--add-dir", str(tmp_path / ".claude-container" / "skills")]
+    assert sorted(path.name for path in spec.metadata_files) == [
+        "nvflare_skills_build_install.json",
+        "nvflare_skills_list.json",
+    ]
 
 
 def test_agent_config_rejects_prompt_text_placeholder(tmp_path):
@@ -420,12 +611,12 @@ def test_agent_availability_probe_records_missing_cli(tmp_path, monkeypatch):
 def test_host_image_config_rejects_unsupported_agent(monkeypatch):
     from harness.host.common import ImageConfig
 
-    monkeypatch.setenv("BENCHMARK_AGENT", "claude")
+    monkeypatch.setenv("BENCHMARK_AGENT", "hermes")
 
     try:
         ImageConfig.from_env()
     except SystemExit as exc:
-        assert "BENCHMARK_AGENT='claude'" in str(exc)
+        assert "BENCHMARK_AGENT='hermes'" in str(exc)
         assert "known but not implemented" in str(exc)
     else:
         raise AssertionError("unsupported benchmark agent should fail before image selection")

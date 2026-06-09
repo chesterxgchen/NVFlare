@@ -37,12 +37,7 @@ class AgentRegistration:
 
 AGENT_REGISTRY: dict[str, AgentRegistration] = {
     "codex": AgentRegistration("codex", "supported", "codex.yaml"),
-    "claude": AgentRegistration(
-        "claude",
-        "known_pending",
-        "claude.yaml",
-        "Claude benchmark adapter is planned but not runnable in this implementation slice.",
-    ),
+    "claude": AgentRegistration("claude", "supported", "claude.yaml"),
     "hermes": AgentRegistration("hermes", "known_pending", None, "Hermes benchmark adapter is planned."),
     "openclaw": AgentRegistration("openclaw", "known_pending", None, "OpenClaw benchmark adapter is planned."),
 }
