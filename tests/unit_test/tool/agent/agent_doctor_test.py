@@ -66,6 +66,23 @@ def test_doctor_local_readiness_does_not_create_config(monkeypatch, tmp_path):
     assert not home.joinpath(".nvflare", "config.conf").exists()
 
 
+def test_doctor_command_registry_matches_agent_command_surface(monkeypatch, tmp_path):
+    from nvflare.tool.agent.command_registry import agent_commands
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("NVFLARE_STARTUP_KIT_DIR", raising=False)
+
+    data = doctor_environment()
+
+    commands = data["commands"]["commands"]
+    command_names = {item["command"] for item in commands}
+    assert commands == agent_commands()
+    assert "nvflare agent skills performance" in command_names
+    assert "nvflare agent skills benchmark" in command_names
+    assert "nvflare agent skills evaluate" not in command_names
+
+
 def test_doctor_poc_config_tolerates_missing_pyhocon(monkeypatch, tmp_path):
     from nvflare.tool.poc import poc_commands
 

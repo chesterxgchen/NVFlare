@@ -16,9 +16,34 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from .common import flatten_numbers, load_json, write_json
+
+
+@dataclass(frozen=True)
+class LifecycleEpochs:
+    script_start: int
+    skill_availability_start: int
+    skill_availability_end: int
+    input_copy_start: int
+    input_copy_end: int
+    prompt_prep_start: int
+    prompt_prep_end: int
+    agent_start: int
+    agent_end: int
+    post_process_start: int
+    post_process_end: int
+    report_outcome_start: int
+    report_outcome_end: int
+    script_end: int
+
+    @classmethod
+    def from_sequence(cls, values: list[int]) -> "LifecycleEpochs":
+        if len(values) != 14:
+            raise ValueError(f"expected 14 lifecycle epoch values; got {len(values)}")
+        return cls(*values)
 
 
 def finalize_timing(
@@ -26,42 +51,24 @@ def finalize_timing(
     record_path: Path,
     timing_path: Path,
     activity_path: Path,
-    epochs: list[int],
+    epochs: LifecycleEpochs,
 ) -> None:
-    (
-        script_start,
-        skill_availability_start,
-        skill_availability_end,
-        input_copy_start,
-        input_copy_end,
-        prompt_prep_start,
-        prompt_prep_end,
-        codex_start,
-        codex_end,
-        post_process_start,
-        post_process_end,
-        skill_report_start,
-        skill_report_end,
-        script_end,
-    ) = epochs
-
     phase_seconds = {
-        "total_container": script_end - script_start,
-        "skill_availability_setup": skill_availability_end - skill_availability_start,
-        "input_copy": input_copy_end - input_copy_start,
-        "prompt_prepare": prompt_prep_end - prompt_prep_start,
-        "agent_runtime": codex_end - codex_start,
-        "post_process": post_process_end - post_process_start,
-        "skill_reports": skill_report_end - skill_report_start,
-        "skill_performance_report": skill_report_end - skill_report_start,
-        "setup_before_agent": codex_start - script_start,
+        "total_container": epochs.script_end - epochs.script_start,
+        "skill_availability_setup": epochs.skill_availability_end - epochs.skill_availability_start,
+        "input_copy": epochs.input_copy_end - epochs.input_copy_start,
+        "prompt_prepare": epochs.prompt_prep_end - epochs.prompt_prep_start,
+        "agent_runtime": epochs.agent_end - epochs.agent_start,
+        "post_process": epochs.post_process_end - epochs.post_process_start,
+        "report_outcome": epochs.report_outcome_end - epochs.report_outcome_start,
+        "setup_before_agent": epochs.agent_start - epochs.script_start,
     }
     timing = {
         "epoch_seconds": {
-            "script_start": script_start,
-            "codex_start": codex_start,
-            "codex_end": codex_end,
-            "script_end": script_end,
+            "script_start": epochs.script_start,
+            "agent_start": epochs.agent_start,
+            "agent_end": epochs.agent_end,
+            "script_end": epochs.script_end,
         },
         "phase_seconds": phase_seconds,
     }

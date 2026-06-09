@@ -318,7 +318,7 @@ class _PythonInspector(ast.NodeVisitor):
             self.state.export_support = True
         if call_name in {"importlib.import_module", "__import__", "getattr"}:
             self.state.dynamic_patterns.append(_evidence(self.rel_path, lineno, "dynamic_dispatch", call_name))
-        if call_name in {"torch.compile", "compile"}:
+        if call_name == "torch.compile":
             self.state.dynamic_patterns.append(_evidence(self.rel_path, lineno, "torch_compile", call_name))
         if call_name.endswith("DistributedDataParallel") or call_name.endswith("DataParallel"):
             self.state.distributed_patterns.append(_evidence(self.rel_path, lineno, "distributed_call", call_name))
@@ -375,6 +375,8 @@ def _rank_frameworks(state: InspectState) -> list[dict]:
         count = len(evidence)
         confidence = 0.0
         if total:
+            # Any static import evidence should register clearly, but cap below
+            # certainty because import presence alone does not prove active use.
             confidence = min(0.99, 0.45 + (count / total) * 0.5)
         ranked.append(
             {

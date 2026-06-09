@@ -16,9 +16,6 @@ import json
 import sys
 from pathlib import Path
 
-BENCHMARK_ROOT = Path(__file__).resolve().parents[2] / "agent_benchmark"
-sys.path.insert(0, str(BENCHMARK_ROOT))
-
 
 def test_codex_event_normalizer_returns_agent_event():
     from harness.agents.base import normalize_agent_event
@@ -28,6 +25,30 @@ def test_codex_event_normalizer_returns_agent_event():
     assert event["type"] == "turn"
     assert event["message"] == "ok"
     assert event["harness_timestamp"]
+
+
+def test_unsupported_agent_event_normalizer_fails_fast():
+    from harness.agents.base import normalize_agent_event
+
+    try:
+        normalize_agent_event("claude", "{}")
+    except ValueError as exc:
+        assert "Unsupported BENCHMARK_AGENT" in str(exc)
+    else:
+        raise AssertionError("unsupported benchmark agent should fail before event parsing")
+
+
+def test_host_image_config_rejects_unsupported_agent(monkeypatch):
+    from harness.host.common import ImageConfig
+
+    monkeypatch.setenv("BENCHMARK_AGENT", "claude")
+
+    try:
+        ImageConfig.from_env()
+    except SystemExit as exc:
+        assert "Unsupported BENCHMARK_AGENT" in str(exc)
+    else:
+        raise AssertionError("unsupported benchmark agent should fail before image selection")
 
 
 def test_host_docker_args_use_migrated_container_entrypoint(tmp_path):
@@ -43,10 +64,8 @@ def test_host_docker_args_use_migrated_container_entrypoint(tmp_path):
     prompt_path.write_text("convert this job\n", encoding="utf-8")
 
     config = CaseConfig(
-        mode="with_skills_eval_off",
+        mode="with_skills",
         use_preinstalled_skills=True,
-        process_eval=False,
-        nvflare_skill_eval="",
         job_input_dir=job_input,
         result_dir=result_dir,
         prompt_path=prompt_path,
@@ -67,6 +86,7 @@ def test_host_docker_args_use_migrated_container_entrypoint(tmp_path):
     assert args[module_index] == "harness.container.agent_run"
     assert f"{prompt_path}:{CONTAINER_PROMPT_PATH}:ro" in args
     assert f"PROMPT_SOURCE={CONTAINER_PROMPT_PATH}" in args
+    assert "RECORDS_DIR=/workspace/results/records" in args
 
 
 def test_host_cli_accepts_results_root(tmp_path):
@@ -80,7 +100,7 @@ def test_host_cli_accepts_results_root(tmp_path):
 
     options = parse_host_cli_options(
         ["--prompt", str(prompt), "--results-root", str(results_root), "--training-code", str(job_input)],
-        "process-eval",
+        "pair",
     )
 
     assert options.job_input == job_input
@@ -101,7 +121,7 @@ def test_host_cli_output_dir_maps_to_exact_result_location(tmp_path):
 
     comparison_options = parse_host_cli_options(
         ["--prompt", str(prompt), "--output-dir", str(output_dir), str(job_input)],
-        "process-eval",
+        "pair",
     )
     single_options = parse_host_cli_options(
         ["--prompt", str(prompt), "--output-dir", str(output_dir), str(job_input)],
@@ -121,26 +141,289 @@ def test_host_cli_requires_prompt_path(tmp_path):
     job_input.mkdir()
 
     try:
-        parse_host_cli_options([str(job_input)], "process-eval")
+        parse_host_cli_options([str(job_input)], "pair")
     except SystemExit as exc:
         assert "Prompt file is required" in str(exc)
     else:
         raise AssertionError("parse_host_cli_options should require --prompt")
 
 
-def test_skipped_skill_reports_include_markdown_benchmark(tmp_path):
-    from harness.host.reports import write_skipped_reports
+def test_container_config_rejects_unknown_mode(monkeypatch):
+    from harness.container.agent_run import AgentRunConfig
 
-    write_skipped_reports(tmp_path, "no evaluator-backed records")
+    monkeypatch.setenv("MODE", "with_skill_typo")
 
-    benchmark = tmp_path / "skill_benchmark.md"
-    assert benchmark.is_file()
-    assert "Skipped: no evaluator-backed records" in benchmark.read_text(encoding="utf-8")
+    try:
+        AgentRunConfig.from_env()
+    except SystemExit as exc:
+        assert "Unknown MODE with_skill_typo" in str(exc)
+        assert "without_skills" in str(exc)
+        assert "with_skills" in str(exc)
+    else:
+        raise AssertionError("unknown MODE should fail before skill defaulting")
+
+
+def test_container_config_rejects_mode_skill_flag_conflict(monkeypatch):
+    from harness.container.agent_run import AgentRunConfig
+
+    monkeypatch.setenv("MODE", "without_skills")
+    monkeypatch.setenv("USE_PREINSTALLED_SKILLS", "true")
+
+    try:
+        AgentRunConfig.from_env()
+    except SystemExit as exc:
+        assert "conflicts with MODE=without_skills" in str(exc)
+        assert "expected false" in str(exc)
+    else:
+        raise AssertionError("MODE and USE_PREINSTALLED_SKILLS disagreement should fail fast")
+
+
+def test_setup_skill_availability_allows_missing_optional_metadata(tmp_path):
+    from harness.container.agent_run import AgentRunConfig, setup_skill_availability
+
+    codex_home = tmp_path / ".codex"
+    result_dir = tmp_path / "results"
+    skill_dir = codex_home / "skills" / "nvflare-convert-pytorch"
+    skill_dir.mkdir(parents=True)
+    result_dir.mkdir()
+
+    config = AgentRunConfig(
+        mode="with_skills",
+        use_preinstalled_skills=True,
+        job_input_dir=tmp_path / "job",
+        result_dir=result_dir,
+        records_dir=result_dir / "records",
+        run_root=tmp_path / "run",
+        prompt_source=tmp_path / "prompt.txt",
+        progress_interval_seconds=0,
+        nvflare_image_kind="test-skills",
+        agent="codex",
+        agent_model="test-model",
+        codex_home=codex_home,
+    )
+
+    setup_skill_availability(config)
+
+    state = json.loads((result_dir / "skills_state.json").read_text(encoding="utf-8"))
+    missing = json.loads((result_dir / "skills_metadata_missing.json").read_text(encoding="utf-8"))
+    assert state["status"] == "enabled"
+    assert state["skills_enabled"] is True
+    assert sorted(Path(item).name for item in missing["missing"]) == [
+        "nvflare_skills_build_install.json",
+        "nvflare_skills_list.json",
+    ]
+    assert not (result_dir / "skills_build_install.json").exists()
+
+
+def test_copy_optional_metadata_files_strips_nvflare_prefix(tmp_path):
+    from harness.container.agent_run import copy_optional_metadata_files
+
+    source_dir = tmp_path / "source"
+    result_dir = tmp_path / "results"
+    source_dir.mkdir()
+    result_dir.mkdir()
+    (source_dir / "nvflare_skills_list.json").write_text('{"installed": []}\n', encoding="utf-8")
+
+    payload = copy_optional_metadata_files(
+        source_dir,
+        result_dir,
+        ("nvflare_skills_list.json", "nvflare_skills_build_install.json"),
+    )
+
+    assert (result_dir / "skills_list.json").read_text(encoding="utf-8") == '{"installed": []}\n'
+    assert payload["copied"] == [
+        {
+            "source": str(source_dir / "nvflare_skills_list.json"),
+            "target": str(result_dir / "skills_list.json"),
+        }
+    ]
+    assert payload["missing"] == [str(source_dir / "nvflare_skills_build_install.json")]
+
+
+def test_login_shell_runtime_probe_uses_configured_venv_path(monkeypatch):
+    from harness.container import agent_run
+
+    class Result:
+        returncode = 0
+        stdout = "\n".join(
+            [
+                "PATH=/custom/venv/bin:/usr/bin",
+                "python=/custom/venv/bin/python",
+                "nvflare=/custom/venv/bin/nvflare",
+                "nvflare_version=NVFlare 9.9",
+                "nvflare_import_version=9.9",
+            ]
+        )
+
+    monkeypatch.setenv("BENCHMARK_CONTAINER_VENV_DIR", "/custom/venv")
+    monkeypatch.setattr(agent_run.subprocess, "run", lambda *args, **kwargs: Result())
+
+    probe = agent_run.login_shell_runtime_probe()
+
+    assert probe["ok"] is True
+    assert probe["expected_python"] == "/custom/venv/bin/python"
+    assert probe["expected_nvflare"] == "/custom/venv/bin/nvflare"
+
+
+def test_finalize_timing_uses_named_lifecycle_epochs(tmp_path):
+    from harness.common import write_json
+    from harness.timing import LifecycleEpochs, finalize_timing
+
+    summary_path = tmp_path / "run_summary.json"
+    record_path = tmp_path / "record.json"
+    activity_path = tmp_path / "agent_activity.json"
+    timing_path = tmp_path / "timing.json"
+    write_json(summary_path, {"process_metrics": {}})
+    write_json(record_path, {"process_metrics": {}})
+    write_json(activity_path, {"event_count": 3, "command_count": 2})
+
+    finalize_timing(
+        summary_path,
+        record_path,
+        timing_path,
+        activity_path,
+        LifecycleEpochs(
+            script_start=10,
+            skill_availability_start=11,
+            skill_availability_end=13,
+            input_copy_start=13,
+            input_copy_end=17,
+            prompt_prep_start=18,
+            prompt_prep_end=20,
+            agent_start=21,
+            agent_end=31,
+            post_process_start=31,
+            post_process_end=35,
+            report_outcome_start=36,
+            report_outcome_end=37,
+            script_end=40,
+        ),
+    )
+
+    timing = json.loads(timing_path.read_text(encoding="utf-8"))
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert timing["phase_seconds"] == {
+        "total_container": 30,
+        "skill_availability_setup": 2,
+        "input_copy": 4,
+        "prompt_prepare": 2,
+        "agent_runtime": 10,
+        "post_process": 4,
+        "report_outcome": 1,
+        "setup_before_agent": 11,
+    }
+    assert summary["activity"]["event_count"] == 3
+    assert summary["activity"]["command_count"] == 2
+    assert record["process_metrics"]["phase_seconds"]["agent_runtime"] == 10
+
+
+def test_write_failure_record_outputs_early_failure_artifacts(tmp_path):
+    from harness.container.agent_run import write_failure_record
+
+    result_dir = tmp_path / "results"
+    records_dir = result_dir / "records"
+
+    exit_code = write_failure_record(
+        result_dir=result_dir,
+        records_dir=records_dir,
+        mode="with_skills",
+        exit_code=2,
+        error_type="RuntimeError",
+        message="prompt missing",
+        phase="input_validation",
+        agent="codex",
+        agent_model="test-model",
+        skills_enabled=True,
+    )
+
+    record = json.loads((records_dir / "with_skills_record.json").read_text(encoding="utf-8"))
+    early = json.loads((result_dir / "early_failure.json").read_text(encoding="utf-8"))
+    summary = json.loads((result_dir / "run_summary.json").read_text(encoding="utf-8"))
+    assert exit_code == 2
+    assert record["harness_failure"] is True
+    assert record["harness_error"]["phase"] == "input_validation"
+    assert record["final_container_exit_code"] == 2
+    assert early["record_path"] == str(records_dir / "with_skills_record.json")
+    assert summary["harness_failure"] is True
+    assert summary["final_container_exit_code"] == 2
+
+
+def test_merge_harness_failure_preserves_existing_record(tmp_path):
+    from harness.common import write_json
+    from harness.container.agent_run import AgentRunConfig, merge_harness_failure
+
+    result_dir = tmp_path / "results"
+    records_dir = result_dir / "records"
+    records_dir.mkdir(parents=True)
+    final_record = records_dir / "with_skills_record.json"
+    write_json(
+        final_record,
+        {
+            "mode": "with_skills",
+            "agent_process_passed": True,
+            "agent_process_exit_code": 0,
+            "process_metrics": {"elapsed_seconds": 12},
+        },
+    )
+    config = AgentRunConfig(
+        mode="with_skills",
+        use_preinstalled_skills=True,
+        job_input_dir=tmp_path / "job",
+        result_dir=result_dir,
+        records_dir=records_dir,
+        run_root=tmp_path / "run",
+        prompt_source=tmp_path / "prompt.txt",
+        progress_interval_seconds=0,
+        nvflare_image_kind="test-skills",
+        agent="codex",
+        agent_model="test-model",
+        codex_home=tmp_path / ".codex",
+    )
+
+    exit_code = merge_harness_failure(config, RuntimeError("post process failed"), 1, "post_process")
+
+    record = json.loads(final_record.read_text(encoding="utf-8"))
+    late = json.loads((result_dir / "late_harness_failure.json").read_text(encoding="utf-8"))
+    summary = json.loads((result_dir / "run_summary.json").read_text(encoding="utf-8"))
+    assert exit_code == 1
+    assert record["agent_process_passed"] is True
+    assert record["process_metrics"]["elapsed_seconds"] == 12
+    assert record["harness_error"]["phase"] == "post_process"
+    assert record["harness_errors"][0]["message"] == "post process failed"
+    assert late["preserved_existing_record"] is True
+    assert summary["harness_failure"] is True
+    assert summary["harness_errors"][0]["phase"] == "post_process"
+
+
+def test_pair_result_root_cleanup_removes_legacy_eval_artifacts(tmp_path):
+    from harness.host.runner import clean_pair_result_root
+
+    result_root = tmp_path / "result"
+    result_root.mkdir()
+    for name in ("with_skills_eval_on", "with_skills_eval_off", "process_eval_runs", "without_skills", "with_skills"):
+        path = result_root / name
+        path.mkdir()
+        path.joinpath("old.txt").write_text("stale\n", encoding="utf-8")
+    result_root.joinpath("comprehensive_report.md").write_text("Benchmark Metrics Comparison\n", encoding="utf-8")
+    result_root.joinpath("metrics_summary.json").write_text("{}\n", encoding="utf-8")
+    result_root.joinpath("user_note.txt").write_text("keep\n", encoding="utf-8")
+
+    clean_pair_result_root(result_root)
+
+    assert not result_root.joinpath("with_skills_eval_on").exists()
+    assert not result_root.joinpath("with_skills_eval_off").exists()
+    assert not result_root.joinpath("process_eval_runs").exists()
+    assert not result_root.joinpath("without_skills").exists()
+    assert not result_root.joinpath("with_skills").exists()
+    assert not result_root.joinpath("comprehensive_report.md").exists()
+    assert not result_root.joinpath("metrics_summary.json").exists()
+    assert result_root.joinpath("user_note.txt").read_text(encoding="utf-8") == "keep\n"
 
 
 def test_benchmark_insights_explains_docker_image_failures(tmp_path):
     from harness.modes import NO_SKILLS_MODE
-    from harness.reports.benchmark_insights import collect_process_eval_runs, failure_root_cause, human_readable_status
+    from harness.reports.benchmark_insights import collect_benchmark_runs, failure_root_cause, human_readable_status
 
     mode_dir = tmp_path / NO_SKILLS_MODE
     mode_dir.mkdir()
@@ -151,11 +434,46 @@ def test_benchmark_insights_explains_docker_image_failures(tmp_path):
         encoding="utf-8",
     )
 
-    run = collect_process_eval_runs(tmp_path)[NO_SKILLS_MODE]
+    run = collect_benchmark_runs(tmp_path)[NO_SKILLS_MODE]
 
     assert run["available"] is True
     assert "Docker image unavailable" in failure_root_cause(run)
     assert "container exit 1" in human_readable_status(run)
+
+
+def test_benchmark_insights_scopes_shared_console_evidence_by_mode(tmp_path):
+    from harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from harness.reports.benchmark_insights import collect_benchmark_runs, dependency_reference_notes
+
+    for mode in (NO_SKILLS_MODE, WITH_SKILLS_MODE):
+        records_dir = tmp_path / mode / "records"
+        records_dir.mkdir(parents=True)
+        (records_dir / f"{mode}_record.json").write_text(
+            json.dumps(
+                {
+                    "source_input_delta": {"final_files": [{"path": "requirements-train.txt"}]},
+                    "workspace_delta": {
+                        "workspace_added_files": (
+                            [{"path": "requirements-federated.txt"}] if mode == NO_SKILLS_MODE else []
+                        )
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    (tmp_path / "console_output.log").write_text(
+        "[without_skills] python3 -m pip install -r requirements-federated.txt failed\n"
+        "[with_skills] completed without dependency install errors\n",
+        encoding="utf-8",
+    )
+
+    runs = collect_benchmark_runs(tmp_path)
+
+    assert dependency_reference_notes(runs[NO_SKILLS_MODE]) == [
+        "`requirements-federated.txt` provenance: agent-generated file.",
+    ]
+    assert dependency_reference_notes(runs[WITH_SKILLS_MODE]) == []
 
 
 def test_status_summary_is_human_readable_for_failures():
@@ -201,6 +519,30 @@ def test_failure_analysis_extracts_unsupported_model_message():
     )
 
 
+def test_failure_analysis_identifies_agent_generated_requirements_file():
+    from harness.reports.benchmark_insights import dependency_reference_notes
+
+    run = {
+        "agent_last_message": "Install with python3 -m pip install -r requirements-federated.txt.",
+        "record": {
+            "source_input_delta": {
+                "final_files": [
+                    {"path": "requirements-train.txt"},
+                ]
+            },
+            "workspace_delta": {
+                "workspace_added_files": [
+                    {"path": "requirements-federated.txt"},
+                ]
+            },
+        },
+    }
+
+    assert dependency_reference_notes(run) == [
+        "`requirements-federated.txt` provenance: agent-generated file.",
+    ]
+
+
 def test_shared_lifecycle_requires_dependency_preflight_before_missing_dependency_blocker():
     lifecycle = (Path(__file__).resolve().parents[3] / "skills" / "_shared" / "nvflare-job-lifecycle.md").read_text(
         encoding="utf-8"
@@ -239,6 +581,279 @@ Round 2 validation AUROC by site:
     assert metric["value_scope"] == "fl_summary_metric"
     assert metric["site_value_count"] == 3
     assert metric["summary_value_label"] == "aggregated best validation metric"
+
+
+def test_readme_metric_alignment_uses_named_aggregated_metric_scalar():
+    from harness.quality_signals import metric_signal
+
+    signal = metric_signal(
+        None,
+        "AUROC is the main metric.\n",
+        """
+Validation:
+- Local training AUROC: 0.7531
+- Best aggregated validation AUROC: 0.7623334631865992
+- Final site metrics: site-1 valid AUROC 0.767293, site-2 valid AUROC 0.757374
+""",
+    )
+
+    metric = signal["reported_validation_metric"]
+    assert signal["status"] == "pass"
+    assert signal["metric_scalar_available"] is True
+    assert metric["name"] == "AUROC"
+    assert metric["value"] == 0.7623334631865992
+    assert metric["value_scope"] == "fl_summary_metric"
+    assert metric["summary_value_label"] == "Best aggregated validation AUROC"
+
+
+def test_job_guidance_metric_alignment_uses_non_readme_docs(tmp_path):
+    from harness.quality_signals import metric_signal
+    from harness.records import discover_job_guidance
+
+    job = tmp_path / "job"
+    docs = job / "docs"
+    docs.mkdir(parents=True)
+    docs.joinpath("metrics.md").write_text("Target validation metric: accuracy.\n", encoding="utf-8")
+
+    sources, guidance_text = discover_job_guidance(job)
+    signal = metric_signal(
+        sources,
+        guidance_text,
+        "Server best validation metric at round 3: 0.8123 accuracy",
+    )
+
+    assert signal["expected_primary_metric"] == "accuracy"
+    assert signal["aligned_with_job_guidance"] is True
+    assert signal["sources"][0]["path"].endswith("metrics.md")
+    assert signal["reported_validation_metric"]["name"] == "accuracy"
+
+
+def test_job_guidance_metric_alignment_includes_prompt(tmp_path):
+    from harness.quality_signals import metric_signal
+    from harness.records import discover_job_guidance
+
+    job = tmp_path / "job"
+    job.mkdir()
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("Convert this job. Primary validation metric: AUROC.\n", encoding="utf-8")
+
+    sources, guidance_text = discover_job_guidance(job, prompt)
+    signal = metric_signal(
+        sources,
+        guidance_text,
+        "Aggregated best validation metric: 0.7529 AUROC",
+    )
+
+    assert signal["expected_primary_metric"] == "AUROC"
+    assert signal["aligned_with_job_guidance"] is True
+    assert signal["sources"][0]["source_type"] == "prompt"
+
+
+def test_job_guidance_metric_alignment_uses_source_priority(tmp_path):
+    from harness.quality_signals import metric_signal
+    from harness.records import discover_job_guidance
+
+    job = tmp_path / "job"
+    job.mkdir()
+    job.joinpath("README.md").write_text("AUROC is the main metric.\n", encoding="utf-8")
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("Convert this job. Primary validation metric: accuracy.\n", encoding="utf-8")
+
+    sources, guidance_text = discover_job_guidance(job, prompt)
+    signal = metric_signal(
+        sources,
+        guidance_text,
+        "Server best validation metric at round 3: 0.8123 accuracy",
+    )
+
+    assert signal["expected_primary_metric"] == "accuracy"
+    assert signal["source"] == str(prompt)
+    assert signal["matched_source"] == {"path": str(prompt), "source_type": "prompt"}
+    assert signal["aligned_with_job_guidance"] is True
+
+
+def test_job_guidance_metric_alignment_reports_matched_doc_source(tmp_path):
+    from harness.quality_signals import metric_signal
+    from harness.records import discover_job_guidance
+
+    job = tmp_path / "job"
+    job.mkdir()
+    readme = job / "README.md"
+    readme.write_text("AUROC is the main metric.\n", encoding="utf-8")
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("Convert this job with NVFLARE.\n", encoding="utf-8")
+
+    sources, guidance_text = discover_job_guidance(job, prompt)
+    signal = metric_signal(
+        sources,
+        guidance_text,
+        "Aggregated best validation metric: 0.7529 AUROC",
+    )
+
+    assert signal["expected_primary_metric"] == "AUROC"
+    assert signal["source"] == str(readme)
+    assert signal["matched_source"] == {"path": str(readme), "source_type": "job_documentation"}
+    assert signal["sources"][0]["source_type"] == "prompt"
+    assert signal["aligned_with_job_guidance"] is True
+
+
+def test_metric_mismatch_reports_actual_metric_without_marking_missing():
+    from harness.modes import NO_SKILLS_MODE
+    from harness.quality_signals import metric_signal
+    from harness.reports.benchmark_insights import (
+        benchmark_outcome,
+        human_readable_status,
+        missing_result_metrics_section,
+        outcome_metrics_table,
+    )
+
+    signal = metric_signal(
+        None,
+        "AUROC is the main metric.\n",
+        "Best validation accuracy: 0.8123",
+    )
+    run = {
+        "available": True,
+        "label": "No skills baseline",
+        "container_exit": {"exit_code": 0},
+        "run": {"final_container_exit_code": 0},
+        "record": {"quality_signals": {"job_guidance_primary_validation_metric": signal}},
+        "validation_metric": signal["reported_validation_metric"],
+    }
+    runs = {NO_SKILLS_MODE: run}
+
+    assert signal["mismatch"] is True
+    assert signal["reported_validation_metric"]["name"] == "accuracy"
+    assert "completed with metric mismatch" in human_readable_status(run)
+    assert benchmark_outcome(run).startswith("warn:")
+    assert "accuracy 0.8123" in missing_result_metrics_section(runs, [NO_SKILLS_MODE])
+    assert "no parseable validation metric" not in missing_result_metrics_section(runs, [NO_SKILLS_MODE])
+    assert "| Metrics (accuracy) | accuracy 0.8123 |" in outcome_metrics_table(runs, [NO_SKILLS_MODE])
+
+
+def test_missing_target_metric_section_reports_observed_alternate_metrics():
+    from harness.modes import NO_SKILLS_MODE
+    from harness.reports.benchmark_insights import (
+        additional_or_observed_metric_values_display,
+        missing_result_metrics_section,
+        outcome_details_table,
+    )
+
+    run = {
+        "available": True,
+        "label": "No skills baseline",
+        "container_exit": {"exit_code": 0},
+        "run": {"final_container_exit_code": 0},
+        "record": {
+            "quality_signals": {
+                "job_guidance_primary_validation_metric": {
+                    "status": "missing",
+                    "expected_primary_metric": "AUROC",
+                    "evidence": "Job guidance declares AUROC as the primary metric, but the final response did not report it.",
+                    "reported_validation_metric": {
+                        "name": None,
+                        "value": None,
+                        "reported_values": [],
+                        "reported_value_entries": [],
+                    },
+                }
+            }
+        },
+        "validation_metric": {"name": None, "value": None, "reported_values": [], "reported_value_entries": []},
+        "agent_last_message": "Validation accuracy: 0.8123\nValidation loss: 0.421",
+    }
+
+    section = missing_result_metrics_section({NO_SKILLS_MODE: run}, [NO_SKILLS_MODE])
+
+    assert "accuracy 0.8123" in section
+    assert "loss 0.4210" in section
+    assert "no parseable validation metric" not in section
+    assert additional_or_observed_metric_values_display(run, "AUROC") == "accuracy 0.8123; loss 0.4210"
+    assert "Additional/other validation metric values" in outcome_details_table({NO_SKILLS_MODE: run}, [NO_SKILLS_MODE])
+
+
+def test_failure_analysis_reports_recovered_job_failure_and_metric_gap():
+    from harness.modes import NO_SKILLS_MODE
+    from harness.reports.benchmark_insights import (
+        additional_or_observed_metric_values_display,
+        failure_analysis_section,
+        outcome_details_table,
+    )
+
+    failed_output = (
+        "TypeError: SmilesCNN.__init__() missing 4 required positional arguments: "
+        "'vocab_size', 'embed_dim', 'num_filters', and 'dropout'\n"
+        "RuntimeError: Simulator run failed with exit code 2.\n"
+    )
+    success_output = (
+        "Finished FedAvg.\n"
+        "site-1: round=0 train_loss=0.6275 valid_auroc=0.7049\n"
+        "site-2: round=0 train_loss=0.6259 valid_auroc=0.7342\n"
+        "Result workspace: /tmp/nvflare/ames-smoke\n"
+    )
+    events = [
+        {
+            "item": {
+                "type": "command_execution",
+                "id": "item_1",
+                "command": "python3 fedavg_job.py --n-clients 2",
+                "status": "failed",
+                "exit_code": 1,
+                "aggregated_output": failed_output,
+            }
+        },
+        {
+            "item": {
+                "type": "command_execution",
+                "id": "item_2",
+                "command": "python3 fedavg_job.py --n-clients 2",
+                "status": "completed",
+                "exit_code": 0,
+                "aggregated_output": success_output,
+            }
+        },
+    ]
+    run = {
+        "available": True,
+        "label": "No skills baseline",
+        "container_exit": {"exit_code": 0},
+        "run": {"final_container_exit_code": 0},
+        "record": {
+            "quality_signals": {
+                "job_guidance_primary_validation_metric": {
+                    "status": "missing",
+                    "expected_primary_metric": "AUROC",
+                    "evidence": "Job guidance declares AUROC as the primary metric, but the final response did not report it.",
+                    "reported_validation_metric": {
+                        "name": None,
+                        "value": None,
+                        "reported_values": [],
+                        "reported_value_entries": [],
+                    },
+                }
+            }
+        },
+        "validation_metric": {"name": None, "value": None, "reported_values": [], "reported_value_entries": []},
+        "agent_events_text": "\n".join(json.dumps(event) for event in events),
+    }
+
+    section = failure_analysis_section({NO_SKILLS_MODE: run}, [NO_SKILLS_MODE])
+
+    assert "Command evidence" in section
+    assert "recovered by a later successful similar command" in section
+    assert "SmilesCNN.__init__() missing 4 required positional arguments" in section
+    assert "Recovery evidence" in section
+    assert "a later simulator/job command exited 0" in section
+    assert "valid_auroc=0.7049" in section
+    assert "Metric reporting gap" in section
+    assert "aggregate `AUROC` scalar" in section
+    assert additional_or_observed_metric_values_display(run, "AUROC") == (
+        "Final site metrics=NA; log/per-site evidence: site-1: round=0 train_loss=0.6275 valid_auroc=0.7049; "
+        "site-2: round=0 train_loss=0.6259 valid_auroc=0.7342"
+    )
+    details = outcome_details_table({NO_SKILLS_MODE: run}, [NO_SKILLS_MODE])
+    assert "Reported validation metric | AUROC NA" in details
+    assert "log/per-site evidence" in details
 
 
 def test_readme_metric_alignment_uses_server_best_validation_metric_scalar():
@@ -292,7 +907,7 @@ Final round metrics:
 
 
 def test_metrics_chart_names_metric_once_in_panel_title():
-    from harness.modes import NO_SKILLS_MODE, SKILLS_EVAL_OFF_MODE, SKILLS_EVAL_ON_MODE
+    from harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
     from harness.reports.benchmark_insights import embedded_bar_chart, outcome_metrics_table
 
     def run(label: str, value: float) -> dict:
@@ -303,25 +918,22 @@ def test_metrics_chart_names_metric_once_in_panel_title():
             "run": {"elapsed_seconds": 1, "token_count": 1, "codex_exit_code": 0, "final_container_exit_code": 0},
             "activity": {"command_count": 1},
             "record": {},
-            "evaluator_records": [],
             "workspace_delta": {},
             "validation_metric": {"name": "AUROC", "value": value},
         }
 
     chart = embedded_bar_chart(
         {
-            SKILLS_EVAL_OFF_MODE: run("With skills, skill eval off", 0.7529),
-            SKILLS_EVAL_ON_MODE: run("With skills, skill eval on", 0.7517),
             NO_SKILLS_MODE: run("No skills baseline", 0.7562),
+            WITH_SKILLS_MODE: run("With skills", 0.7529),
         }
     )
     table = outcome_metrics_table(
         {
-            SKILLS_EVAL_OFF_MODE: run("With skills, skill eval off", 0.7529),
-            SKILLS_EVAL_ON_MODE: run("With skills, skill eval on", 0.7517),
             NO_SKILLS_MODE: run("No skills baseline", 0.7562),
+            WITH_SKILLS_MODE: run("With skills", 0.7529),
         },
-        [SKILLS_EVAL_OFF_MODE, SKILLS_EVAL_ON_MODE, NO_SKILLS_MODE],
+        [NO_SKILLS_MODE, WITH_SKILLS_MODE],
     )
 
     assert "Metrics (AUROC)" in chart
@@ -329,5 +941,198 @@ def test_metrics_chart_names_metric_once_in_panel_title():
     assert "AUROC 0." not in chart
     assert chart.count("AUROC") == 1
     assert ">0.7529<" in chart
-    assert "| Metrics (AUROC) | AUROC 0.7529 | AUROC 0.7517 | AUROC 0.7562 |" in table
+    assert "| Metrics (AUROC) | AUROC 0.7562 | AUROC 0.7529 |" in table
     assert "FL scalar result" not in table
+
+
+def test_metrics_chart_uses_labeled_aggregated_metric_from_legacy_record():
+    from harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from harness.reports.benchmark_insights import embedded_bar_chart, outcome_metrics_table
+
+    def run(label: str, metric: dict) -> dict:
+        return {
+            "label": label,
+            "available": True,
+            "run": {"final_container_exit_code": 0},
+            "activity": {},
+            "validation_metric": metric,
+        }
+
+    runs = {
+        NO_SKILLS_MODE: run("No skills baseline", {"name": "AUROC", "value": None, "reported_value_entries": []}),
+        WITH_SKILLS_MODE: run(
+            "With skills",
+            {
+                "name": "AUROC",
+                "value": None,
+                "reported_value_entries": [
+                    {"value": 0.7531},
+                    {"label": "Best aggregated validation AUROC", "value": 0.7623334631865992},
+                    {"label": "Final site metrics", "value": 0.767293},
+                ],
+            },
+        ),
+    }
+
+    chart = embedded_bar_chart(runs)
+    table = outcome_metrics_table(runs, [NO_SKILLS_MODE, WITH_SKILLS_MODE])
+
+    assert ">0.7623<" in chart
+    assert "| Metrics (AUROC) | AUROC NA | AUROC 0.7623 |" in table
+
+
+def test_metrics_chart_marks_mixed_metric_names_non_comparable():
+    from harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from harness.reports.benchmark_insights import embedded_bar_chart, outcome_metrics_table
+
+    def run(label: str, metric_name: str, value: float) -> dict:
+        return {
+            "label": label,
+            "available": True,
+            "run": {"final_container_exit_code": 0},
+            "activity": {},
+            "validation_metric": {"name": metric_name, "value": value},
+        }
+
+    runs = {
+        NO_SKILLS_MODE: run("No skills baseline", "accuracy", 0.8123),
+        WITH_SKILLS_MODE: run("With skills", "AUROC", 0.7529),
+    }
+
+    chart = embedded_bar_chart(runs)
+    table = outcome_metrics_table(runs, [NO_SKILLS_MODE, WITH_SKILLS_MODE])
+
+    assert "Metrics (mixed validation metrics)" in chart
+    assert "Not comparable" in chart
+    assert "No skills baseline: accuracy" in chart
+    assert "With skills: AUROC" in chart
+    assert "| Metrics (mixed validation metrics) | accuracy 0.8123 | AUROC 0.7529 |" in table
+
+
+def test_structure_tree_renderer_uses_tree_format():
+    from harness.reports.benchmark_insights import tree_from_paths
+
+    tree = tree_from_paths(
+        [
+            "client.py",
+            "runtime_job_config/ames_fedavg/ames_fedavg/app/config/config_fed_client.json",
+            "runtime_job_config/ames_fedavg/ames_fedavg/app/custom/model.py",
+        ]
+    )
+
+    assert tree.startswith(".\n")
+    assert "|-- client.py" in tree
+    assert "`-- runtime_job_config" in tree
+    assert "        `-- ames_fedavg" in tree
+    assert "- runtime_job_config/ames_fedavg" not in tree
+
+
+def test_pair_summary_prints_compact_status_line(tmp_path, capsys):
+    from harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from harness.reports.summaries import write_pair_summary
+
+    for mode, elapsed in ((NO_SKILLS_MODE, 12.3), (WITH_SKILLS_MODE, 34.5)):
+        mode_dir = tmp_path / mode
+        mode_dir.mkdir()
+        (mode_dir / "run_summary.json").write_text(
+            json.dumps({"elapsed_seconds": elapsed, "all_metrics": {}}) + "\n",
+            encoding="utf-8",
+        )
+
+    write_pair_summary(tmp_path, {NO_SKILLS_MODE: 0, WITH_SKILLS_MODE: 1})
+
+    output = capsys.readouterr().out.strip()
+    assert output.startswith("Pair summary written:")
+    assert "without_skills: exit=0, elapsed=12.3s" in output
+    assert "with_skills: exit=1, elapsed=34.5s" in output
+    assert not output.startswith("{")
+
+
+def test_run_summary_uses_agent_keys_without_codex_aliases(tmp_path):
+    from harness.records import write_json, write_run_summary
+
+    final_record = tmp_path / "record.json"
+    summary_path = tmp_path / "run_summary.json"
+    write_json(
+        final_record,
+        {
+            "mode": "with_skills",
+            "agent_process_passed": True,
+            "agent_process_exit_code": 0,
+            "codex_process_passed": True,
+            "codex_process_exit_code": 0,
+            "agent_usage": {"total_tokens": 10},
+            "codex_usage": {"total_tokens": 10},
+            "process_metrics": {
+                "agent_exit_code": 0,
+                "codex_exit_code": 0,
+                "elapsed_seconds": 1,
+            },
+        },
+    )
+
+    write_run_summary(final_record, summary_path, print_summary=False)
+
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["agent_process_passed"] is True
+    assert summary["agent_process_exit_code"] == 0
+    assert summary["agent_exit_code"] == 0
+    assert summary["agent_usage"] == {"total_tokens": 10}
+    assert "codex_process_passed" not in summary
+    assert "codex_process_exit_code" not in summary
+    assert "codex_exit_code" not in summary
+    assert "codex_usage" not in summary
+    assert not any(key.startswith("codex_") for key in summary["all_metrics"])
+
+
+def test_report_generators_write_two_mode_outputs(tmp_path, monkeypatch):
+    from harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from harness.reports.benchmark_insights import main as insights_main
+    from harness.reports.metrics_report import write_reports
+
+    for mode, value in ((NO_SKILLS_MODE, 0.7562), (WITH_SKILLS_MODE, 0.7529)):
+        mode_dir = tmp_path / mode
+        records_dir = mode_dir / "records"
+        records_dir.mkdir(parents=True)
+        (mode_dir / "container_exit_code.json").write_text(json.dumps({"exit_code": 0}) + "\n", encoding="utf-8")
+        (mode_dir / "run_summary.json").write_text(
+            json.dumps(
+                {
+                    "mode": mode,
+                    "elapsed_seconds": 10,
+                    "token_count": 100,
+                    "codex_exit_code": 0,
+                    "final_container_exit_code": 0,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (records_dir / f"{mode}_record.json").write_text(
+            json.dumps(
+                {
+                    "mode": mode,
+                    "reported_validation_metric": {"name": "AUROC", "value": value},
+                    "process_metrics": {"elapsed_seconds": 10, "token_count": 100},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (mode_dir / "agent_activity.json").write_text(json.dumps({"command_count": 3}) + "\n", encoding="utf-8")
+        (mode_dir / "agent_usage.json").write_text(json.dumps({"total_tokens": 100}) + "\n", encoding="utf-8")
+
+    write_reports(tmp_path, "Synthetic Metrics")
+    monkeypatch.setattr(sys, "argv", ["benchmark_insights", str(tmp_path)])
+    insights_main()
+
+    assert (tmp_path / "metrics_report.json").is_file()
+    metrics_markdown = (tmp_path / "metrics_report.md").read_text(encoding="utf-8")
+    insights_markdown = (tmp_path / "benchmark_insights.md").read_text(encoding="utf-8")
+    assert "<svg" in metrics_markdown
+    assert "<svg" in insights_markdown
+    assert "Metrics (AUROC)" in metrics_markdown
+    assert "Metrics (AUROC)" in insights_markdown
+    assert "Benchmark Metrics Comparison" not in insights_markdown
+    assert "with_skills_eval" not in insights_markdown
+    assert "Evaluator" not in insights_markdown

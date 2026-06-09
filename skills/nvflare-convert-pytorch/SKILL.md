@@ -92,18 +92,6 @@ debugging that does not ask for FLARE conversion.
   non-fixture data for validation.
 - Ask before POC, production, or startup-kit based runtime submission.
 
-## Runtime Evaluation
-
-Check `NVFLARE_SKILL_EVAL` before creating process-evaluation artifacts. When
-it is unset, keep only task evidence needed for the user-facing result. If it is
-`on`, run `nvflare agent skills evaluate` before the final response when a
-matching eval case and bounded evidence are available. Use `--skill
-nvflare-convert-pytorch`, `--case <eval-id>`, `--agent`, `--run-mode`, and
-either `--artifacts <dir>` or `--checklist <file>`. Prefer
-`NVFLARE_SKILL_EVAL_CASE` when set; otherwise read `evals/evals.json` and choose
-a case only when the task maps unambiguously to one. Do not invent a case or
-evidence; if unavailable, report why evaluation was skipped.
-
 Load `../_shared/nvflare-job-lifecycle.md` and
 `references/recipe-selection.md` before creating `job.py`,
 `references/pytorch-client-api-conversion.md` for conversion details, and

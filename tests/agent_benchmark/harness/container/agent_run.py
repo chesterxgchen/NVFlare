@@ -29,18 +29,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..agents.base import normalize_agent_event
+from ..agents.base import normalize_agent_event, validate_benchmark_agent
 from ..artifacts import capture_workspace_delta, write_workspace_baseline
 from ..common import bool_from_text, load_json, make_tree_readable, write_json
 from ..events import parse_usage_and_activity
-from ..records import merge_record, synthesize_agent_record, write_run_summary
-from ..reports.reporting import (
-    discover_report_filter,
-    has_evaluator_backed_record,
-    write_report_filter,
-    write_report_status,
-)
-from ..timing import finalize_timing
+from ..modes import mode_spec
+from ..records import AgentRecordSynthesisInputs, merge_record, synthesize_agent_record, write_run_summary
+from ..timing import LifecycleEpochs, finalize_timing
+
+DEFAULT_CONTAINER_VENV_DIR = "/workspace/venv"
+RUNTIME_ARTIFACT_ROOT = Path("/tmp/nvflare")
 
 
 def epoch_seconds() -> int:
@@ -65,13 +63,11 @@ def required_bool(name: str, value: str) -> bool:
 class AgentRunConfig:
     mode: str
     use_preinstalled_skills: bool
-    process_eval: bool
     job_input_dir: Path
     result_dir: Path
     records_dir: Path
     run_root: Path
     prompt_source: Path
-    nvflare_skill_eval: str
     progress_interval_seconds: int
     nvflare_image_kind: str
     agent: str
@@ -79,7 +75,7 @@ class AgentRunConfig:
     codex_home: Path
 
     @property
-    def eval_run_mode(self) -> str:
+    def skill_run_mode(self) -> str:
         return "with_skill" if self.use_preinstalled_skills else "without_skill"
 
     @property
@@ -149,27 +145,33 @@ class AgentRunConfig:
     @classmethod
     def from_env(cls) -> "AgentRunConfig":
         env = os.environ
-        mode = env.get("MODE", "with_skills_eval_off")
+        mode = env.get("MODE", "with_skills")
+        try:
+            spec = mode_spec(mode)
+        except ValueError as exc:
+            raise SystemExit(str(exc).replace("Unknown mode", "Unknown MODE")) from exc
         use_preinstalled = env.get("USE_PREINSTALLED_SKILLS")
         if use_preinstalled is None:
-            use_preinstalled = "false" if mode.startswith("without_skills") else "true"
-        default_process_eval = "true" if mode.endswith("_eval_on") else "false"
-        default_skill_eval = "on" if mode.endswith("_eval_on") else ""
+            use_preinstalled = "true" if spec.skills_enabled else "false"
+        use_preinstalled_skills = required_bool("USE_PREINSTALLED_SKILLS", use_preinstalled)
+        if use_preinstalled_skills != spec.skills_enabled:
+            expected = "true" if spec.skills_enabled else "false"
+            raise SystemExit(
+                f"USE_PREINSTALLED_SKILLS={use_preinstalled} conflicts with MODE={mode}; expected {expected}."
+            )
         job_input = env.get("JOB_INPUT_DIR") or env.get("TRAINING_CODE") or "/workspace/input"
         result_dir = env.get("RESULT_DIR", "/workspace/results")
         return cls(
             mode=mode,
-            use_preinstalled_skills=required_bool("USE_PREINSTALLED_SKILLS", use_preinstalled),
-            process_eval=required_bool("PROCESS_EVAL", env.get("PROCESS_EVAL", default_process_eval)),
+            use_preinstalled_skills=use_preinstalled_skills,
             job_input_dir=Path(job_input),
             result_dir=Path(result_dir),
-            records_dir=Path(env.get("RECORDS_DIR", str(Path(result_dir) / "process_eval_runs"))),
+            records_dir=Path(env.get("RECORDS_DIR", str(Path(result_dir) / "records"))),
             run_root=Path(env.get("RUN_ROOT", f"/workspace/run/{mode}")),
             prompt_source=Path(env.get("PROMPT_SOURCE", "/workspace/prompts/benchmark_prompt.txt")),
-            nvflare_skill_eval=env.get("NVFLARE_SKILL_EVAL", default_skill_eval),
             progress_interval_seconds=int(env.get("PROGRESS_INTERVAL_SECONDS", "60") or "60"),
             nvflare_image_kind=env.get("NVFLARE_IMAGE_KIND", "unknown"),
-            agent=env.get("BENCHMARK_AGENT", "codex"),
+            agent=validate_benchmark_agent(env.get("BENCHMARK_AGENT", "codex")),
             agent_model=env.get("CODEX_MODEL", "unspecified_default"),
             codex_home=Path(env.get("CODEX_HOME", "/workspace/.codex")),
         )
@@ -237,13 +239,6 @@ def discover_bundled_skills_root() -> str | None:
         return None
 
 
-def write_skipped_skill_reports(result_dir: Path, reason: str) -> None:
-    payload = {"status": "skipped", "reason": reason}
-    write_json(result_dir / "skill_benchmark.json", payload)
-    write_json(result_dir / "skill_performance.json", payload)
-    (result_dir / "skill_performance.txt").write_text(f"skipped: {reason}\n", encoding="utf-8")
-
-
 def command_output(command: list[str]) -> str | None:
     try:
         return subprocess.check_output(command, text=True, stderr=subprocess.STDOUT).strip()
@@ -285,8 +280,11 @@ def login_shell_runtime_probe() -> dict[str, Any]:
         key, sep, value = line.partition("=")
         if sep:
             values[key] = value
-    expected_python = "/workspace/venv/bin/python"
-    expected_nvflare = "/workspace/venv/bin/nvflare"
+    expected_venv = os.environ.get("BENCHMARK_CONTAINER_VENV_DIR") or os.environ.get(
+        "VIRTUAL_ENV", DEFAULT_CONTAINER_VENV_DIR
+    )
+    expected_python = str(Path(expected_venv) / "bin" / "python")
+    expected_nvflare = str(Path(expected_venv) / "bin" / "nvflare")
     ok = (
         result.returncode == 0 and values.get("python") == expected_python and values.get("nvflare") == expected_nvflare
     )
@@ -342,19 +340,6 @@ def persist_container_runtime_metadata(config: AgentRunConfig) -> None:
         raise RuntimeError(f"Login-shell runtime probe failed: {probe.get('reason')}")
 
 
-def remove_skill_report_artifacts(result_dir: Path) -> None:
-    for name in (
-        "skill_report_filter.json",
-        "skill_benchmark.json",
-        "skill_benchmark.md",
-        "skill_performance.json",
-        "skill_performance.txt",
-        "skill_report_status.json",
-        "agent_report_exit_codes.json",
-    ):
-        (result_dir / name).unlink(missing_ok=True)
-
-
 def disable_skills(skills_root: Path) -> dict[str, Any]:
     skills_root.mkdir(parents=True, exist_ok=True)
     for child in list(skills_root.iterdir()):
@@ -395,10 +380,11 @@ def setup_skill_availability(config: AgentRunConfig) -> tuple[int, int]:
                 "skills_enabled": True,
             },
         )
-        shutil.copy2(
-            config.codex_home / "nvflare_skills_build_install.json", config.result_dir / "skills_build_install.json"
+        copy_optional_metadata_files(
+            config.codex_home,
+            config.result_dir,
+            ("nvflare_skills_build_install.json", "nvflare_skills_list.json"),
         )
-        shutil.copy2(config.codex_home / "nvflare_skills_list.json", config.result_dir / "skills_list.json")
     else:
         disabled = disable_skills(skills_root)
         write_json(
@@ -418,6 +404,23 @@ def setup_skill_availability(config: AgentRunConfig) -> tuple[int, int]:
             {"status": "skipped", "installed": [], "reason": "skills intentionally removed for baseline run"},
         )
     return start, epoch_seconds()
+
+
+def copy_optional_metadata_files(source_dir: Path, result_dir: Path, names: tuple[str, ...]) -> dict[str, Any]:
+    copied = []
+    missing = []
+    for name in names:
+        source = source_dir / name
+        if source.is_file():
+            target_name = name.removeprefix("nvflare_")
+            shutil.copy2(source, result_dir / target_name)
+            copied.append({"source": str(source), "target": str(result_dir / target_name)})
+        else:
+            missing.append(str(source))
+    payload = {"copied": copied, "missing": missing}
+    if missing:
+        write_json(result_dir / "skills_metadata_missing.json", payload)
+    return payload
 
 
 def prepare_input_workspace(config: AgentRunConfig) -> tuple[int, int]:
@@ -448,31 +451,33 @@ def prepare_prompt(config: AgentRunConfig) -> tuple[int, int]:
             "prompt_bytes": len(prompt_bytes),
             "verbatim_copy": template_bytes == prompt_bytes,
             "harness_prompt_injection": False,
-            "note": "The harness copies the mounted prompt file verbatim and does not append mode, path, skill, or evaluator instructions.",
+            "note": "The harness copies the mounted prompt file verbatim and does not append mode, path, or skill instructions.",
         },
     )
     return start, epoch_seconds()
 
 
-def write_agent_compatibility_aliases(config: AgentRunConfig) -> None:
-    aliases = (
+def write_agent_compatibility_copies(config: AgentRunConfig) -> None:
+    # Use file copies rather than symlinks because benchmark results may live on
+    # Docker volume mounts where symlink behavior varies by host platform.
+    copies = (
         (config.agent_events_path, config.codex_events_path),
         (config.agent_usage_path, config.codex_usage_path),
         (config.agent_activity_path, config.codex_activity_path),
         (config.agent_last_message_path, config.codex_last_message_path),
         (config.agent_stderr_path, config.codex_stderr_path),
     )
-    for source, target in aliases:
+    for source, target in copies:
         if source.exists() and source != target:
             shutil.copy2(source, target)
 
 
-def run_codex(config: AgentRunConfig, progress: ProgressWriter) -> tuple[int, int, int]:
+def run_agent(config: AgentRunConfig, progress: ProgressWriter) -> tuple[int, int, int]:
     start = epoch_seconds()
     config.progress_log_path.write_text("", encoding="utf-8")
-    progress.write("codex_exec", "start", start)
-    progress.start_heartbeat("codex_exec", config.progress_interval_seconds)
-    codex_exit = 127
+    progress.write("agent_exec", "start", start)
+    progress.start_heartbeat("agent_exec", config.progress_interval_seconds)
+    agent_exit = 127
     launch_error: OSError | None = None
 
     command = [
@@ -524,7 +529,7 @@ def run_codex(config: AgentRunConfig, progress: ProgressWriter) -> tuple[int, in
                         if normalized:
                             events_out.write(normalized + "\n")
                             events_out.flush()
-                    codex_exit = process.wait()
+                    agent_exit = process.wait()
         except OSError as exc:
             launch_error = exc
             print(f"Failed to prepare Codex command streams: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -532,12 +537,12 @@ def run_codex(config: AgentRunConfig, progress: ProgressWriter) -> tuple[int, in
         progress.stop_heartbeat()
 
     end = epoch_seconds()
-    progress.write("codex_exec", "failed_to_start" if launch_error is not None else "finished", end)
-    return start, end, codex_exit
+    progress.write("agent_exec", "failed_to_start" if launch_error is not None else "finished", end)
+    return start, end, agent_exit
 
 
 def post_process(
-    config: AgentRunConfig, elapsed_seconds: int, codex_exit: int, run_start_time_ns: int
+    config: AgentRunConfig, elapsed_seconds: int, agent_exit: int, run_start_time_ns: int
 ) -> tuple[int, int]:
     start = epoch_seconds()
     input_delta_manifest = config.result_dir / "input_delta_manifest.json"
@@ -546,7 +551,7 @@ def post_process(
         config.result_dir / "input_baseline_manifest.json",
         config.result_dir / "input_delta",
         input_delta_manifest,
-        Path("/tmp/nvflare"),
+        RUNTIME_ARTIFACT_ROOT,
         delta_scope="input_snapshot",
         include_runtime_artifacts=False,
     )
@@ -556,7 +561,7 @@ def post_process(
         config.result_dir / "workspace_baseline_manifest.json",
         config.result_dir / "workspace_delta",
         workspace_delta_manifest,
-        Path("/tmp/nvflare"),
+        RUNTIME_ARTIFACT_ROOT,
         delta_scope="agent_workspace",
     )
     parse_usage_and_activity(
@@ -564,27 +569,28 @@ def post_process(
         config.agent_usage_path,
         config.agent_activity_path,
     )
-    write_agent_compatibility_aliases(config)
+    write_agent_compatibility_copies(config)
     synthesize_agent_record(
-        config.agent_record_path,
-        config.records_dir,
-        config.agent_events_path,
-        config.agent_usage_path,
-        config.agent_activity_path,
-        config.agent_last_message_path,
-        config.run_input_dir,
-        config.mode,
-        elapsed_seconds,
-        codex_exit,
-        config.use_preinstalled_skills,
-        config.process_eval,
-        config.eval_run_mode,
-        config.nvflare_skill_eval,
-        config.agent,
-        config.agent_model,
-        run_start_time_ns,
-        workspace_delta_manifest,
-        input_delta_manifest,
+        AgentRecordSynthesisInputs(
+            agent_record_path=config.agent_record_path,
+            records_dir=config.records_dir,
+            events_path=config.agent_events_path,
+            usage_path=config.agent_usage_path,
+            activity_path=config.agent_activity_path,
+            last_message_path=config.agent_last_message_path,
+            input_dir=config.run_input_dir,
+            mode=config.mode,
+            elapsed_seconds=elapsed_seconds,
+            agent_exit=agent_exit,
+            skills_enabled=config.use_preinstalled_skills,
+            skill_run_mode=config.skill_run_mode,
+            agent=config.agent,
+            agent_model=config.agent_model,
+            run_start_time_ns=run_start_time_ns,
+            workspace_delta_manifest_path=workspace_delta_manifest,
+            input_delta_manifest_path=input_delta_manifest,
+            prompt_path=config.prompt_file_path,
+        )
     )
     merge_record(
         config.agent_record_path,
@@ -592,26 +598,14 @@ def post_process(
         config.agent_usage_path,
         config.mode,
         elapsed_seconds,
-        codex_exit,
+        agent_exit,
         config.use_preinstalled_skills,
-        config.process_eval,
-        config.eval_run_mode,
-        config.nvflare_skill_eval,
+        config.skill_run_mode,
         config.agent,
         config.agent_model,
     )
-    write_run_summary(config.final_record_path, config.result_dir / "run_summary.json")
+    write_run_summary(config.final_record_path, config.result_dir / "run_summary.json", print_summary=False)
     return start, epoch_seconds()
-
-
-def run_command_to_file(command: list[str], output_path: Path) -> int:
-    try:
-        with output_path.open("wb") as stdout:
-            return subprocess.run(command, stdout=stdout).returncode
-    except OSError as exc:
-        program = command[0] if command else "<empty command>"
-        print(f"Failed to start or capture command {program}: {type(exc).__name__}: {exc}", file=sys.stderr)
-        return 127
 
 
 def report_exit_status(command_statuses: dict[str, int]) -> int:
@@ -626,21 +620,21 @@ def record_has_policy_failure(record: dict[str, Any]) -> bool:
     return isinstance(violation, dict) and violation.get("status") == "fail"
 
 
-def final_container_exit_status(codex_exit: int, report_statuses: dict[str, int], *, policy_failed: bool) -> int:
-    if codex_exit != 0:
-        return codex_exit
+def final_container_exit_status(agent_exit: int, report_statuses: dict[str, int], *, policy_failed: bool) -> int:
+    if agent_exit != 0:
+        return agent_exit
     if policy_failed:
         return 1
     return report_exit_status(report_statuses)
 
 
-def write_report_outcome(config: AgentRunConfig, codex_exit: int, report_statuses: dict[str, int]) -> int:
+def write_report_outcome(config: AgentRunConfig, agent_exit: int, report_statuses: dict[str, int]) -> int:
     report_exit = report_exit_status(report_statuses)
     record = load_json(config.final_record_path, {}) or {}
     if not isinstance(record, dict):
         record = {}
     policy_failed = record_has_policy_failure(record)
-    final_exit = final_container_exit_status(codex_exit, report_statuses, policy_failed=policy_failed)
+    final_exit = final_container_exit_status(agent_exit, report_statuses, policy_failed=policy_failed)
     record["agent_report_exit_codes"] = report_statuses
     record["agent_report_exit_code"] = report_exit
     record["agent_report_failed"] = report_exit != 0
@@ -659,102 +653,13 @@ def write_report_outcome(config: AgentRunConfig, codex_exit: int, report_statuse
     return final_exit
 
 
-def write_skill_reports(config: AgentRunConfig) -> tuple[int, int, dict[str, int]]:
-    start = epoch_seconds()
-    remove_skill_report_artifacts(config.result_dir)
-    report_filter = discover_report_filter(config.records_dir)
-    write_report_filter(config.result_dir / "skill_report_filter.json", report_filter["skill"], report_filter["case"])
-
-    report_args: list[str] = []
-    if report_filter["skill"]:
-        report_args.extend(["--skill", report_filter["skill"]])
-    if report_filter["case"]:
-        report_args.extend(["--case", report_filter["case"]])
-
-    evaluator_backed = config.final_record_path.is_file() and has_evaluator_backed_record(config.final_record_path)
-    skipped = False
-    skip_reason = ""
-    if config.use_preinstalled_skills and evaluator_backed:
-        benchmark_status = run_command_to_file(
-            [
-                "nvflare",
-                "--format",
-                "json",
-                "agent",
-                "skills",
-                "benchmark",
-                *report_args,
-                "--records",
-                str(config.final_record_path),
-                "--output",
-                str(config.result_dir / "skill_benchmark.md"),
-            ],
-            config.result_dir / "skill_benchmark.json",
-        )
-        performance_json_status = run_command_to_file(
-            [
-                "nvflare",
-                "--format",
-                "json",
-                "agent",
-                "skills",
-                "performance",
-                *report_args,
-                "--records",
-                str(config.final_record_path),
-            ],
-            config.result_dir / "skill_performance.json",
-        )
-        performance_text_status = run_command_to_file(
-            [
-                "nvflare",
-                "agent",
-                "skills",
-                "performance",
-                *report_args,
-                "--records",
-                str(config.final_record_path),
-            ],
-            config.result_dir / "skill_performance.txt",
-        )
-    else:
-        benchmark_status = 0
-        performance_json_status = 0
-        performance_text_status = 0
-        skipped = True
-        if config.use_preinstalled_skills:
-            skip_reason = "no evaluator-backed eval_passed record is available; skipping NVFLARE skill quality reports"
-        else:
-            skip_reason = "baseline runtime image does not contain skill benchmark contracts; host wrapper reports from the skills image"
-        write_skipped_skill_reports(config.result_dir, skip_reason)
-
-    write_report_status(
-        config.result_dir / "skill_report_status.json",
-        performance_json_status,
-        performance_text_status,
-        benchmark_status,
-        skipped,
-        skip_reason,
-        evaluator_backed,
-    )
-    command_statuses = {
-        "skill_benchmark": benchmark_status,
-        "skill_performance_json": performance_json_status,
-        "skill_performance_text": performance_text_status,
-    }
-    write_json(config.result_dir / "agent_report_exit_codes.json", command_statuses)
-    return start, epoch_seconds(), command_statuses
-
-
 def configure_process_record_environment(config: AgentRunConfig) -> None:
     # This runs inside the benchmark container; mutating os.environ is intentional
-    # so Codex and evaluator subprocesses inherit the process-record locations.
+    # so agent subprocesses can discover benchmark record locations.
     os.environ["JOB_INPUT_DIR"] = str(config.job_input_dir)
     os.environ["TRAINING_CODE"] = str(config.job_input_dir)
-    os.environ["PROCESS_EVAL_RECORDS"] = str(config.records_dir)
+    os.environ["RECORDS_DIR"] = str(config.records_dir)
     os.environ["NVFLARE_AGENT_RECORD"] = str(config.agent_record_path)
-    os.environ["NVFLARE_PROCESS_EVAL_MODE"] = config.mode
-    os.environ["NVFLARE_SKILL_EVAL_RECORDS"] = str(config.records_dir)
 
 
 def exit_code_from_exception(exc: BaseException, default: int = 1) -> int:
@@ -785,8 +690,6 @@ def write_failure_record(
     agent: str = "codex",
     agent_model: str = "unspecified_default",
     skills_enabled: bool | None = None,
-    process_eval: bool | None = None,
-    nvflare_skill_eval: str = "",
 ) -> int:
     result_dir.mkdir(parents=True, exist_ok=True)
     records_dir.mkdir(parents=True, exist_ok=True)
@@ -797,33 +700,21 @@ def write_failure_record(
         "error_type": error_type,
         "message": message,
     }
-    process_eval_state = "unknown" if process_eval is None else "on" if process_eval else "off"
-    nvflare_skill_eval_state = "on" if nvflare_skill_eval == "on" else "off"
     record = {
         "schema_version": "1",
         "mode": mode,
         "run_mode": "unknown" if skills_enabled is None else "with_skill" if skills_enabled else "without_skill",
         "agent": agent,
-        "source": "docker_codex_benchmark",
+        "source": "agent_benchmark_harness",
+        "agent_process_passed": False,
+        "agent_process_exit_code": exit_code,
         "agent_model": agent_model,
         "skills_enabled": skills_enabled,
-        "process_eval_enabled": process_eval,
-        "process_evaluator_state": process_eval_state,
-        "process_eval_semantics": "harness metadata flag; NVFLARE_SKILL_EVAL is the runtime switch that enables NVFLARE skill evaluation",
-        "nvflare_skill_eval": nvflare_skill_eval,
-        "nvflare_skill_eval_state": nvflare_skill_eval_state,
         "timestamp": error["timestamp"],
         "codex_process_passed": False,
         "codex_process_exit_code": exit_code,
         "agent_record_present": False,
         "agent_record_valid": False,
-        "eval_passed": None,
-        "eval_passed_source": "unavailable",
-        "score": {
-            "value": None,
-            "max": 5,
-            "rationale": "Harness failure occurred before a normal run record could be produced.",
-        },
         "harness_failure": True,
         "harness_error": error,
         "harness_errors": [error],
@@ -835,6 +726,8 @@ def write_failure_record(
         "process_metrics": {
             "elapsed_seconds": 0,
             "token_count": None,
+            "agent_exit_code": exit_code,
+            "agent_process_passed": 0,
             "codex_exit_code": exit_code,
             "codex_process_passed": 0,
             "harness_failure": 1,
@@ -844,9 +737,6 @@ def write_failure_record(
             "report_inclusive_exit_code": exit_code,
         },
     }
-    if process_eval is not None:
-        record["process_metrics"]["process_eval_enabled"] = 1 if process_eval else 0
-    record["process_metrics"]["nvflare_skill_eval_enabled"] = 1 if nvflare_skill_eval == "on" else 0
     final_record_path = records_dir / f"{mode}_record.json"
     write_json(final_record_path, record)
     write_json(
@@ -899,7 +789,7 @@ def merge_harness_failure(config: AgentRunConfig, exc: BaseException, exit_code:
 def write_failure_record_from_env(exc: BaseException, exit_code: int, phase: str) -> int:
     env = os.environ
     result_dir = Path(env.get("RESULT_DIR", "/workspace/results"))
-    records_dir = Path(env.get("RECORDS_DIR", str(result_dir / "process_eval_runs")))
+    records_dir = Path(env.get("RECORDS_DIR", str(result_dir / "records")))
     return write_failure_record(
         result_dir=result_dir,
         records_dir=records_dir,
@@ -910,7 +800,6 @@ def write_failure_record_from_env(exc: BaseException, exit_code: int, phase: str
         phase=phase,
         agent=env.get("BENCHMARK_AGENT", "codex"),
         agent_model=env.get("CODEX_MODEL", "unspecified_default"),
-        nvflare_skill_eval=env.get("NVFLARE_SKILL_EVAL", ""),
     )
 
 
@@ -937,8 +826,6 @@ def write_configured_failure(
         agent=config.agent,
         agent_model=config.agent_model,
         skills_enabled=config.use_preinstalled_skills,
-        process_eval=config.process_eval,
-        nvflare_skill_eval=config.nvflare_skill_eval,
     )
 
 
@@ -983,16 +870,18 @@ def run_agent_benchmark() -> int:
         phase = "prompt_prepare"
         prompt_start, prompt_end = prepare_prompt(config)
 
-        phase = "codex_exec"
+        phase = "agent_exec"
         progress = ProgressWriter(config.mode, script_start, config.progress_log_path)
-        codex_start, codex_end, codex_exit = run_codex(config, progress)
-        elapsed_seconds = codex_end - codex_start
+        agent_start, agent_end, agent_exit = run_agent(config, progress)
+        elapsed_seconds = agent_end - agent_start
         phase = "post_process"
-        post_start, post_end = post_process(config, elapsed_seconds, codex_exit, script_start_ns)
+        post_start, post_end = post_process(config, elapsed_seconds, agent_exit, script_start_ns)
         normal_record_written = True
-        phase = "skill_reports"
-        report_start, report_end, report_statuses = write_skill_reports(config)
-        final_exit = write_report_outcome(config, codex_exit, report_statuses)
+        phase = "report_outcome"
+        report_start = epoch_seconds()
+        report_statuses: dict[str, int] = {}
+        final_exit = write_report_outcome(config, agent_exit, report_statuses)
+        report_end = epoch_seconds()
 
         script_end = epoch_seconds()
         phase = "finalize_timing"
@@ -1001,22 +890,28 @@ def run_agent_benchmark() -> int:
             config.final_record_path,
             config.result_dir / "timing.json",
             config.agent_activity_path,
-            [
-                script_start,
-                skill_start,
-                skill_end,
-                input_start,
-                input_end,
-                prompt_start,
-                prompt_end,
-                codex_start,
-                codex_end,
-                post_start,
-                post_end,
-                report_start,
-                report_end,
-                script_end,
-            ],
+            LifecycleEpochs(
+                script_start=script_start,
+                skill_availability_start=skill_start,
+                skill_availability_end=skill_end,
+                input_copy_start=input_start,
+                input_copy_end=input_end,
+                prompt_prep_start=prompt_start,
+                prompt_prep_end=prompt_end,
+                agent_start=agent_start,
+                agent_end=agent_end,
+                post_process_start=post_start,
+                post_process_end=post_end,
+                report_outcome_start=report_start,
+                report_outcome_end=report_end,
+                script_end=script_end,
+            ),
+        )
+        print(
+            "Benchmark run complete: "
+            f"mode={config.mode}; elapsed_seconds={script_end - script_start}; "
+            f"agent_elapsed_seconds={elapsed_seconds}; final_exit={final_exit}; result_dir={config.result_dir}",
+            flush=True,
         )
         return final_exit
     except BaseException as exc:

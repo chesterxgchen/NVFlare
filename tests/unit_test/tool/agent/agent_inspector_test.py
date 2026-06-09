@@ -116,6 +116,19 @@ def test_inspect_does_not_treat_pytorch_to_call_as_export_support(tmp_path):
     assert "python job.py --export --export-dir <job-dir>" not in data["recommended_next_commands"]
 
 
+def test_inspect_does_not_treat_builtin_compile_as_torch_compile(tmp_path):
+    script = tmp_path / "train.py"
+    script.write_text(
+        "import torch\n" "\n" "def build_code():\n" "    return compile('x = 1', '<inline>', 'exec')\n",
+        encoding="utf-8",
+    )
+
+    data = inspect_path(script)
+
+    assert data["frameworks"][0]["name"] == "pytorch"
+    assert not any(item["kind"] == "torch_compile" for item in data["patterns"]["dynamic"])
+
+
 def test_inspect_stops_and_caps_skips_after_file_limit(tmp_path):
     root = tmp_path / "repo"
     root.mkdir()

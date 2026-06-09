@@ -19,6 +19,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Mapping, Protocol
 
+SUPPORTED_BENCHMARK_AGENTS = ("codex",)
+
 
 class DockerMount(Protocol):
     """Structural type for host-side Docker mount descriptors."""
@@ -57,8 +59,21 @@ class AgentAdapter(Protocol):
 def normalize_agent_event(agent: str, raw_line: str) -> dict | None:
     """Normalize one raw structured event line for the selected agent."""
 
+    validate_benchmark_agent(agent)
     if agent == "codex":
         from .codex import normalize_codex_event
 
         return normalize_codex_event(raw_line)
-    raise ValueError(f"Unsupported benchmark agent: {agent}")
+    raise AssertionError(f"unreachable unsupported benchmark agent: {agent}")
+
+
+def validate_benchmark_agent(agent: str) -> str:
+    """Return a supported benchmark agent name or raise a clear error."""
+
+    if agent in SUPPORTED_BENCHMARK_AGENTS:
+        return agent
+    supported = ", ".join(SUPPORTED_BENCHMARK_AGENTS)
+    raise ValueError(
+        f"Unsupported BENCHMARK_AGENT={agent!r}. Supported benchmark agents: {supported}. "
+        "Non-Codex adapters are not implemented yet."
+    )

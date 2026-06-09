@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
+from ..agents.base import validate_benchmark_agent
 from ..common import write_json
 
 SCRIPT_DIR = Path(__file__).resolve().parents[2]
@@ -71,7 +72,6 @@ def print_usage(command: str) -> None:
     usage = {
         "run-one": "Run one agent benchmark case against an arbitrary job folder.",
         "pair": "Run paired skills/no-skills benchmark cases against a job folder.",
-        "process-eval": "Run the three-mode skill-eval ablation against a job folder.",
         "interactive": "Start an interactive benchmark container with a job folder mounted.",
     }.get(command, "Run an agent benchmark command against a job folder.")
     print(
@@ -84,7 +84,7 @@ def print_usage(command: str) -> None:
         "  --training-code PATH    Job folder to mount into the benchmark container.\n"
         "  --results-root PATH     Parent directory for generated timestamped result directories.\n"
         "  --output-dir PATH       Exact result directory for this run or comparison.\n"
-        "  --result-root PATH      Exact result directory for pair/process-eval comparisons.\n"
+        "  --result-root PATH      Exact result directory for pair comparisons.\n"
         "  --result-dir PATH       Exact result directory for run-one.\n"
         "  -h, --help              Show this help."
     )
@@ -150,7 +150,7 @@ def parse_host_cli_options(argv: list[str], command: str) -> HostCliOptions:
                 if result_dir is not None:
                     raise SystemExit("Expected only one exact output directory")
                 result_dir = absolute_path(value)
-            elif command in {"pair", "process-eval"}:
+            elif command == "pair":
                 if result_root is not None:
                     raise SystemExit("Expected only one exact output directory")
                 result_root = absolute_path(value)
@@ -193,8 +193,8 @@ def parse_host_cli_options(argv: list[str], command: str) -> HostCliOptions:
     if results_root is not None and (result_root is not None or result_dir is not None):
         raise SystemExit("Use --results-root or an exact output option, not both.")
     if command == "run-one" and result_root is not None:
-        raise SystemExit("--result-root is only supported for pair and process-eval; use --result-dir for run-one.")
-    if command in {"pair", "process-eval"} and result_dir is not None:
+        raise SystemExit("--result-root is only supported for pair; use --result-dir for run-one.")
+    if command == "pair" and result_dir is not None:
         raise SystemExit("--result-dir is only supported for run-one; use --result-root for comparisons.")
     if command == "interactive" and (results_root is not None or result_root is not None or result_dir is not None):
         raise SystemExit("Output directory options are not supported for interactive containers.")
@@ -275,7 +275,7 @@ def add_openai_passthrough_env(args: list[str]) -> None:
     if os.environ.get("OPENAI_API_KEY"):
         args.extend(["-e", "OPENAI_API_KEY"])
     if os.environ.get("BENCHMARK_AGENT"):
-        args.extend(["-e", f"BENCHMARK_AGENT={os.environ['BENCHMARK_AGENT']}"])
+        args.extend(["-e", f"BENCHMARK_AGENT={benchmark_agent_from_env()}"])
     if os.environ.get("CODEX_MODEL"):
         args.extend(["-e", f"CODEX_MODEL={os.environ['CODEX_MODEL']}"])
 
@@ -320,7 +320,7 @@ class ImageConfig:
 
     @classmethod
     def from_env(cls) -> "ImageConfig":
-        agent = os.environ.get("BENCHMARK_AGENT", "codex")
+        agent = benchmark_agent_from_env()
         image = os.environ.get("IMAGE_NAME", f"nvflare-agent-benchmark:{agent}-skills")
         return cls(
             image_name=image,
@@ -333,8 +333,6 @@ class ImageConfig:
 class CaseConfig:
     mode: str
     use_preinstalled_skills: bool
-    process_eval: bool
-    nvflare_skill_eval: str
     job_input_dir: Path
     result_dir: Path
     prompt_path: Path
@@ -360,8 +358,6 @@ def case_config(
     *,
     mode: str,
     use_preinstalled_skills: bool,
-    process_eval: bool,
-    nvflare_skill_eval: str,
     job_input_dir: Path,
     result_dir: Path,
     prompt_path: Path,
@@ -370,8 +366,6 @@ def case_config(
     return CaseConfig(
         mode=mode,
         use_preinstalled_skills=use_preinstalled_skills,
-        process_eval=process_eval,
-        nvflare_skill_eval=nvflare_skill_eval,
         job_input_dir=job_input_dir,
         result_dir=result_dir,
         prompt_path=prompt_path,
@@ -399,16 +393,11 @@ def docker_args_for_case(config: CaseConfig, logs: Iterable[Path] = (), prefix: 
         *docker_env("PROMPT_SOURCE", CONTAINER_PROMPT_PATH),
         *docker_env("MODE", config.mode),
         *docker_env("USE_PREINSTALLED_SKILLS", config.use_preinstalled_skills),
-        *docker_env("PROCESS_EVAL", config.process_eval),
-        *docker_env("NVFLARE_SKILL_EVAL", config.nvflare_skill_eval),
         *docker_env("NVFLARE_IMAGE_KIND", config.nvflare_image_kind),
         *docker_env("PROGRESS_INTERVAL_SECONDS", config.progress_interval_seconds),
         *docker_env("RESULT_DIR", "/workspace/results"),
-        *docker_env("RECORDS_DIR", "/workspace/results/process_eval_runs"),
-        *docker_env("PROCESS_EVAL_RECORDS", "/workspace/results/process_eval_runs"),
-        *docker_env("NVFLARE_AGENT_RECORD", f"/workspace/results/process_eval_runs/{config.mode}_agent_record.json"),
-        *docker_env("NVFLARE_PROCESS_EVAL_MODE", config.mode),
-        *docker_env("NVFLARE_SKILL_EVAL_RECORDS", "/workspace/results/process_eval_runs"),
+        *docker_env("RECORDS_DIR", "/workspace/results/records"),
+        *docker_env("NVFLARE_AGENT_RECORD", f"/workspace/results/records/{config.mode}_agent_record.json"),
     ]
     add_openai_passthrough_env(args)
     if config.mount_host_codex_auth:
@@ -430,10 +419,7 @@ def write_runtime_image(config: CaseConfig) -> None:
         {
             "mode": config.mode,
             "use_preinstalled_skills": config.use_preinstalled_skills,
-            "process_eval": config.process_eval,
-            "nvflare_skill_eval": config.nvflare_skill_eval,
-            "nvflare_skill_eval_state": "on" if config.nvflare_skill_eval == "on" else "off",
-            "agent": os.environ.get("BENCHMARK_AGENT", "codex"),
+            "agent": benchmark_agent_from_env(),
             "agent_model": os.environ.get("CODEX_MODEL", "unspecified_default"),
             "runtime_image": config.run_image,
             "report_image": config.images.report_image_name,
@@ -443,3 +429,10 @@ def write_runtime_image(config: CaseConfig) -> None:
             "container_virtual_env": "/workspace/venv",
         },
     )
+
+
+def benchmark_agent_from_env() -> str:
+    try:
+        return validate_benchmark_agent(os.environ.get("BENCHMARK_AGENT", "codex"))
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc

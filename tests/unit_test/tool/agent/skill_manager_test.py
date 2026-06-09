@@ -21,6 +21,7 @@ import pytest
 
 from nvflare.tool.agent import skill_manager
 from nvflare.tool.agent.skill_manager import (
+    INSTALL_LOCK_TIMESTAMP_FILE_NAME,
     INSTALL_MANIFEST_FILE_NAME,
     SkillSource,
     find_skill_source,
@@ -73,6 +74,11 @@ def test_resolve_target_override_rejects_symlink_parent(tmp_path):
         resolve_agent_target_dir("codex", target_dir=link_parent / "skills")
 
 
+def test_resolve_target_override_rejects_parent_traversal(tmp_path):
+    with pytest.raises(ValueError, match="parent directory traversal"):
+        resolve_agent_target_dir("codex", target_dir=tmp_path / "target" / ".." / "skills")
+
+
 def test_resolve_unsupported_agent_raises_value_error():
     try:
         resolve_agent_target_dir("unsupported")
@@ -84,9 +90,8 @@ def test_resolve_unsupported_agent_raises_value_error():
 
 def test_find_skill_source_does_not_misclassify_site_packages_skills(monkeypatch, tmp_path):
     fake_site_packages = tmp_path / "site-packages"
-    fake_module = fake_site_packages / "nvflare" / "tool" / "agent" / "skill_manager.py"
-    fake_module.parent.mkdir(parents=True)
-    fake_module.write_text("# fake installed module\n", encoding="utf-8")
+    fake_package = fake_site_packages / "nvflare"
+    fake_package.mkdir(parents=True)
     _write_skill(fake_site_packages / "skills", "unrelated-skill")
     bundle_root = tmp_path / "bundle"
     bundle_root.mkdir()
@@ -100,7 +105,11 @@ def test_find_skill_source_does_not_misclassify_site_packages_skills(monkeypatch
         },
         bundle_root / "manifest.json",
     )
-    monkeypatch.setattr(skill_manager, "__file__", str(fake_module))
+    monkeypatch.setattr(
+        skill_manager.util,
+        "find_spec",
+        lambda _name: type("Spec", (), {"submodule_search_locations": [str(fake_package)]})(),
+    )
     monkeypatch.setattr(skill_manager.resources, "files", lambda _package: bundle_root)
 
     source = find_skill_source()
@@ -375,6 +384,55 @@ def test_install_skills_reports_copy_error_and_continues(monkeypatch, tmp_path):
     assert (target / "nvflare-a-skill" / "SKILL.md").is_file()
     assert not (target / "nvflare-failing-skill").exists()
     assert (target / "nvflare-z-skill" / "SKILL.md").is_file()
+
+
+def test_install_skills_fails_when_same_skill_install_lock_exists(tmp_path):
+    source = _skill_source(tmp_path)
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / ".nvflare-test-skill.install.lock").mkdir()
+
+    plan = install_skills(agent="codex", target_dir=target, source=source)
+
+    assert plan["applied"] is False
+    assert plan["errors"][0]["type"] == "FileExistsError"
+    assert "already being installed" in plan["errors"][0]["message"]
+    assert not (target / "nvflare-test-skill").exists()
+
+
+def test_install_skills_recovers_stale_install_lock(monkeypatch, tmp_path):
+    source = _skill_source(tmp_path)
+    target = tmp_path / "target"
+    target.mkdir()
+    lock = target / ".nvflare-test-skill.install.lock"
+    lock.mkdir()
+    stale_time = 1_000_000
+    os.utime(lock, (stale_time, stale_time))
+    monkeypatch.setenv("NVFLARE_AGENT_SKILL_INSTALL_LOCK_TTL_SECONDS", "1")
+
+    plan = install_skills(agent="codex", target_dir=target, source=source)
+
+    assert plan["applied"] is True
+    assert plan["skills"][0]["status"] == "installed"
+    assert (target / "nvflare-test-skill" / "SKILL.md").is_file()
+    assert not lock.exists()
+
+
+def test_install_skills_recovers_stale_install_lock_from_timestamp(monkeypatch, tmp_path):
+    source = _skill_source(tmp_path)
+    target = tmp_path / "target"
+    target.mkdir()
+    lock = target / ".nvflare-test-skill.install.lock"
+    lock.mkdir()
+    lock.joinpath(INSTALL_LOCK_TIMESTAMP_FILE_NAME).write_text("0", encoding="utf-8")
+    monkeypatch.setenv("NVFLARE_AGENT_SKILL_INSTALL_LOCK_TTL_SECONDS", "1")
+
+    plan = install_skills(agent="codex", target_dir=target, source=source)
+
+    assert plan["applied"] is True
+    assert plan["skills"][0]["status"] == "installed"
+    assert (target / "nvflare-test-skill" / "SKILL.md").is_file()
+    assert not lock.exists()
 
 
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks are not supported on this platform")

@@ -15,6 +15,7 @@
 """Validation for NVFLARE agent skill frontmatter."""
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -22,6 +23,7 @@ from typing import Any, Mapping, Optional
 import yaml
 
 SKILL_FILE_NAME = "SKILL.md"
+YAML_ANCHOR_OR_ALIAS_RE = re.compile(r"(^|[:\s\[{,])([&*])[A-Za-z0-9_-]+(?=\s|$|[,}\]])")
 REQUIRED_FRONTMATTER_FIELDS = ("name", "description", "min_flare_version", "blast_radius")
 VALID_BLAST_RADIUS = frozenset(
     {
@@ -69,6 +71,8 @@ def parse_skill_frontmatter(skill_file: Path | str) -> dict[str, Any]:
         raise SkillFrontmatterError("SKILL.md frontmatter must end with delimiter '---'")
 
     raw_frontmatter = "\n".join(lines[1:close_index])
+    if YAML_ANCHOR_OR_ALIAS_RE.search(raw_frontmatter):
+        raise SkillFrontmatterError("SKILL.md frontmatter must not use YAML anchors or aliases")
     try:
         metadata = yaml.safe_load(raw_frontmatter) or {}
     except yaml.YAMLError as e:

@@ -28,9 +28,7 @@ RUN uv --version
 ENV CODEX_HOME=/workspace/.codex
 ENV JOB_INPUT_DIR=/workspace/input
 ENV TRAINING_CODE=/workspace/input
-ENV PROCESS_EVAL_RECORDS=/tmp/nvflare/process_eval_runs
-# Skill evaluation is off by default; override with NVFLARE_SKILL_EVAL=on for evaluator-on runs.
-ENV NVFLARE_SKILL_EVAL=""
+ENV RECORDS_DIR=/tmp/nvflare/records
 
 WORKDIR /workspace
 RUN mkdir -p /workspace/.codex /workspace/prompts && \

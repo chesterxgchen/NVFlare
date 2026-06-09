@@ -299,16 +299,12 @@ project tokenizer is later standardized. Longer examples, walkthroughs,
 command tables, and troubleshooting catalogs should move to `references/` and
 be loaded only when needed.
 
-Each public skill should include a short runtime-evaluation hook. The skill
-should check `NVFLARE_SKILL_EVAL` before creating process-evaluation artifacts.
-When it is unset, collect only task evidence needed for the user-facing result.
-When it is `on`, the agent should call `nvflare agent skills evaluate` before
-the final response when it has a matching eval case and bounded artifact or
-checklist evidence. Harnesses may set `NVFLARE_SKILL_EVAL_CASE=<eval-id>`;
-otherwise the skill may inspect `evals/evals.json` and choose a case only when
-the task context maps unambiguously to one case. The skill should not claim
-that the NVFLARE CLI reads the environment variables directly, and it must not
-invent case IDs or evidence when they are unavailable.
+Packaged skills must not include runtime-evaluator hooks. `SKILL.md` files
+should not instruct agents to check evaluator environment variables, enable an
+eval-on mode, or run an evaluator command before the final response. Keep
+user-facing evidence requirements in the workflow, requirements, and output
+sections. Preserve non-runtime skill metadata, eval cases, benchmark summaries,
+and read-only performance reporting when they help skill development.
 
 Recommended structure:
 

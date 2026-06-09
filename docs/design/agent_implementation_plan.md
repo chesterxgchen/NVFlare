@@ -37,7 +37,7 @@ The first useful slice is:
   [--dry-run] [--format json]`;
 - `nvflare agent skills list --agent codex|claude --format json`;
 - `nvflare agent skills performance [--skill <name>] [--case <eval-id>]
-  [--records <path>] [--format json]` as a read-only process-evaluation
+  [--records <path>] [--format json]` as a read-only process-metric
   summary;
 - packaged skills copied from repo-root `skills/` into the NVFLARE wheel;
 - minimal released-skill manifest with name, version/source hash, and
@@ -63,20 +63,20 @@ The first useful slice is:
 | 4 | Read-only inspect and doctor | Yes | Yes |
 | 5 | Initial skill lint and admission gate | Yes | Yes |
 | 6 | Seed skill bundle | Yes | Yes |
-| 7 | Runtime evaluator, eval summaries, and optional Auto-FL research runs | Internal skill-quality gate, not NVFLARE package mechanics | Yes |
+| 7 | Skill benchmark reporting and optional Auto-FL research runs | Internal skill-quality gate, not NVFLARE package mechanics | Yes |
 | 8 | Customer lifecycle skill wave | No | Yes |
 | 9 | Framework conversion skill wave | No | Yes |
 | 10 | Specialized workflow skill wave | No | Yes |
 | 11 | PET and security skill wave | No | Yes |
 | 12 | Export/manifest and publication handoff | Yes | Yes; final handoff gate |
 
-The first native agent-skills release is not complete until the runtime
-evaluator and follow-on skill waves are done. Runtime evaluation follows the
-seed bundle and gates the later skill waves so one or a small number of skills
-can be corrected before the same mistakes are copied across the catalog. It is
-an internal quality gate, not an external publication step. Export manifest,
+The first native agent-skills release is not complete until skill benchmark
+reporting and follow-on skill waves are done. Benchmark evidence follows the
+seed bundle and gates later skill waves so one or a small number of skills can
+be corrected before the same mistakes are copied across the catalog. It is an
+internal quality gate, not an external publication step. Export manifest,
 manifest-aware consumers, and publication handoff are combined in Milestone 12
-because they package and validate the already evaluated release artifacts.
+because they package and validate the reviewed release artifacts.
 
 ## Initial PR Sequence
 
@@ -227,7 +227,7 @@ Deliverables:
 - Add the shared global negative prompt bank at
   `skills/_shared/global_negative_prompts.json` with `schema_version: "1"` and
   `prompts` entries containing `id`, `prompt`, and `description`.
-- Treat [Agent Skill Evaluation](agent_skill_evaluation.md#initial-engineering-lints)
+- Treat [Agent Skill Evaluation](agent_skill_evaluation.md#engineering-lints)
   as the canonical lint behavior definition; the implementation plan should not
   restate each lint's inputs and pass/fail semantics.
 - Implement release checklist coverage only from machine-readable
@@ -272,12 +272,13 @@ Deliverables:
   behavior checks, prohibited behavior checks, and known gaps.
 - Add read-only `nvflare agent skills performance` reporting so reviewers can
   see the packaged process-metric contract and, when runtime process records
-  exist, summarize score, elapsed time, token count, correction count, and
-  conversion quality without running skills or inferring missing metrics.
+  exist, summarize elapsed time, token count, correction count, behavior
+  evidence, validation evidence, and conversion quality without running skills
+  or inferring missing metrics.
   Milestone 6 only needs the command surface, packaged metric-contract display,
-  empty-record summaries, and basic record-summary rendering. Full runtime
-  record grouping, filtering, unavailable-count accounting, and schema-version
-  rejection land in Milestone 7 with the evaluator.
+  empty-record summaries, and basic record-summary rendering. Full record
+  grouping, filtering, unavailable-count accounting, and schema-version
+  rejection land in Milestone 7 with benchmark reporting.
 
 Recommended first skills:
 
@@ -297,166 +298,27 @@ Exit criteria:
   and JSON output for seed skills, including empty-record summaries when no
   runtime evidence has been collected yet.
 
-## Milestone 7: Runtime Evaluator and Auto-FL Research
+## Milestone 7: Skill Benchmark Reporting and Auto-FL Research
 
 Deliverables:
 
-- Add an initial checklist-first runtime evaluator that consumes
-  `skills/<skill>/evals/evals.json` plus reviewer checklist evidence and
-  optional structured artifacts, maps `nvflare.mandatory_behavior`,
-  `nvflare.prohibited_behavior`, and `nvflare.optional_behavior` IDs to
-  evidence, applies the 1-5 process rubric from
-  [Agent Skill Evaluation](agent_skill_evaluation.md#runtime-process-evaluation),
-  and writes runtime process records under
-  `~/.nvflare/agent_skill_eval_runs/<skill>/<case_id>/<timestamp>.json`.
-- Keep evaluation mode binary:
-  - `off`: normal skill use or raw artifact collection only; no score and no
-    process record required.
-  - `on`: produce a runtime process record from observed evidence and the
-    predefined rubric.
-- Make activation explicit: normal skill use is off; invoking
-  `nvflare agent skills evaluate` is on; scripted harnesses turn evaluation on
-  by invoking the same evaluator entry point after collecting artifacts.
-- Document and implement the agent/harness convention
-  `NVFLARE_SKILL_EVAL=on`: installed skills and scripted harnesses should check
-  this environment variable before creating process-evaluation artifacts. When
-  unset, agents should collect only task evidence needed for the user-facing
-  result and should not create behavior maps, correction counters, checklist
-  data, or other evaluation-only artifacts. When set to `on`, and when a
-  matching eval case and bounded artifact or checklist evidence are available,
-  call `nvflare agent skills evaluate` before the final response. The NVFLARE
-  CLI itself does not read this variable. If the variable is unset, or if the
-  case/evidence is unavailable, no process record is required. Harnesses may set
-  `NVFLARE_SKILL_EVAL_CASE=<eval-id>` to avoid case selection ambiguity. If it
-  is unset, installed skills may inspect `evals/evals.json` and select a case
-  only when task context maps unambiguously to one case. Harnesses that run
-  baseline and skill-assisted comparisons should pass explicit `--run-mode`
-  values so summaries group the records separately.
-- Do not add an LLM judge, human runtime mode, or agent self-scoring mode in
-  this milestone. Agent-authored notes may be evidence, but the evaluator or
-  reviewer checklist assigns the score from the documented rubric.
-- Record evaluator cost separately from skill-run cost when timing or tokens are
-  available. Skill-run `elapsed_seconds` and `token_count` must not silently
-  include evaluator overhead.
-- Add reviewer-checklist JSON input support for evidence that cannot yet be
-  inferred from files or command logs. The checklist input must follow the
-  schema defined in
-  [Agent Skill Evaluation](agent_skill_evaluation.md#runtime-evaluator-and-records):
-  `schema_version` value `"1"`, `skill`, `case_id`, `behavior_evidence`,
-  `process_metrics`, `skill_selection`, `first_pass`, `final_result`, and
-  `skill_improvements`, with no final score supplied by the checklist. Allow a
-  `significant_violations` evidence list for reviewer-supplied workflow, safety,
-  or artifact-rule violations outside the prohibited-behavior list. Each entry is
-  an object with bounded `description` and `evidence_ref` strings. Automated
-  detection of significant violations from artifact analysis is deferred.
-- Add an evaluator entry point. The preferred first implementation is a
-  product CLI command:
-  `nvflare agent skills evaluate --skill <name> --case <eval-id>
-  [--agent codex|claude|other|unknown]
-  [--run-mode without_skill|with_skill|with_skill_forced]
-  [--skill-version <version>] [--artifacts <path>] [--checklist <path>]
-  [--records <path>] --format json`.
-  At least one of `--artifacts` or `--checklist` is required. `--artifacts` is
-  optional only when the reviewer checklist supplies all evidence required by
-  the selected eval case. On success, stdout is a JSON envelope whose `data`
-  includes `record_path` and the full runtime process `record`.
-  `--case` is required for the initial implementation. Omitting it, selecting
-  an unknown case, or selecting a case whose checklist does not match must return
-  a JSON error envelope and write no runtime process record.
-  `--records` is a records root directory. The evaluator writes
-  `<records>/<skill>/<case_id>/<timestamp>.json`, where `<timestamp>` is the
-  UTC microsecond format defined in
-  [Agent Skill Evaluation](agent_skill_evaluation.md#runtime-evaluator-and-records).
-  The default `~/.nvflare/agent_skill_eval_runs` location is the local durable
-  records root; CI or benchmark workflows may pass an explicit `--records` path
-  when records must be archived under a job workspace or collected by CI.
-  If CLI surface is deferred, add an internal tool with the same arguments and
-  JSON output shape, then promote it later.
-- For the first evaluator pass, derive behavior IDs from the selected case in
-  the skill's `evals/evals.json`. Do not hard-code a separate behavior-ID list
-  in the evaluator or implementation plan. For `nvflare-convert-pytorch`, cover
-  the behavior IDs that are actually present in its shipped `evals/evals.json`,
-  including trigger-only and adjacent-negative cases that may have empty
-  behavior maps.
-- Do not infer behavior status from unstructured transcripts, patches, or
-  generated files in M7. If `--artifacts` is supplied, parse only structured
-  `run.json` and `evidence.json`; treat `commands.jsonl`, `diff.patch`, and
-  `files/` as referenced evidence for human review.
-- Define the runtime record schema fields:
-  `schema_version` value `"1"`, `skill`, `skill_version`, `case_id`, `agent`,
-  `run_mode`, `source_hash`, optional `source_commit`, optional
-  `prompt_summary`, behavior result maps, `first_pass`, `final_result`,
-  `eval_passed`, `process_metrics`, `significant_violations`, `score`,
-  `skill_improvements`, and `evaluation`. The initial
-  `evaluation.scoring_source` value is `agent_skill_evaluation:v1`.
-- Compute `source_hash` with the same contract as the released-skill manifest:
-  lowercase hex SHA-256 over sorted files under `skills/<skill>/`, feeding each
-  relative path, a NUL byte, file contents, and a NUL byte into the single
-  running SHA-256 state; exclude
-  `__pycache__`, `.pyc`, and `.pyo` files; reject symlinks.
-- Treat behavior IDs as scoped to the selected skill and eval case, not globally
-  unique across all skills.
-- Validate behavior status values against the design enum: `pass`, `fail`,
-  `missing`, `not_applicable`, and `non_scoring_note`. Apply category-specific
-  semantics: mandatory/optional `pass` means expected evidence was observed;
-  prohibited `pass` means no prohibited evidence was observed;
-  `not_applicable` is valid only for optional irrelevant evidence and is invalid
-  for mandatory or prohibited IDs; `non_scoring_note` is invalid for canonical
-  mandatory or prohibited IDs, is stored in the record's `optional_behavior` map,
-  and has no score effect.
-- Store only bounded, sanitized evidence snippets or artifact references in
-  runtime records. Do not copy unbounded transcripts, large command outputs,
-  secrets, credentials, private keys, access tokens, or sensitive absolute paths
-  into process records. Enforce the design's evidence-entry bounds and use
-  artifact references for larger evidence.
-- Treat `--artifacts` as trusted evaluator input. Do not claim artifact
-  integrity or chain-of-custody validation in this milestone.
-- Reject conflicting artifact-derived and reviewer-checklist evidence instead
-  of silently preferring one source. Artifacts may fill fields omitted by the
-  checklist, and the checklist may supply fields unavailable from artifacts.
-- Validate all inputs before writing, write records atomically, and write no
-  partial success record on missing artifacts, unknown rejected behavior IDs,
-  disk-write failures, or other validation errors.
-- Apply the deterministic score constraints from the design doc, including
-  score caps for user corrections, missing mandatory evidence, observed
-  prohibited behavior, partial or unvalidated final results, and unsafe or
-  incomplete results. When multiple constraints apply, the lowest applicable
-  score or cap wins. Do not assign score 4 or 5 when
-  `user_correction_count` or the corresponding layout/workflow or evidence-gap
-  evidence is unavailable. Score 5 requires
-  `agent_self_correction_count == 0`; score 4 requires
-  `first_pass.accepted == true`, user correction count zero, and no missed
-  instructions, layout violations, workflow violations, or evidence-gap
-  violations. Cap significant workflow, safety, or artifact-rule violations
-  outside the prohibited-behavior list at score 2 and set `eval_passed` false.
-- Derive `eval_passed` from observable trigger/workflow evidence, behavior
-  status maps, final-result fields, significant violations, and evaluator
-  validation outcome. Do not derive `eval_passed` from `score.value`.
-- For trigger-only and adjacent-negative cases with empty behavior maps, assign
-  score from the trigger assertion result: score 5 for first-pass correct
-  selection with required evidence, score 4 for harmless self-correction without
-  user correction, score 3 when user correction is needed but the final trigger
-  assertion is correct, and score 1 when the wrong skill is selected, a
-  `negative_for` skill is triggered, or required skill-selection evidence is
-  unavailable.
-- For compound trigger cases with both `expected_skill` and `negative_for`, treat
-  the assertion as passing only when `selected_skill == expected_skill` and
-  `selected_skill != negative_for`; reject cases where both fields name the same
-  skill.
-- Validate `selected_skill`, `expected_skill`, and `negative_for` as strings or
-  `null`. Support `negative_for: "*"` only for global-negative cases where no
-  FLARE skill should be selected; treat it as passing only when `selected_skill`
-  is JSON `null` or strips to `""`, `"none"`, `"no_skill"`, or `"null"`.
-- Validate `score.value` as an integer 1 through 5, `score.max` as exactly 5,
-  and `score.rationale` as a required bounded string generated from documented
-  deterministic templates plus an optional short cap reason.
-- Use the same 1-5 scale for `process_metrics.conversion_quality` as the
-  process score rubric. It measures generated artifact quality rather than the
-  whole process, and should be `null` when the case does not provide enough
-  evidence to score conversion quality.
+- Do not add a runtime skill evaluator, an eval-on switch, or a
+  `skills evaluate` command. Packaged skills must not instruct agents to create
+  evaluator-only artifacts before the final response.
+- Preserve `skills/<skill>/evals/evals.json` as non-runtime skill metadata for
+  trigger coverage, behavior IDs, fixtures, and benchmark/reporting context.
+  This metadata is useful for authoring and benchmark analysis, but it does not
+  imply that agents should run an evaluator during normal skill use.
+- Keep user-facing evidence requirements in each skill's workflow,
+  requirements, and output sections. Agents should collect only evidence needed
+  to complete and explain the user's task.
 - Ensure `nvflare agent skills performance` remains read-only aggregation. It
-  must not run the evaluator, infer scores from raw artifacts, call an LLM, or
+  must not run an evaluator, infer scores from raw artifacts, call an LLM, or
   mutate records.
+- Keep performance records as explicit inputs produced by benchmark harnesses,
+  reviewer workflows, or other external measurement systems. The records reader
+  may summarize fields that are present, but it must not synthesize missing
+  correctness fields.
 - Implement the documented aggregation semantics for `skills performance`: sort
   records by timestamp descending, group numeric summaries by `skill`,
   `skill_version`, `case_id`, non-null `run_mode`, and non-null source hash when
@@ -469,17 +331,17 @@ Deliverables:
   [--records <path>] [--output <path>] [--dry-run] [--format json]`.
   `--skill` is required. The command consumes `skills performance` summaries and
   renders a reviewable Markdown draft. It is mutating only when `--dry-run` is
-  omitted. It must not run skills, run the evaluator, parse raw artifacts, call
+  omitted. It must not run skills, parse raw artifacts, call
   an LLM, infer missing metrics, or mutate runtime process records.
 - Use `skills benchmark` to upgrade `BENCHMARK.md` from manual initial
-  summaries to runtime summaries when automated or repeated eval evidence
+  summaries to benchmark summaries when automated or repeated evidence
   exists. If `--output` is omitted, write `BENCHMARK.md` in the selected skill
   directory. The rendered file is a publication/review draft; runtime records
   remain the raw evidence and `skills performance` remains the current computed
   view.
-- Consume runtime process records with `nvflare agent skills performance` to
-  visualize process score, conversion time, token usage, correction count,
-  task-quality fields, and known improvement items before updating
+- Consume benchmark or reviewer records with `nvflare agent skills performance`
+  to visualize conversion time, token usage, correction count, task-quality
+  fields, validation evidence, and known improvement items before updating
   `BENCHMARK.md`.
 - Measure positive trigger, negative trigger, mandatory behavior,
   prohibited behavior, and task validation for the seed skills before expanding
@@ -489,149 +351,21 @@ Deliverables:
 
 Engineering tests:
 
-- evaluator loads a skill's `evals/evals.json`, selects one case, and rejects
-  unknown skill/case IDs with JSON envelope errors;
-- seed skills document the `NVFLARE_SKILL_EVAL=on` post-run convention,
-  optional `NVFLARE_SKILL_EVAL_CASE=<eval-id>` case selection, and do not claim
-  that the NVFLARE CLI reads the variables directly;
-- evaluator rejects omitted `--case` with a JSON envelope error and writes no
-  process record;
-- evaluator supports trigger-only or adjacent-negative cases with empty behavior
-  maps by deriving `eval_passed` from `expected_skill`, `negative_for`, assertion,
-  final-result evidence, and explicit `skill_selection` evidence from
-  `run.json`, `evidence.json`, or reviewer checklist rather than inferred
-  transcript intent;
-- evaluator assigns trigger-only and adjacent-negative scores according to the
-  documented trigger assertion rules, including score 5 for first-pass correct
-  selection and score 1 for wrong-skill or missing skill-selection evidence;
-- evaluator validates compound `expected_skill` plus `negative_for` trigger
-  cases, including the invalid same-skill case;
-- evaluator rejects non-string, non-null `selected_skill`, `expected_skill`, and
-  `negative_for` values;
-- evaluator validates `negative_for: "*"` global-negative cases, including a
-  passing no-skill-selected case;
-- evaluator writes a process record under the requested records directory and
-  preserves the documented schema, including UTC microsecond timestamped output
-  paths and no overwrite on path collision;
-- evaluator emits a success JSON envelope containing both `record_path` and the
-  full runtime process `record`;
-- evaluator resolves `skill_version` from packaged manifest or `SKILL.md`
-  frontmatter, accepts `--skill-version` as an explicit override, and records
-  `null` when no source is available;
-- evaluator records `source_hash` with the same sorted-file SHA-256 contract as
-  the released-skill manifest and rejects symlinked skill content;
-- evaluator retries with a fresh timestamp on path collision and fails before
-  writing if it cannot create a unique path after 5 retries;
-- evaluator can write to a caller-supplied durable records root instead of the
-  default `~/.nvflare/agent_skill_eval_runs` location;
-- evaluator writes atomically and writes no partial success record on input
-  validation, artifact, or disk-write failure;
-- evaluator accepts checklist-only input when it supplies all required evidence,
-  rejects runs with neither `--artifacts` nor `--checklist`, and requires
-  `--artifacts` when no checklist is supplied;
-- evaluator rejects checklist-only input that lacks any mandatory/prohibited
-  behavior status, trigger-only skill-selection evidence, required final-result
-  fields, or score-critical process metric fields;
-- evaluator rejects checklist input with missing or non-`"1"` `schema_version`;
-- evaluator rejects checklist input whose `skill` or `case_id` does not match
-  the selected eval case and writes no process record;
-- evaluator rejects unknown behavior IDs unless they are explicitly recorded as
-  non-scoring notes;
-- evaluator rejects conflicting artifact-derived and checklist-supplied
-  behavior statuses or scalar result fields instead of choosing one source;
-- evaluator rejects conflicting `run.json` and `evidence.json` scalar fields or
-  behavior statuses;
-- evaluator treats identical duplicate artifact/checklist values as
-  non-conflicting and merges list-valued evidence by normalized unique entries;
-- evaluator normalizes checklist `behavior_evidence.mandatory_behavior`,
-  `behavior_evidence.prohibited_behavior`, and
-  `behavior_evidence.optional_behavior` into the record's top-level behavior
-  maps;
-- evaluator derives behavior IDs from the selected case's `evals/evals.json`
-  instead of a hard-coded behavior list;
-- evaluator validates behavior status values against the documented enum;
-- evaluator applies status semantics by behavior category, including prohibited
-  `pass` meaning no prohibited evidence was observed and prohibited `fail`
-  meaning the prohibited action was detected;
-- evaluator rejects `not_applicable` for mandatory or prohibited behavior IDs
-  and rejects `non_scoring_note` for canonical mandatory or prohibited behavior
-  IDs while preserving accepted non-scoring notes in the record's
-  `optional_behavior` map;
-- evaluator records top-level `eval_passed` and fails it when required trigger or
-  workflow evidence is missing, any mandatory behavior is missing/failing, any
-  prohibited behavior is observed, final_result is not accepted, the final result
-  is partial or unvalidated, significant violations are recorded, or evaluator
-  validation fails;
-- evaluator accepts `final_result.validation_passed` and
-  `final_result.simulation_passed` as `null` for cases where those validation
-  modes are not applicable;
-- evaluator records `eval_passed=true` for a score-3 case where all applicable
-  mandatory behavior passes, no prohibited behavior is observed, final_result is
-  accepted, required validation passes, and the score was capped only by user
-  correction;
-- evaluator writes a valid failing runtime process record, not a validation
-  error with no record, when prohibited behavior is observed or mandatory
-  behavior is missing;
-- mandatory behavior with missing evidence fails that behavior;
-- prohibited behavior with observed evidence fails the eval case;
-- optional behavior absence is recorded but does not fail;
-- process score maps to the documented 1-5 rubric for each score level 1
-  through 5, including score caps for user corrections, missing mandatory
-  evidence, observed prohibited behavior, partial final results, and unsafe or
-  incomplete results, with the lowest applicable cap winning;
-- evaluator rejects score 4 when `first_pass.accepted` is false; score 4
-  requires `first_pass.accepted=true`, `user_correction_count == 0`, and no
-  missed instructions, layout violations, workflow violations, or evidence-gap
-  violations;
-- evaluator validates `score.value`, `score.max`, and bounded
-  `score.rationale`, including required rationale presence and deterministic
-  template selection;
-- evaluator validates documented `process_metrics` types, nullability, and
-  score-critical availability rules for `user_correction_count`,
-  `agent_self_correction_count`, `missed_instruction_count`, and
-  layout/workflow/evidence-gap counts, including
-  `agent_self_correction_count` being required for score 5 but not score 4;
-- evaluator records `missed_instruction_count > 0` as a score-3 cap while
-  preserving `eval_passed=true` when required behavior, final result, validation,
-  and prohibited-behavior checks otherwise pass;
-- evaluator fills missing or `null` `missed_instruction_count` as a best-effort
-  post-run count of mandatory behavior entries whose status is not `pass`, while
-  trusting a supplied numeric count when broader harness evidence exists;
-- evaluator does not infer missed instructions that are not represented by the
-  selected eval case's mandatory behavior IDs or by an explicit structured
-  `process_metrics.missed_instruction_count`;
-- evaluator validates `first_pass.violations` and `skill_improvements` bounds:
-  at most 10 strings each, with each string at most 512 characters;
-- evaluator does not assign score 4 or 5 when `user_correction_count` or
-  layout/workflow/evidence-gap violation evidence is unavailable;
-- evaluator caps significant workflow, safety, or artifact-rule violations
-  outside the prohibited-behavior list at score 2 and records
-  `eval_passed=false`;
-- evaluator accepts `significant_violations` as evidence in the reviewer
-  checklist but still computes the final score itself;
-- evaluator validates `significant_violations` entries as objects with
-  `description` and `evidence_ref`, enforces the documented count and string
-  bounds, and does not attempt automated significant-violation detection in M7;
-- token count is stored as `null` when unavailable and is not inferred from
-  transcript text;
-- deterministic evaluator token count is stored as `0` when no token-consuming
-  evaluation step runs;
-- process records store sanitized bounded evidence snippets or artifact
-  references instead of unbounded raw transcripts, large command output, secrets,
-  credentials, private keys, access tokens, or sensitive absolute paths;
-- evaluator treats artifacts as trusted input and does not claim integrity
-  validation or chain-of-custody guarantees;
-- evaluator timing is recorded separately from skill-run timing;
-- `skills performance` aggregates evaluator-written records but does not create
-  or modify them;
+- `agent info` and `agent skills --schema` do not advertise a `skills evaluate`
+  command;
+- invoking the removed `agent skills evaluate` command form returns a structured invalid-args
+  error and lists only supported skills subcommands;
+- packaged `SKILL.md` files contain no runtime evaluator hook, eval-on switch,
+  or evaluator command instruction;
+- the v1 lint id set uses process-metric coverage, not evaluator coverage;
+- `skills performance` aggregates supplied records but does not create or modify
+  them;
 - `skills performance` supports `--case`, sorts records by timestamp descending,
   groups summaries by skill/version/case and non-null run mode/source hash, omits
   `run_mode` or source hash from the group key when either is null, skips `null`
   values in numeric averages while reporting exact unavailable counts, rejects
   averaging mixed skill versions or mixed non-null source hashes, emits the
   documented JSON output shape, and rejects unsupported schema versions.
-- `skills performance` computes `eval_pass_rate` as true `eval_passed` count
-  divided by group `record_count` and emits it as a plain float.
 - `skills performance` exits successfully with metric contracts and empty
   `summaries`/`records` arrays when no runtime records match.
 - `skills benchmark` requires `--skill`, supports `--case`, `--records`,
@@ -645,19 +379,19 @@ Engineering tests:
   `skills performance`, and does not infer metrics or parse artifacts itself.
 
 This milestone evaluates the seed skill set before additional skill waves are
-implemented. Runtime evaluation evidence is required before a skill is used as a
-template for broader catalog expansion. It does not perform external
-publication or handoff. Auto-FL remains an advisory research test case: run
+implemented. Benchmark evidence is required before a skill is used as a template
+for broader catalog expansion. It does not perform external publication or
+handoff. Auto-FL remains an advisory research test case: run
 existing Auto-FL tasks without skills, with skills available, and optionally
 with a skill forced to isolate skill content.
 
 ## Milestone 8: Customer Lifecycle Skill Wave
 
-The seed bundle plus runtime evaluator prove the package, install, lint,
-authoring, and evaluation mechanics. The rest of the skill roadmap should be
+The seed bundle plus benchmark reporting prove the package, install, lint,
+authoring, and measurement mechanics. The rest of the skill roadmap should be
 implemented as follow-on skill-development waves, not left as an unowned
 candidate list. Every new skill in these waves must use the authoring and
-evaluation contract:
+benchmark contract:
 
 - `SKILL.md` with required frontmatter, trigger boundaries, negative trigger
   guidance, approval checkpoints, and validation checklist;
@@ -671,11 +405,11 @@ evaluation contract:
 - admission through the initial skill lints, command-drift checks, trigger
   overlap checks, global negative checks, and doc crosslink checks.
 
-Each wave must include at least one runtime evaluator record for each new public
-skill before that wave is considered complete. A wave can carry a documented
+Each wave must include benchmark or reviewer evidence for each new public skill
+before that wave is considered complete. A wave can carry a documented
 draft/internal exception, but that skill cannot be used as a template for later
-waves or included in publication handoff until Milestone 7 evaluation passes for
-that skill.
+waves or included in publication handoff until Milestone 7 benchmark evidence is
+available for that skill.
 
 Deliverables:
 

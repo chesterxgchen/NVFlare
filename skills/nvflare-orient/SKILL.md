@@ -39,17 +39,5 @@ diagnosis. Route to the narrower skill instead.
 - Must say when no FLARE skill should trigger.
 - Must not edit files, start POC systems, submit jobs, or read private keys.
 
-## Runtime Evaluation
-
-Check `NVFLARE_SKILL_EVAL` before creating process-evaluation artifacts. When
-it is unset, keep only task evidence needed for the user-facing routing result.
-If it is `on`, run `nvflare agent skills evaluate` before the final response
-when a matching eval case and bounded evidence are available. Use `--skill
-nvflare-orient`, `--case <eval-id>`, `--agent`, `--run-mode`, and either
-`--artifacts <dir>` or `--checklist <file>`. Prefer
-`NVFLARE_SKILL_EVAL_CASE` when set; otherwise read `evals/evals.json` and choose
-a case only when the task maps unambiguously to one. Do not invent a case or
-evidence; if unavailable, report why evaluation was skipped.
-
 Load `references/orientation-routing.md` when routing is ambiguous or when the
 inspect output names multiple possible workflow families.

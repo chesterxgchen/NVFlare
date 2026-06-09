@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Codex event parsing for usage and activity metrics."""
+"""Agent event parsing for usage and activity metrics."""
 
 from __future__ import annotations
 
@@ -53,6 +53,8 @@ def normalize_command(value: Any) -> str | None:
 
 
 def parse_usage_and_activity(events_path: Path, usage_out: Path, activity_out: Path) -> None:
+    # Usage and activity are derived in one pass so large event streams are only
+    # decoded once; keep output-specific normalization below clearly separated.
     last_total_tokens: float | None = None
     max_total_tokens: float | None = None
     last_input_tokens: float | None = None
@@ -77,7 +79,7 @@ def parse_usage_and_activity(events_path: Path, usage_out: Path, activity_out: P
     hints = {
         "skill_md": ["skill.md"],
         "skill_references": ["/references/", " references/"],
-        "skill_evals": ["evals/evals.json", "/evals/"],
+        "skill_metadata": ["evals/evals.json", "/evals/"],
         "benchmark_md": ["benchmark.md"],
         "agent_inspect": ["nvflare agent inspect"],
         "agent_skill_install_or_list": ["nvflare agent skills install", "nvflare agent skills list"],
@@ -185,7 +187,7 @@ def parse_usage_and_activity(events_path: Path, usage_out: Path, activity_out: P
         "last_input_tokens": last_input_tokens,
         "last_output_tokens": last_output_tokens,
         "max_total_tokens_seen": max_total_tokens,
-        "token_parser": "last cumulative total_tokens from codex --json events; fallback is last input_tokens plus last output_tokens",
+        "token_parser": "last cumulative total_tokens from agent JSON events; fallback is last input_tokens plus last output_tokens",
         "token_parser_warnings": token_parser_warnings,
         "usage_objects_seen": len(raw_usage_objects),
     }
