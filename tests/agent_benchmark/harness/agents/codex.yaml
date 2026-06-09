@@ -1,0 +1,91 @@
+name: codex
+display_name: OpenAI Codex CLI
+default_model: unspecified_default
+model_env: CODEX_MODEL
+agent_home_env: CODEX_HOME
+container_home: /workspace/.codex
+legacy_artifact_prefixes:
+  - codex
+
+images:
+  skills: nvflare-agent-benchmark:{agent}-skills
+  baseline: nvflare-agent-benchmark:{agent}-baseline
+  report: nvflare-agent-benchmark:{agent}-skills
+
+build:
+  args:
+    CODEX_CLI_VERSION:
+      env: CODEX_CLI_VERSION
+      default: 0.137.0
+
+auth:
+  host_home_env: HOST_CODEX_HOME
+  mount_env: MOUNT_HOST_CODEX_AUTH
+  files:
+    - source: auth.json
+      target: auth.json
+      read_only: true
+      description: Codex auth
+    - source: config.toml
+      target: config.toml
+      read_only: true
+      description: Codex config
+
+runtime_env:
+  CODEX_HOME: "{container_home}"
+
+passthrough_env:
+  - OPENAI_API_KEY
+
+launch:
+  prompt_input_mode: stdin
+  argv:
+    - codex
+    - exec
+    - --json
+    - --skip-git-repo-check
+    - --dangerously-bypass-approvals-and-sandbox
+    - -C
+    - "{workspace_dir}"
+    - -o
+    - "{final_message_dest}"
+    - "-"
+  model_argv:
+    - -m
+    - "{model}"
+  sandbox_flags:
+    - --dangerously-bypass-approvals-and-sandbox
+  bypass_reason: "isolated benchmark container; writable state is limited to mounted result/workspace paths"
+  environment:
+    CODEX_HOME: "{container_home}"
+
+skill_exposure:
+  mechanism_type: preinstalled_home
+  skill_root: "{container_home}/skills"
+  disable_packaged_source: true
+  metadata_files:
+    - "{container_home}/nvflare_skills_build_install.json"
+    - "{container_home}/nvflare_skills_list.json"
+
+final_message:
+  source_type: file
+  path: "{result_dir}/agent_last_message.txt"
+
+events:
+  parser: codex_jsonl
+  format: jsonl
+
+usage:
+  parser: codex_cumulative_usage
+  fidelity: parsed
+  is_cumulative: true
+
+activity:
+  parser: codex_jsonl_activity
+
+exit:
+  classifier: codex_cli
+
+availability_probe:
+  - codex
+  - --version

@@ -80,8 +80,6 @@ def apply_record_runtime_fields(
     record["skills_enabled"] = skills_enabled
     record["agent_process_passed"] = agent_exit == 0
     record["agent_process_exit_code"] = agent_exit
-    record["codex_process_passed"] = agent_exit == 0
-    record["codex_process_exit_code"] = agent_exit
     record["timestamp"] = record.get("timestamp") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     if agent_record_present is not None:
         record["agent_record_present"] = agent_record_present
@@ -98,8 +96,6 @@ def apply_record_runtime_fields(
             "token_count": usage.get("total_tokens"),
             "agent_exit_code": agent_exit,
             "agent_process_passed": 1 if agent_exit == 0 else 0,
-            "codex_exit_code": agent_exit,
-            "codex_process_passed": 1 if agent_exit == 0 else 0,
             "token_parser": usage.get("token_parser"),
         }
     )
@@ -234,9 +230,13 @@ def discover_readme(input_root: Path) -> tuple[Path | None, str]:
     return Path(sources[0]["path"]), guidance_text
 
 
+def agent_home_from_env() -> Path:
+    return Path(os.environ.get("BENCHMARK_AGENT_HOME", "/workspace/agent-home"))
+
+
 def available_skill_names() -> set[str]:
     names = set()
-    skills_root = Path(os.environ.get("CODEX_HOME", "/workspace/.codex")) / "skills"
+    skills_root = agent_home_from_env() / "skills"
     if skills_root.is_dir():
         for path in skills_root.iterdir():
             if path.is_dir() and not path.name.startswith("."):
@@ -245,9 +245,7 @@ def available_skill_names() -> set[str]:
 
 
 def eval_case_ids_for_skill(skill_name: str) -> list[str]:
-    evals_path = (
-        Path(os.environ.get("CODEX_HOME", "/workspace/.codex")) / "skills" / skill_name / "evals" / "evals.json"
-    )
+    evals_path = agent_home_from_env() / "skills" / skill_name / "evals" / "evals.json"
     data = load_json(evals_path)
     if not isinstance(data, dict):
         return []
@@ -288,8 +286,8 @@ def infer_from_events(events_text: str) -> dict[str, Any]:
         scores[name] = scores.get(name, 0) + points
         source.setdefault(name, reason)
 
-    for match in re.finditer(r"/\.codex/skills/([^/\s\"']+)", events_text):
-        add(match.group(1), 50, "codex_skill_path")
+    for match in re.finditer(r"/[^\s\"']+/skills/([^/\s\"']+)", events_text):
+        add(match.group(1), 50, "agent_skill_path")
 
     for match in re.finditer(r"(?:^|\s)--skill(?:=|\s+)([A-Za-z0-9_.-]+)", events_text):
         add(match.group(1), 100, "agent_skill_arg")
@@ -638,7 +636,6 @@ def synthesize_agent_record(inputs: AgentRecordSynthesisInputs) -> None:
 
     record["process_metrics"] = metrics
     record["agent_usage"] = usage
-    record["codex_usage"] = usage
 
     notes = record.get("notes")
     note = "Mode-specific benchmark record was synthesized by the benchmark harness, not requested through prompt text."
@@ -796,7 +793,6 @@ def merge_record(
     if required_pass_rate is not None:
         metrics["instruction_required_passed"] = 1 if required_pass_rate >= 1.0 else 0
     record["agent_usage"] = usage
-    record["codex_usage"] = usage
     write_json(final_record_path, record)
 
 
