@@ -510,14 +510,14 @@ agent to install job dependencies from available requirements files when needed.
 
 ## Harness Modules
 
-- `bin/build.sh`: thin wrapper around `harness.host.build`.
-- `bin/run.sh`: thin wrapper around `harness.host.runner`.
+- `bin/build.sh`: thin wrapper around `nvidia.skills.harness.host.build`.
+- `bin/run.sh`: thin wrapper around `nvidia.skills.harness.host.runner`.
 - `docker/Dockerfile`: runtime image with Codex and NVFLARE wheels.
-- `harness/scenarios.py`: scenario validation, run-plan expansion, repeat
+- `nvidia/skills/harness/scenarios.py`: scenario validation, run-plan expansion, repeat
   aggregation, and scenario reports.
-- `harness/host/`: Docker orchestration, path handling, image selection, and
+- `nvidia/skills/harness/host/`: Docker orchestration, path handling, image selection, and
   scenario execution.
-- `harness/container/`: in-container agent execution and artifact capture.
+- `nvidia/skills/harness/container/`: in-container agent execution and artifact capture.
 - `harness/artifacts.py`, `events.py`, `records.py`, `timing.py`, and
   `quality_signals.py`: normalized measurement semantics.
 - `harness/reports/`: scenario report helpers and structure rendering.
