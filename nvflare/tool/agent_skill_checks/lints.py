@@ -121,7 +121,7 @@ _KNOWN_NVFLARE_ROOT_COMMANDS = {
     "system",
 }
 _KNOWN_AGENT_COMMANDS = {"doctor", "info", "inspect", "skills"}
-_KNOWN_AGENT_SKILLS_COMMANDS = {"benchmark", "install", "list", "performance"}
+_KNOWN_AGENT_SKILLS_COMMANDS = {"install", "list"}
 _PLANNED_AGENT_SKILLS_COMMANDS = set()
 _KNOWN_AGENT_FLAGS = {
     "agent": {"--format", "--schema"},
@@ -129,10 +129,8 @@ _KNOWN_AGENT_FLAGS = {
     "agent info": {"--format", "--schema"},
     "agent inspect": {"--format", "--redact", "--schema"},
     "agent skills": {"--format", "--schema"},
-    "agent skills benchmark": {"--case", "--dry-run", "--format", "--output", "--records", "--schema", "--skill"},
     "agent skills install": {"--agent", "--dry-run", "--format", "--schema", "--skill", "--target"},
     "agent skills list": {"--agent", "--format", "--schema", "--target"},
-    "agent skills performance": {"--case", "--format", "--records", "--schema", "--skill"},
 }
 _DOC_FILES = (
     "agent_implementation_plan.md",

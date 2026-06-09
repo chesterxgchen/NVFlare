@@ -633,38 +633,18 @@ that are not represented by selected-case mandatory behavior IDs or an explicit
 structured `process_metrics.missed_instruction_count` supplied by the harness or
 reviewer.
 
-The read-only reporting command is:
+Benchmark reporting is internal tooling, not a public `nvflare agent` command
+surface. The `agent skills performance` and `agent skills benchmark`
+subcommands are not supported. Packaged
+`evals/evals.json` files define what a benchmark harness can measure, but they
+are not performance evidence by themselves.
 
-```bash
-nvflare agent skills performance [--skill <name>] [--case <eval-id>] [--records <path>] [--format json]
-```
-
-It reports the packaged process-metric contract for each skill. The packaged
-process-metric contract is the `nvflare.process_metrics` entries in the packaged
-skill's `evals/evals.json`. When runtime evidence records are supplied, the
-command aggregates elapsed conversion or diagnosis time, token usage, correction
-count, behavior-status counts, significant-violation counts, task validation
-status, and other declared process metrics. The command must not run skills,
-call an LLM, infer token usage from transcript text, or mutate records. Human
-output should use a compact table and simple text bars so a reviewer can quickly
-compare skill performance; JSON output should preserve the underlying numeric
-fields for automation.
-
-Default aggregation reads all valid records matching the filters and sorts them
-by timestamp descending when a timestamp is available. Aggregate numeric
-summaries are grouped by `skill`, `skill_version`, and `case_id`; `run_mode` and
-source hash are included in the group key only for records where they are
-non-null. Records from different skill versions, different non-null run modes,
-or different non-null source hashes should not be averaged together. Records
-with null `run_mode` or null source hash are grouped without that dimension
-rather than under a literal null value. Numeric averages exclude `null` values
-and report both the number of available values and the number of unavailable
-values. JSON output should include grouped summaries and compact `records`
-entries, not full copied process records.
-
-If no runtime records match, `nvflare agent skills performance` should exit
-successfully, report the packaged metric contracts, and return empty `summaries`
-and `records` arrays.
+Internal benchmark reporting should read explicit benchmark or reviewer records,
+aggregate only fields that are present, and preserve unavailable counts for
+missing numeric values. It must not run skills, call an LLM, infer token usage
+from transcript text, synthesize correctness fields, or mutate records. When a
+benchmark report renders a `BENCHMARK.md` draft, the draft is review material;
+runtime records remain the raw evidence.
 
 ### Runtime Evidence Retention
 
@@ -678,7 +658,7 @@ The default retention policy is:
 
 - benchmark and reviewer workflows write records under an explicit run or
   records root;
-- reporting commands read bounded records and never mutate them;
+- benchmark reporting reads bounded records and never mutates them;
 - users or CI jobs own archival and deletion;
 - publication handoff bundles should copy or reference only the records needed
   for the release decision;
@@ -688,76 +668,6 @@ The default retention policy is:
 
 Reports should show the records root, record count scanned, records skipped by
 limits, and the newest/oldest record timestamp when available.
-
-The explicit benchmark-rendering command is:
-
-```bash
-nvflare agent skills benchmark --skill <name> [--case <eval-id>] [--records <path>] [--output <path>] [--dry-run] [--format json]
-```
-
-`skills benchmark` writes a reviewable `BENCHMARK.md` draft from the same
-read-only performance summary. It must not run skills, parse raw artifacts, call
-an LLM, infer missing metrics, or mutate runtime evidence records. `--skill` is
-required so the command updates only one skill benchmark at a time. If `--output`
-is omitted, the output path defaults to `BENCHMARK.md` in the selected skill
-directory. `--dry-run` renders the same content and returns it in the command
-result without writing a file.
-
-The generated `BENCHMARK.md` is a curated-publication draft, not the source of
-truth. Runtime evidence records remain the raw evidence, and `skills performance`
-remains the computed current view. The benchmark draft should include the
-records root, filters, packaged metric contracts, grouped runtime summaries, and
-recent record paths so a reviewer can decide whether the evidence is
-representative enough for release or skill-quality reporting.
-
-Example JSON output shape:
-
-```json
-{
-  "schema_version": "1",
-  "status": "ok",
-  "records_root": "/path/to/records",
-  "filters": {
-    "skill": "nvflare-convert-pytorch",
-    "case_id": "pytorch-convert-basic"
-  },
-  "metric_contracts": [
-    {
-      "skill": "nvflare-convert-pytorch",
-      "case_id": "pytorch-convert-basic",
-      "metrics": [
-        {"id": "user_correction_count", "description": "number of user corrections needed after the first pass"}
-      ]
-    }
-  ],
-  "summaries": [
-    {
-      "skill": "nvflare-convert-pytorch",
-      "skill_version": "0.1.0",
-      "case_id": "pytorch-convert-basic",
-      "run_mode": "with_skill",
-      "source_hash": "cc84428d014be112e254420a92b6497d3b11cbd5a67b263e56ebd0a4df18e00d",
-      "record_count": 3,
-      "task_success_count": 3,
-      "significant_violation_count": 0,
-      "elapsed_seconds": {"avg": 544.6, "available": 3, "unavailable": 0},
-      "token_count": {"avg": 2690000, "available": 3, "unavailable": 0},
-      "user_correction_count": {"avg": 0.67, "available": 3, "unavailable": 0}
-    }
-  ],
-  "records": [
-    {
-      "path": "/path/to/records/nvflare-convert-pytorch/pytorch-convert-basic/20260604T153012123456Z.json",
-      "timestamp": "20260604T153012123456Z",
-      "skill": "nvflare-convert-pytorch",
-      "case_id": "pytorch-convert-basic",
-      "run_mode": "with_skill",
-      "final_result": {"accepted": true, "validation_passed": true, "simulation_passed": true},
-      "significant_violation_count": 0
-    }
-  ]
-}
-```
 
 ## Auto-FL Research Evaluation
 

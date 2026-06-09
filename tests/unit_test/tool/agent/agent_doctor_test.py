@@ -78,8 +78,10 @@ def test_doctor_command_registry_matches_agent_command_surface(monkeypatch, tmp_
     commands = data["commands"]["commands"]
     command_names = {item["command"] for item in commands}
     assert commands == agent_commands()
-    assert "nvflare agent skills performance" in command_names
-    assert "nvflare agent skills benchmark" in command_names
+    assert "nvflare agent skills install" in command_names
+    assert "nvflare agent skills list" in command_names
+    assert "nvflare agent skills performance" not in command_names
+    assert "nvflare agent skills benchmark" not in command_names
     assert "nvflare agent skills evaluate" not in command_names
 
 

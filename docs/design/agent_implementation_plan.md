@@ -36,9 +36,6 @@ The first useful slice is:
 - `nvflare agent skills install --agent codex|claude [--skill <name>]
   [--dry-run] [--format json]`;
 - `nvflare agent skills list --agent codex|claude --format json`;
-- `nvflare agent skills performance [--skill <name>] [--case <eval-id>]
-  [--records <path>] [--format json]` as a read-only process-metric
-  summary;
 - packaged skills copied from repo-root `skills/` into the NVFLARE wheel;
 - minimal released-skill manifest with name, version/source hash, and
   FLARE-version compatibility;
@@ -94,9 +91,10 @@ This sequence combines the milestone breakdown with the review recommendation
 to avoid bundling source layout, validation, manifest generation, and wheel
 packaging into one large PR.
 
-`nvflare agent skills performance` is part of the first useful release surface,
-but it lands with the seed-skill bundle in Milestone 6 rather than in the
-initial package-mechanics PR sequence.
+Benchmark performance reporting is not part of the public `nvflare agent`
+command surface. Runtime evidence summaries and benchmark drafts belong to the
+benchmark tooling until there is enough evidence and UX clarity to promote a
+separate supported CLI contract.
 
 ## Milestone 0: CLI Envelope
 
@@ -270,15 +268,10 @@ Deliverables:
 - Add `evals/evals.json`, minimal `evals/files/` when needed, and a
   hand-authored `BENCHMARK.md` summarizing manual trigger checks, mandatory
   behavior checks, prohibited behavior checks, and known gaps.
-- Add read-only `nvflare agent skills performance` reporting so reviewers can
-  see the packaged process-metric contract and, when runtime process records
-  exist, summarize elapsed time, token count, correction count, behavior
-  evidence, validation evidence, and conversion quality without running skills
-  or inferring missing metrics.
-  Milestone 6 only needs the command surface, packaged metric-contract display,
-  empty-record summaries, and basic record-summary rendering. Full record
-  grouping, filtering, unavailable-count accounting, and schema-version
-  rejection land in Milestone 7 with benchmark reporting.
+- Do not add public `agent skills performance` or `agent skills benchmark`
+  subcommands. Packaged `evals/evals.json`
+  describes what benchmark tooling may measure, but it is not useful runtime
+  performance evidence by itself.
 
 Recommended first skills:
 
@@ -295,9 +288,9 @@ Exit criteria:
 - public-candidate skills pass global negative trigger checks.
 - `BENCHMARK.md` clearly states whether the skill is public-ready based on
   manual initial checks or still draft/internal pending Milestone 7 evaluation.
-- `nvflare agent skills performance` can render both human-readable summaries
-  and JSON output for seed skills, including empty-record summaries when no
-  runtime evidence has been collected yet.
+- `nvflare agent info`, `doctor`, and command schemas do not advertise
+  `agent skills performance`, `agent skills benchmark`, or
+  `agent skills evaluate`.
 
 ## Milestone 7: Skill Benchmark Reporting and Auto-FL Research
 
@@ -313,37 +306,19 @@ Deliverables:
 - Keep user-facing evidence requirements in each skill's workflow,
   requirements, and output sections. Agents should collect only evidence needed
   to complete and explain the user's task.
-- Ensure `nvflare agent skills performance` remains read-only aggregation. It
-  must not run an evaluator, infer scores from raw artifacts, call an LLM, or
-  mutate records.
 - Keep performance records as explicit inputs produced by benchmark harnesses,
-  reviewer workflows, or other external measurement systems. The records reader
-  may summarize fields that are present, but it must not synthesize missing
-  correctness fields.
-- Implement the documented aggregation semantics for `skills performance`: sort
-  records by timestamp descending, group numeric summaries by `skill`,
-  `skill_version`, `case_id`, non-null `run_mode`, and non-null source hash when
-  available, omit `run_mode` or source hash from the group key when either is
-  null, exclude `null` values from averages while reporting available and
-  unavailable counts, support the `--case <eval-id>` filter, emit the documented
-  JSON output shape, and reject unsupported `schema_version` values.
-- Add the explicit benchmark-rendering command:
-  `nvflare agent skills benchmark --skill <name> [--case <eval-id>]
-  [--records <path>] [--output <path>] [--dry-run] [--format json]`.
-  `--skill` is required. The command consumes `skills performance` summaries and
-  renders a reviewable Markdown draft. It is mutating only when `--dry-run` is
-  omitted. It must not run skills, parse raw artifacts, call
-  an LLM, infer missing metrics, or mutate runtime process records.
-- Use `skills benchmark` to upgrade `BENCHMARK.md` from manual initial
-  summaries to benchmark summaries when automated or repeated evidence
-  exists. If `--output` is omitted, write `BENCHMARK.md` in the selected skill
-  directory. The rendered file is a publication/review draft; runtime records
-  remain the raw evidence and `skills performance` remains the current computed
-  view.
-- Consume benchmark or reviewer records with `nvflare agent skills performance`
-  to visualize conversion time, token usage, correction count, task-quality
-  fields, validation evidence, and known improvement items before updating
-  `BENCHMARK.md`.
+  reviewer workflows, or other external measurement systems. Benchmark
+  reporting may summarize fields that are present, but it must not synthesize
+  missing correctness fields or infer token usage from transcript text.
+- Keep benchmark summaries and generated benchmark drafts in
+  `assist_tools/skills_benchmark` or another explicitly internal benchmark
+  tool. Do not expose them as `agent skills performance` or
+  `agent skills benchmark` until the benchmark workflow itself is
+  stable and the command value is clear without prior hidden setup.
+- Use internal benchmark tooling to upgrade `BENCHMARK.md` from manual initial
+  summaries to benchmark summaries when automated or repeated evidence exists.
+  The rendered file is a publication/review draft; runtime records remain the
+  raw evidence.
 - Measure positive trigger, negative trigger, mandatory behavior,
   prohibited behavior, and task validation for the seed skills before expanding
   to additional skill waves.
@@ -352,32 +327,17 @@ Deliverables:
 
 Engineering tests:
 
-- `agent info` and `agent skills --schema` do not advertise a `skills evaluate`
-  command;
-- invoking the removed `agent skills evaluate` command form returns a structured invalid-args
+- `agent info` and `agent skills --schema` do not advertise `skills evaluate`,
+  `skills performance`, or `skills benchmark` commands;
+- invoking the removed `agent skills evaluate`, `agent skills performance`, or
+  `agent skills benchmark` command forms returns a structured invalid-args
   error and lists only supported skills subcommands;
 - packaged `SKILL.md` files contain no runtime evaluator hook, eval-on switch,
   or evaluator command instruction;
 - the v1 lint id set uses process-metric coverage, not evaluator coverage;
-- `skills performance` aggregates supplied records but does not create or modify
-  them;
-- `skills performance` supports `--case`, sorts records by timestamp descending,
-  groups summaries by skill/version/case and non-null run mode/source hash, omits
-  `run_mode` or source hash from the group key when either is null, skips `null`
-  values in numeric averages while reporting exact unavailable counts, rejects
-  averaging mixed skill versions or mixed non-null source hashes, emits the
-  documented JSON output shape, and rejects unsupported schema versions.
-- `skills performance` exits successfully with metric contracts and empty
-  `summaries`/`records` arrays when no runtime records match.
-- `skills benchmark` requires `--skill`, supports `--case`, `--records`,
-  `--output`, and `--dry-run`, writes a Markdown benchmark draft only when
-  `--dry-run` is omitted, returns rendered content in the JSON envelope, and
-  leaves runtime process records unchanged.
-- `skills benchmark --dry-run` renders the same content without creating or
-  modifying `BENCHMARK.md`.
-- `skills benchmark` output includes scope, records root, packaged metric
-  contracts, grouped runtime summaries, and recent record paths from
-  `skills performance`, and does not infer metrics or parse artifacts itself.
+- benchmark tooling consumes supplied records without creating or modifying
+  them and keeps any report-generation commands outside the public
+  `nvflare agent` CLI surface.
 
 This milestone evaluates the seed skill set before additional skill waves are
 implemented. Benchmark evidence is required before a skill is used as a template
