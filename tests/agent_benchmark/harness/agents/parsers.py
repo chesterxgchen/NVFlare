@@ -17,11 +17,12 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..events import parse_usage_and_activity_data
+from ..events import parse_timestamp, parse_usage_and_activity_data
 
 
 def event_timestamp() -> str:
@@ -49,17 +50,220 @@ def normalize_jsonl_event(raw_line: str) -> dict[str, Any] | None:
     }
 
 
+def normalize_claude_stream_event(raw_line: str) -> dict[str, Any] | None:
+    event = normalize_jsonl_event(raw_line)
+    if event is None:
+        return None
+    if event.get("type", "").startswith("harness."):
+        event.setdefault("event_type", event.get("type"))
+        return event
+
+    event_type = str(event.get("type") or "unknown")
+    subtype = event.get("subtype")
+    event["event_type"] = f"{event_type}.{subtype}" if subtype else event_type
+    if event_type == "result" and isinstance(event.get("result"), str):
+        event["final_message"] = event["result"]
+    for tool_use in claude_tool_uses(event):
+        event.setdefault("tool_kind", tool_use.get("name"))
+        command = claude_tool_command(tool_use)
+        if command:
+            event.setdefault("command_text", command)
+            event.setdefault("command", command)
+            break
+    return event
+
+
+def claude_message_content(event: dict[str, Any]) -> list[Any]:
+    message = event.get("message")
+    if not isinstance(message, dict):
+        return []
+    content = message.get("content")
+    return content if isinstance(content, list) else []
+
+
+def claude_tool_uses(event: dict[str, Any]) -> list[dict[str, Any]]:
+    return [item for item in claude_message_content(event) if isinstance(item, dict) and item.get("type") == "tool_use"]
+
+
+def claude_tool_command(tool_use: dict[str, Any]) -> str | None:
+    tool_input = tool_use.get("input")
+    if not isinstance(tool_input, dict):
+        return None
+    for key in ("command", "cmd", "shell_command"):
+        value = tool_input.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def numeric_token_field(data: dict[str, Any], key: str) -> float:
+    value = data.get(key)
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+
+
+def claude_usage_total(usage: dict[str, Any]) -> float:
+    return sum(
+        numeric_token_field(usage, key)
+        for key in (
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+        )
+    )
+
+
+def claude_usage_objects(event: dict[str, Any]) -> list[dict[str, Any]]:
+    usage_objects = []
+    usage = event.get("usage")
+    if isinstance(usage, dict):
+        usage_objects.append(usage)
+    message = event.get("message")
+    if isinstance(message, dict) and isinstance(message.get("usage"), dict):
+        usage_objects.append(message["usage"])
+    return usage_objects
+
+
+def iter_json_events(events_path: Path) -> tuple[list[dict[str, Any]], int]:
+    events = []
+    decode_errors = 0
+    if not events_path.exists():
+        return events, decode_errors
+    with events_path.open("r", encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                decode_errors += 1
+                continue
+            if isinstance(event, dict):
+                events.append(event)
+    return events, decode_errors
+
+
+def parse_claude_stream_usage(events_path: Path) -> dict[str, Any]:
+    events, decode_errors = iter_json_events(events_path)
+    result_usage: dict[str, Any] | None = None
+    summed = {
+        "input_tokens": 0.0,
+        "output_tokens": 0.0,
+        "cache_creation_input_tokens": 0.0,
+        "cache_read_input_tokens": 0.0,
+    }
+    usage_objects_seen = 0
+    total_cost_usd = None
+    for event in events:
+        if event.get("type") == "result" and isinstance(event.get("total_cost_usd"), (int, float)):
+            total_cost_usd = event.get("total_cost_usd")
+        for usage in claude_usage_objects(event):
+            usage_objects_seen += 1
+            if event.get("type") == "result":
+                result_usage = usage
+            else:
+                for key in summed:
+                    summed[key] += numeric_token_field(usage, key)
+
+    selected = result_usage or summed
+    total_tokens = claude_usage_total(selected)
+    token_parser_warnings = []
+    if usage_objects_seen == 0:
+        token_parser_warnings.append("No Claude usage objects were found in the stream-json events.")
+        total_tokens = None
+    elif result_usage is None:
+        token_parser_warnings.append(
+            "No Claude result usage object was found; token fields are summed from message usage objects."
+        )
+    return {
+        "total_tokens": total_tokens,
+        "input_tokens": selected.get("input_tokens"),
+        "output_tokens": selected.get("output_tokens"),
+        "cache_creation_input_tokens": selected.get("cache_creation_input_tokens"),
+        "cache_read_input_tokens": selected.get("cache_read_input_tokens"),
+        "total_cost_usd": total_cost_usd,
+        "json_decode_errors": decode_errors,
+        "usage_objects_seen": usage_objects_seen,
+        "token_parser": "Claude stream-json result usage; fallback sums message usage objects",
+        "token_parser_warnings": token_parser_warnings,
+    }
+
+
+def parse_claude_stream_activity(events_path: Path) -> dict[str, Any]:
+    events, decode_errors = iter_json_events(events_path)
+    event_types: Counter[str] = Counter()
+    tool_counts: Counter[str] = Counter()
+    command_prefixes: Counter[str] = Counter()
+    commands: list[str] = []
+    first_event_dt = None
+    first_event_timestamp = None
+    last_event_dt = None
+    last_event_timestamp = None
+    previous_event_dt = None
+    max_inter_event_gap_seconds = None
+    for event in events:
+        event_type = str(event.get("event_type") or event.get("type") or "unknown")
+        event_types[event_type] += 1
+        timestamp = event.get("harness_timestamp") or event.get("timestamp")
+        event_dt = parse_timestamp(timestamp)
+        if event_dt is not None:
+            if first_event_dt is None:
+                first_event_dt = event_dt
+                first_event_timestamp = timestamp
+            if previous_event_dt is not None:
+                gap = (event_dt - previous_event_dt).total_seconds()
+                if gap >= 0 and (max_inter_event_gap_seconds is None or gap > max_inter_event_gap_seconds):
+                    max_inter_event_gap_seconds = gap
+            previous_event_dt = event_dt
+            last_event_dt = event_dt
+            last_event_timestamp = timestamp
+        command = event.get("command_text")
+        tool_kind = event.get("tool_kind")
+        if isinstance(tool_kind, str) and tool_kind:
+            tool_counts[tool_kind] += 1
+        if isinstance(command, str) and command.strip():
+            command = command.strip()
+            commands.append(command)
+            command_prefixes[command.split()[0]] += 1
+
+    return {
+        "event_count": len(events),
+        "json_decode_errors": decode_errors,
+        "timestamp_field": "harness_timestamp",
+        "first_event_timestamp": first_event_timestamp,
+        "last_event_timestamp": last_event_timestamp,
+        "event_span_seconds": (
+            round((last_event_dt - first_event_dt).total_seconds(), 3)
+            if first_event_dt is not None and last_event_dt is not None
+            else None
+        ),
+        "max_inter_event_gap_seconds": (
+            round(max_inter_event_gap_seconds, 3) if max_inter_event_gap_seconds is not None else None
+        ),
+        "event_types": dict(event_types.most_common()),
+        "tool_counts": dict(tool_counts.most_common()),
+        "command_count": len(commands),
+        "unique_command_count": len(set(commands)),
+        "command_prefix_counts": dict(command_prefixes.most_common()),
+        "commands": commands,
+    }
+
+
 EVENT_PARSERS = {
+    "claude_stream_json": normalize_claude_stream_event,
     "codex_jsonl": normalize_jsonl_event,
     "generic_jsonl": normalize_jsonl_event,
 }
 
 USAGE_PARSERS = {
+    "claude_stream_usage": parse_claude_stream_usage,
     "codex_cumulative_usage": lambda path: parse_usage_and_activity_data(path)[0],
     "generic_cli_usage": lambda path: parse_usage_and_activity_data(path)[0],
 }
 
 ACTIVITY_PARSERS = {
+    "claude_stream_activity": parse_claude_stream_activity,
     "codex_jsonl_activity": lambda path: parse_usage_and_activity_data(path)[1],
     "generic_jsonl_activity": lambda path: parse_usage_and_activity_data(path)[1],
 }

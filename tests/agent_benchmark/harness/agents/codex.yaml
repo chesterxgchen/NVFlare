@@ -14,6 +14,8 @@ images:
 
 build:
   args:
+    BENCHMARK_DOCKER_AGENT: codex
+    BENCHMARK_AGENT_HOME: /workspace/.codex
     CODEX_CLI_VERSION:
       env: CODEX_CLI_VERSION
       default: 0.137.0

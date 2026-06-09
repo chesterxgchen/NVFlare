@@ -363,12 +363,13 @@ The registry supports three categories:
 | `known_pending` | The agent is named in design or docs, but intentionally fails preflight with a clear unsupported message. |
 | `unknown` | The harness rejects the name as invalid input. |
 
-This keeps future names such as `claude`, `hermes`, or `openclaw` visible
-without allowing partially implemented agents to run.
+This keeps future names such as `hermes` or `openclaw` visible without allowing
+partially implemented agents to run.
 
-The initial registry state is `codex` as `supported`; names such as `claude`
-may be registered as `known_pending` only when the design and user-facing error
-message intentionally identify them as planned but not runnable.
+The initial registry state is `codex` and `claude` as `supported`; names such as
+`hermes` or `openclaw` may be registered as `known_pending` only when the design
+and user-facing error message intentionally identify them as planned but not
+runnable.
 
 ### Agent Adapters
 
@@ -936,27 +937,43 @@ exit:
 # harness/agents/claude.yaml
 name: claude
 display_name: Anthropic Claude Code CLI
-default_model: claude-opus-4-8
+default_model: unspecified_default
+model_env: CLAUDE_MODEL
 agent_home_env: CLAUDE_CONFIG_DIR
 container_home: /workspace/.claude
+
+build:
+  args:
+    BENCHMARK_DOCKER_AGENT: claude
+    BENCHMARK_AGENT_HOME: /workspace/.claude
+    CLAUDE_CLI_VERSION:
+      env: CLAUDE_CLI_VERSION
+      default: latest
+
+runtime_env:
+  CLAUDE_CONFIG_DIR: "{container_home}"
 
 launch:
   prompt_input_mode: stdin
   argv: ["claude", "--dangerously-skip-permissions",
-         "--model", "{model}",
          "--output-format", "stream-json",
-         "--print"]
-  bypass_reason: "--dangerously-skip-permissions required for non-interactive runs"
+         "--verbose", "--print"]
+  model_argv: ["--model", "{model}"]
+  sandbox_flags: ["--dangerously-skip-permissions"]
+  bypass_reason: "isolated benchmark container; writable state is limited to mounted result/workspace paths"
 
 skill_exposure:
   mechanism_type: launch_flag
-  # skills_dir injected as a launch flag; no separate install or uninstall step
+  skill_root: "{container_home}/skills"
+  metadata_files:
+    - "{container_home}/nvflare_skills_build_install.json"
+    - "{container_home}/nvflare_skills_list.json"
   launch_args: ["--add-dir", "{skills_dir}"]
-  metadata_files: ["{skills_dir}/CLAUDE.md"]
 
 final_message:
   source_type: structured_event
   event_selector: {type: result, subtype: success}
+  parser: generic_structured_event_message
   parser_warnings:
     - "final message from last result event; may be truncated at context limit"
 
