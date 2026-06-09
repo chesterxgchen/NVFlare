@@ -97,7 +97,23 @@ def _select_skill(skills: list[dict], skill_name: str) -> dict:
 def _resolve_output_path(output_path: Optional[Path | str], source, skill: dict) -> Path:
     if output_path:
         return Path(output_path).expanduser()
-    return source.root / skill["relative_path"] / BENCHMARK_FILE_NAME
+    relative_path = Path(str(skill.get("relative_path") or ""))
+    if relative_path.is_absolute():
+        raise SkillBenchmarkError(
+            "AGENT_SKILL_MANIFEST_PATH_INVALID",
+            f"Skill manifest relative_path must be relative: {relative_path}",
+            "Regenerate the packaged skill manifest before rendering BENCHMARK.md.",
+        )
+    output = source.root / relative_path / BENCHMARK_FILE_NAME
+    try:
+        output.resolve(strict=False).relative_to(source.root.resolve())
+    except ValueError as exc:
+        raise SkillBenchmarkError(
+            "AGENT_SKILL_MANIFEST_PATH_INVALID",
+            f"Skill manifest relative_path escapes the skill root: {relative_path}",
+            "Regenerate the packaged skill manifest before rendering BENCHMARK.md.",
+        ) from exc
+    return output
 
 
 def _render_markdown(performance: dict) -> str:

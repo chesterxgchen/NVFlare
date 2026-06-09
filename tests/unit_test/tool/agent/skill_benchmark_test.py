@@ -59,6 +59,26 @@ def test_render_skill_benchmark_writes_explicit_output(tmp_path):
     assert output.read_text(encoding="utf-8") == data["content"]
 
 
+def test_render_skill_benchmark_allows_parent_relative_explicit_output(tmp_path, monkeypatch):
+    source = _skill_source(tmp_path)
+    records = _write_records(tmp_path)
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    monkeypatch.chdir(work_dir)
+    output = Path("..") / "outside" / "BENCHMARK.md"
+
+    data = render_skill_benchmark(
+        skill_name="nvflare-test-skill",
+        records_path=records,
+        output_path=output,
+        source=source,
+    )
+
+    assert data["written"] is True
+    assert data["output_path"] == str(output)
+    assert output.read_text(encoding="utf-8") == data["content"]
+
+
 def test_render_skill_benchmark_requires_skill_name(tmp_path):
     source = _skill_source(tmp_path)
 
@@ -66,6 +86,16 @@ def test_render_skill_benchmark_requires_skill_name(tmp_path):
         render_skill_benchmark(skill_name=None, source=source)
 
     assert exc.value.code == "BENCHMARK_SKILL_REQUIRED"
+
+
+def test_render_skill_benchmark_rejects_manifest_relative_path_escape(tmp_path):
+    source = _skill_source(tmp_path)
+    source.manifest["skills"][0]["relative_path"] = "../outside"
+
+    with pytest.raises(SkillBenchmarkError) as exc:
+        render_skill_benchmark(skill_name="nvflare-test-skill", dry_run=True, source=source)
+
+    assert exc.value.code == "AGENT_SKILL_MANIFEST_PATH_INVALID"
 
 
 def test_write_text_atomic_removes_temp_file_on_replace_failure(tmp_path, monkeypatch):

@@ -21,39 +21,101 @@ from nvflare.tool.agent import skill_performance
 from nvflare.tool.agent.skill_manager import SkillSource
 
 
-class _FakeRecordPath:
-    suffix = ".json"
-
-    def is_symlink(self):
-        return False
-
-    def is_file(self):
-        return True
-
-
-class _FakeRecordsRoot:
-    def exists(self):
-        return True
-
-    def is_file(self):
-        return False
-
-    def rglob(self, _pattern):
-        yield _FakeRecordPath()
-        yield _FakeRecordPath()
-        raise AssertionError("record scan continued after file cap was exceeded")
-
-    def __str__(self):
-        return "/fake/records"
-
-
-def test_load_records_enforces_file_cap_before_exhausting_tree(monkeypatch):
+def test_load_records_enforces_file_cap(monkeypatch, tmp_path):
     monkeypatch.setattr(skill_performance, "MAX_RECORD_FILES", 1)
+    for index in range(2):
+        (tmp_path / f"record-{index}.json").write_text(
+            json.dumps({"schema_version": "1", "skill": "nvflare-test-skill"}),
+            encoding="utf-8",
+        )
 
     with pytest.raises(skill_performance.SkillPerformanceError) as exc:
-        skill_performance._load_records(_FakeRecordsRoot())
+        skill_performance._load_records(tmp_path)
 
     assert exc.value.code == "PROCESS_RECORD_FILE_LIMIT_EXCEEDED"
+
+
+def test_load_records_missing_path_uses_structured_error(tmp_path):
+    missing = tmp_path / "missing"
+
+    with pytest.raises(skill_performance.SkillPerformanceError) as exc:
+        skill_performance._load_records(missing)
+
+    assert exc.value.code == "PROCESS_RECORDS_PATH_NOT_FOUND"
+
+
+def test_read_record_file_invalid_jsonl_uses_structured_error(tmp_path):
+    record_path = tmp_path / "record.jsonl"
+    record_path.write_text("{not json}\n", encoding="utf-8")
+
+    with pytest.raises(skill_performance.SkillPerformanceError) as exc:
+        skill_performance._read_record_file(record_path)
+
+    assert exc.value.code == "INVALID_PROCESS_RECORD_JSONL"
+
+
+def test_read_record_file_invalid_json_uses_structured_error(tmp_path):
+    record_path = tmp_path / "record.json"
+    record_path.write_text("{not json}\n", encoding="utf-8")
+
+    with pytest.raises(skill_performance.SkillPerformanceError) as exc:
+        skill_performance._read_record_file(record_path)
+
+    assert exc.value.code == "INVALID_PROCESS_RECORD_JSON"
+
+
+def test_read_record_file_unreadable_json_uses_structured_error(tmp_path):
+    record_path = tmp_path / "record.json"
+    record_path.write_bytes(b'{"schema_version": "1", "skill": "\xff"}')
+
+    with pytest.raises(skill_performance.SkillPerformanceError) as exc:
+        skill_performance._read_record_file(record_path)
+
+    assert exc.value.code == "PROCESS_RECORD_FILE_UNREADABLE"
+
+
+def test_read_record_file_read_os_error_uses_structured_error(monkeypatch, tmp_path):
+    record_path = tmp_path / "record.json"
+    record_path.write_text('{"schema_version": "1", "skill": "nvflare-test-skill"}\n', encoding="utf-8")
+    original_read_text = type(record_path).read_text
+
+    def fail_read_text(self, *args, **kwargs):
+        if self == record_path:
+            raise OSError("record disappeared")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(record_path), "read_text", fail_read_text)
+
+    with pytest.raises(skill_performance.SkillPerformanceError) as exc:
+        skill_performance._read_record_file(record_path)
+
+    assert exc.value.code == "PROCESS_RECORD_FILE_UNREADABLE"
+
+
+def test_read_record_file_jsonl_replaces_invalid_utf8_bytes(tmp_path):
+    record_path = tmp_path / "record.jsonl"
+    record_path.write_bytes(b'{"schema_version": "1", "skill": "nvflare-test-skill", "case_id": "bad-\xff"}\n')
+
+    records = skill_performance._read_record_file(record_path)
+
+    assert records[0]["case_id"] == "bad-\ufffd"
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks are not supported on this platform")
+def test_load_records_does_not_traverse_symlinked_directories(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside.joinpath("record.json").write_text(
+        json.dumps({"schema_version": "1", "skill": "nvflare-test-skill", "case_id": "outside"}),
+        encoding="utf-8",
+    )
+    records_root = tmp_path / "records"
+    records_root.mkdir()
+    records_root.joinpath("external").symlink_to(outside, target_is_directory=True)
+
+    records, _status = skill_performance._load_records(records_root)
+
+    assert records == []
 
 
 def test_read_record_file_rejects_oversized_file_before_json_load(monkeypatch, tmp_path):
@@ -115,6 +177,20 @@ def test_load_records_sorts_mixed_timestamps_by_time_not_string(tmp_path):
 
     assert [record["case_id"] for record in records] == ["iso", "fallback"]
     assert "_sort_timestamp" not in records[0]
+
+
+def test_record_sort_timestamp_uses_negative_sentinel_for_stat_failure(tmp_path):
+    assert skill_performance._record_sort_timestamp({}, tmp_path / "missing.json") == -1
+
+
+def test_summary_key_preserves_group_dimensions():
+    assert skill_performance._summary_key("skill", "1.0", "case", "with_skills", "abc123") == (
+        "skill",
+        "1.0",
+        "case",
+        "with_skills",
+        "abc123",
+    )
 
 
 def test_empty_manifest_surfaces_record_matching_warning(tmp_path):
