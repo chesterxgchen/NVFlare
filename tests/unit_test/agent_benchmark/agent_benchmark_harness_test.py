@@ -68,6 +68,7 @@ def test_claude_agent_config_uses_config_dir_and_valid_final_message_source():
     assert config.usage.parser == "claude_stream_usage"
     assert config.activity.parser == "claude_stream_activity"
     assert config.exit_classifier == "claude_cli"
+    assert "model_argv" not in config.launch
 
 
 def test_claude_adapter_launch_spec_uses_stream_json_without_prompt_text(tmp_path):
@@ -214,6 +215,24 @@ def test_claude_stream_parser_ignores_non_shell_tool_command_fields(tmp_path):
         "message": {
             "content": [
                 {"type": "tool_use", "name": "Notebook", "input": {"command": "not a shell command"}},
+            ],
+        },
+    }
+
+    normalized = adapter.normalize_event(json.dumps(raw_event))
+
+    assert "command_text" not in normalized
+
+
+def test_claude_stream_parser_uses_exact_shell_tool_allowlist():
+    from harness.agents.registry import load_agent_adapter
+
+    adapter = load_agent_adapter("claude")
+    raw_event = {
+        "type": "assistant",
+        "message": {
+            "content": [
+                {"type": "tool_use", "name": "BashRunner", "input": {"command": "python job.py"}},
             ],
         },
     }
@@ -406,6 +425,44 @@ def test_agent_config_rejects_unknown_final_message_parser(tmp_path):
         raise AssertionError("unknown final message parser should fail during config load")
 
 
+def test_agent_config_rejects_model_argv_without_explicit_position(tmp_path):
+    from harness.agents.config import AgentConfig
+
+    source_path = Path(__file__).resolve().parents[2] / "agent_benchmark" / "harness" / "agents" / "codex.yaml"
+    config_path = tmp_path / "bad_model_argv.yaml"
+    config_path.write_text(
+        source_path.read_text(encoding="utf-8").replace("  model_argv_position: before_stdin_sentinel\n", ""),
+        encoding="utf-8",
+    )
+
+    try:
+        AgentConfig.load(config_path)
+    except ValueError as exc:
+        assert "launch.model_argv_position" in str(exc)
+    else:
+        raise AssertionError("model_argv must declare an explicit placement policy")
+
+
+def test_agent_config_rejects_append_model_argv_for_stdin_prompt(tmp_path):
+    from harness.agents.config import AgentConfig
+
+    source_path = Path(__file__).resolve().parents[2] / "agent_benchmark" / "harness" / "agents" / "codex.yaml"
+    config_path = tmp_path / "bad_model_argv_position.yaml"
+    config_path.write_text(
+        source_path.read_text(encoding="utf-8").replace(
+            "model_argv_position: before_stdin_sentinel", "model_argv_position: append"
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        AgentConfig.load(config_path)
+    except ValueError as exc:
+        assert "launch.model_argv_position=append is not valid with stdin prompt delivery" in str(exc)
+    else:
+        raise AssertionError("stdin model_argv must not append after the prompt sentinel")
+
+
 def test_agent_adapter_cache_can_be_cleared_for_tests():
     from harness.agents.registry import clear_agent_adapter_cache, load_agent_adapter
 
@@ -520,6 +577,7 @@ def test_codex_adapter_launch_spec_uses_prompt_file_without_prompt_text(tmp_path
     assert "{prompt_text}" not in rendered_argv
     assert "Convert this job" not in rendered_argv
     assert spec.argv[-1] == "-"
+    assert spec.argv[-3:] == ["-m", "test-model", "-"]
     assert "--dangerously-bypass-approvals-and-sandbox" in spec.sandbox_flags
     assert spec.bypass_reason
 

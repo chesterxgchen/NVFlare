@@ -25,7 +25,7 @@ from typing import Any
 from ..events import parse_timestamp, parse_usage_and_activity_data
 
 MAX_ACTIVITY_COMMANDS = 200
-SHELL_TOOL_NAMES = {"bash", "shell", "computer_use_bash"}
+CLAUDE_SHELL_TOOL_NAMES = {"bash"}
 
 
 def event_timestamp() -> str:
@@ -89,7 +89,7 @@ def claude_tool_uses(event: dict[str, Any]) -> list[dict[str, Any]]:
 
 def claude_tool_command(tool_use: dict[str, Any]) -> str | None:
     tool_name = str(tool_use.get("name") or "").lower()
-    if tool_name not in SHELL_TOOL_NAMES and "bash" not in tool_name and "shell" not in tool_name:
+    if tool_name not in CLAUDE_SHELL_TOOL_NAMES:
         return None
     tool_input = tool_use.get("input")
     if not isinstance(tool_input, dict):
