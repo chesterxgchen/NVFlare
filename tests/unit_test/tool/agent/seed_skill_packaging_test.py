@@ -67,7 +67,7 @@ def test_seed_bundle_copy_includes_references_evals_and_log_fixtures(tmp_path):
 
     names = {skill["name"] for skill in manifest["skills"]}
     assert SEED_SKILLS.issubset(names)
-    assert not (bundle_root / "_shared").exists()
+    assert (bundle_root / "_shared" / "nvflare-job-lifecycle.md").is_file()
     _assert_convert_pytorch_payload(bundle_root / "nvflare-convert-pytorch")
     _assert_diagnose_payload(bundle_root / "nvflare-diagnose-job")
 
@@ -84,6 +84,8 @@ def test_seed_skills_install_into_codex_and_claude_temp_targets(tmp_path):
     assert claude_plan["applied"] is True
     assert SEED_SKILLS.issubset({entry["name"] for entry in codex_plan["skills"]})
     assert SEED_SKILLS.issubset({entry["name"] for entry in claude_plan["skills"]})
+    assert codex_target.joinpath("_shared", "nvflare-job-lifecycle.md").is_file()
+    assert claude_target.joinpath("_shared", "nvflare-job-lifecycle.md").is_file()
     _assert_convert_pytorch_payload(codex_target / "nvflare-convert-pytorch")
     _assert_convert_pytorch_payload(claude_target / "nvflare-convert-pytorch")
     _assert_diagnose_payload(codex_target / "nvflare-diagnose-job")
@@ -205,8 +207,7 @@ def _assert_convert_pytorch_payload(skill_dir: Path) -> None:
             skill_dir / "references" / "pytorch-client-api-conversion.md",
         ]
     )
-    assert "nvflare-job-lifecycle.md" not in packaged_text
-    assert "nvflare-experiment-workflows.md" not in packaged_text
+    assert "nvflare-job-lifecycle.md" in packaged_text
     assert "Must not require `rg` to be installed" in packaged_text
 
 

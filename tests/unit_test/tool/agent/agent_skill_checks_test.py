@@ -17,7 +17,7 @@ import json
 from nvflare.tool.agent_skill_checks.lints import run_v1_lints
 
 
-def test_process_eval_lint_requires_process_metrics(tmp_path):
+def test_process_metric_lint_requires_process_metrics(tmp_path):
     _write_skill(
         tmp_path,
         "nvflare-test-skill",
@@ -39,13 +39,13 @@ def test_process_eval_lint_requires_process_metrics(tmp_path):
         },
     )
 
-    result = run_v1_lints(tmp_path, checks=["skill-process-eval-lint"])
+    result = run_v1_lints(tmp_path, checks=["skill-process-metric-lint"])
 
     assert result["status"] == "failed"
-    assert result["findings"][0]["code"] == "skill-process-eval-missing"
+    assert result["findings"][0]["code"] == "skill-process-metric-missing"
 
 
-def test_process_eval_lint_accepts_process_metrics(tmp_path):
+def test_process_metric_lint_accepts_process_metrics(tmp_path):
     _write_skill(
         tmp_path,
         "nvflare-test-skill",
@@ -61,21 +61,19 @@ def test_process_eval_lint_accepts_process_metrics(tmp_path):
                     "nvflare": {
                         "expected_skill": "nvflare-test-skill",
                         "mandatory_behavior": [{"id": "run-test", "description": "runs the test workflow"}],
-                        "process_evaluation": {
-                            "metrics": [
-                                {
-                                    "id": "turns_to_acceptable",
-                                    "description": "number of turns before the result is acceptable",
-                                }
-                            ]
-                        },
+                        "process_metrics": [
+                            {
+                                "id": "turns_to_acceptable",
+                                "description": "number of turns before the result is acceptable",
+                            }
+                        ],
                     },
                 }
             ],
         },
     )
 
-    result = run_v1_lints(tmp_path, checks=["skill-process-eval-lint"])
+    result = run_v1_lints(tmp_path, checks=["skill-process-metric-lint"])
 
     assert result["status"] == "ok"
     assert result["findings"] == []
@@ -96,7 +94,7 @@ def _write_skill(root, name, evals):
         "\n"
         "## Use When\n"
         "\n"
-        "Use when testing skill process evaluation.\n",
+        "Use when testing skill process metrics.\n",
         encoding="utf-8",
     )
     evals_dir = skill_dir / "evals"

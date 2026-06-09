@@ -105,46 +105,44 @@
             "description": "submits the exported job to POC only when the user explicitly approves POC or provides a POC workspace and asks for submission"
           }
         ],
-        "process_evaluation": {
-          "metrics": [
-            {
-              "id": "first_pass_accepted",
-              "description": "whether the first generated conversion satisfies layout, recipe, validation, and evidence requirements without user correction"
-            },
-            {
-              "id": "turns_to_acceptable",
-              "description": "number of user/agent turns before the conversion is accepted as structurally correct and validated or explicitly blocked"
-            },
-            {
-              "id": "user_correction_count",
-              "description": "number of user corrections needed for workflow, layout, validation, evidence, or artifact-location mistakes"
-            },
-            {
-              "id": "missed_instruction_count",
-              "description": "number of applicable user, design, or skill instructions missed during conversion, such as requested output locations, non-destructive edits, or requested review passes"
-            },
-            {
-              "id": "layout_violations",
-              "description": "count of generated source layout, file naming, or runtime artifact placement violations found before final acceptance"
-            },
-            {
-              "id": "validation_evidence_completeness",
-              "description": "whether the final answer reports validation commands, statuses, the declared primary/global metric scalar when applicable, result evidence, and exact artifact paths"
-            },
-            {
-              "id": "elapsed_seconds",
-              "description": "wall-clock time used for the conversion workflow from first skill-guided action to final reported result"
-            },
-            {
-              "id": "token_count",
-              "description": "total conversation token count for the conversion run when supplied by the evaluation runner"
-            },
-            {
-              "id": "conversion_quality",
-              "description": "reviewer-rated 1-5 quality of the converted FLARE job, considering structure, API choices, validation evidence, and artifact placement"
-            }
-          ]
-        }
+        "process_metrics": [
+          {
+            "id": "first_pass_accepted",
+            "description": "whether the first generated conversion satisfies layout, recipe, validation, and evidence requirements without user correction"
+          },
+          {
+            "id": "turns_to_acceptable",
+            "description": "number of user/agent turns before the conversion is accepted as structurally correct and validated or explicitly blocked"
+          },
+          {
+            "id": "user_correction_count",
+            "description": "number of user corrections needed for workflow, layout, validation, evidence, or artifact-location mistakes"
+          },
+          {
+            "id": "missed_instruction_count",
+            "description": "number of applicable user, design, or skill instructions missed during conversion, such as requested output locations, non-destructive edits, or requested review passes"
+          },
+          {
+            "id": "layout_violations",
+            "description": "count of generated source layout, file naming, or runtime artifact placement violations found before final acceptance"
+          },
+          {
+            "id": "validation_evidence_completeness",
+            "description": "whether the final answer reports validation commands, statuses, the declared primary/global metric scalar when applicable, result evidence, and exact artifact paths"
+          },
+          {
+            "id": "elapsed_seconds",
+            "description": "wall-clock time used for the conversion workflow from first skill-guided action to final reported result"
+          },
+          {
+            "id": "token_count",
+            "description": "total conversation token count for the conversion run when supplied by the evaluation runner"
+          },
+          {
+            "id": "conversion_quality",
+            "description": "reviewer-rated 1-5 quality of the converted FLARE job, considering structure, API choices, validation evidence, and artifact placement"
+          }
+        ]
       }
     },
     {

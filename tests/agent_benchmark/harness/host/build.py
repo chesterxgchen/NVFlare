@@ -26,24 +26,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-from .common import SCRIPT_DIR, emit
+from .common import SCRIPT_DIR, benchmark_agent_from_env, emit
 
 FLARE_TEST_DIR = SCRIPT_DIR.parent
 DEFAULT_UV_IMAGE = "ghcr.io/astral-sh/uv:0.11.19"
 DEFAULT_NODE_IMAGE = "node:22.16.0-bookworm-slim"
 DEFAULT_CODEX_CLI_VERSION = "0.137.0"
-CONTAINER_HARNESS_MODULES = {
-    "__init__.py",
-    "agent_run.py",
-    "artifacts.py",
-    "common.py",
-    "events.py",
-    "quality_signals.py",
-    "record_identity.py",
-    "records.py",
-    "reporting.py",
-    "timing.py",
-}
 
 
 def env_flag(name: str, default: str) -> bool:
@@ -274,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build NVFLARE agent benchmark Docker images.")
     parser.parse_args(argv)
 
-    agent = os.environ.get("BENCHMARK_AGENT", "codex")
+    agent = benchmark_agent_from_env()
     image_name = os.environ.get("IMAGE_NAME", f"nvflare-agent-benchmark:{agent}-skills")
     baseline_image_name = os.environ.get("BASELINE_IMAGE_NAME", f"nvflare-agent-benchmark:{agent}-baseline")
     report_image_name = os.environ.get("REPORT_IMAGE_NAME", image_name)

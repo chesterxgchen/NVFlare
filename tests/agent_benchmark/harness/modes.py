@@ -27,31 +27,23 @@ class ModeSpec:
     label: str
     mode: str
     skills_enabled: bool
-    process_eval_enabled: bool
-    nvflare_skill_eval: str
-
-    @property
-    def nvflare_skill_eval_state(self) -> str:
-        return "on" if self.nvflare_skill_eval == "on" else "off"
 
 
-PROCESS_EVAL_RUNS: tuple[ModeSpec, ...] = (
-    ModeSpec("No skills", "without_skills", False, False, ""),
-    ModeSpec("With skills, skill eval off", "with_skills_eval_off", True, False, ""),
-    ModeSpec("With skills, skill eval on", "with_skills_eval_on", True, True, "on"),
+BENCHMARK_RUNS: tuple[ModeSpec, ...] = (
+    ModeSpec("No skills baseline", "without_skills", False),
+    ModeSpec("With skills", "with_skills", True),
 )
 
-PAIR_RUNS: tuple[ModeSpec, ...] = (
-    ModeSpec("No skills", "without_skills", False, False, ""),
-    ModeSpec("With skills, skill eval off", "with_skills_eval_off", True, False, ""),
-)
+# These aliases intentionally share the same tuple. They preserve wrapper/report
+# vocabulary while the benchmark has one canonical two-mode run set.
+PAIR_RUNS: tuple[ModeSpec, ...] = BENCHMARK_RUNS
 
-KNOWN_RUNS: tuple[ModeSpec, ...] = PROCESS_EVAL_RUNS
+KNOWN_RUNS: tuple[ModeSpec, ...] = BENCHMARK_RUNS
 KNOWN_RUN_BY_MODE: dict[str, ModeSpec] = {item.mode: item for item in KNOWN_RUNS}
 
 
 def mode_records(runs: Iterable[ModeSpec]) -> list[dict[str, object]]:
-    return [asdict(item) | {"nvflare_skill_eval_state": item.nvflare_skill_eval_state} for item in runs]
+    return [asdict(item) for item in runs]
 
 
 def mode_names(runs: Iterable[ModeSpec]) -> list[str]:
@@ -69,16 +61,7 @@ def mode_spec(mode: str) -> ModeSpec:
 def mode_shell_rows(runs: Iterable[ModeSpec]) -> list[str]:
     rows = []
     for item in runs:
-        rows.append(
-            "|".join(
-                [
-                    item.mode,
-                    "true" if item.skills_enabled else "false",
-                    "true" if item.process_eval_enabled else "false",
-                    item.nvflare_skill_eval,
-                ]
-            )
-        )
+        rows.append("|".join([item.mode, "true" if item.skills_enabled else "false"]))
     return rows
 
 
@@ -86,44 +69,37 @@ def select_mode(
     runs: Iterable[ModeSpec],
     *,
     skills_enabled: bool | None = None,
-    process_eval_enabled: bool | None = None,
-    nvflare_skill_eval_state: str | None = None,
 ) -> str:
     for item in runs:
         if skills_enabled is not None and item.skills_enabled != skills_enabled:
-            continue
-        if process_eval_enabled is not None and item.process_eval_enabled != process_eval_enabled:
-            continue
-        if nvflare_skill_eval_state is not None and item.nvflare_skill_eval_state != nvflare_skill_eval_state:
             continue
         return item.mode
     raise RuntimeError("no benchmark mode matches the requested role")
 
 
-PROCESS_EVAL_MODE_NAMES = mode_names(PROCESS_EVAL_RUNS)
+BENCHMARK_MODE_NAMES = mode_names(BENCHMARK_RUNS)
 PAIR_MODE_NAMES = mode_names(PAIR_RUNS)
-NO_SKILLS_MODE = select_mode(PROCESS_EVAL_RUNS, skills_enabled=False)
-SKILLS_EVAL_OFF_MODE = select_mode(PROCESS_EVAL_RUNS, skills_enabled=True, nvflare_skill_eval_state="off")
-SKILLS_EVAL_ON_MODE = select_mode(PROCESS_EVAL_RUNS, skills_enabled=True, nvflare_skill_eval_state="on")
+NO_SKILLS_MODE = select_mode(BENCHMARK_RUNS, skills_enabled=False)
+WITH_SKILLS_MODE = select_mode(BENCHMARK_RUNS, skills_enabled=True)
 PAIR_WITHOUT_MODE = select_mode(PAIR_RUNS, skills_enabled=False)
 PAIR_WITH_MODE = select_mode(PAIR_RUNS, skills_enabled=True)
 
 
-def process_eval_runs() -> list[dict[str, object]]:
-    return mode_records(PROCESS_EVAL_RUNS)
+def benchmark_runs() -> list[dict[str, object]]:
+    return mode_records(BENCHMARK_RUNS)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("process-eval-json", "process-eval-shell", "pair-json", "pair-shell"))
+    parser.add_argument("command", choices=("benchmark-json", "benchmark-shell", "pair-json", "pair-shell"))
     args = parser.parse_args()
 
-    if args.command == "process-eval-json":
-        print(json.dumps(mode_records(PROCESS_EVAL_RUNS), indent=2, sort_keys=True))
+    if args.command == "benchmark-json":
+        print(json.dumps(mode_records(BENCHMARK_RUNS), indent=2, sort_keys=True))
     elif args.command == "pair-json":
         print(json.dumps(mode_records(PAIR_RUNS), indent=2, sort_keys=True))
     else:
-        runs = PAIR_RUNS if args.command == "pair-shell" else PROCESS_EVAL_RUNS
+        runs = PAIR_RUNS if args.command == "pair-shell" else BENCHMARK_RUNS
         for row in mode_shell_rows(runs):
             print(row)
 

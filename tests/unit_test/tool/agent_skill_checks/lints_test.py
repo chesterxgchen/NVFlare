@@ -23,7 +23,7 @@ LINT_SKILL_TRIGGER_OVERLAP = "skill-trigger-overlap-lint"
 LINT_SKILL_CATALOG_CATEGORY = "skill-catalog-category-lint"
 LINT_SKILL_GLOBAL_NEGATIVE = "skill-global-negative-lint"
 LINT_SKILL_POLICY_COVERAGE = "skill-policy-coverage-lint"
-LINT_SKILL_PROCESS_EVAL = "skill-process-eval-lint"
+LINT_SKILL_PROCESS_METRIC = "skill-process-metric-lint"
 LINT_SKILL_COMMAND_DRIFT = "skill-command-drift-lint"
 LINT_SKILL_HELPER_SCRIPT = "skill-helper-script-lint"
 LINT_SKILL_FIXTURE = "skill-fixture-lint"
@@ -40,6 +40,7 @@ def test_run_v1_lints_passes_complete_skill(tmp_path):
     assert result["status"] == "ok"
     assert result["findings"] == []
     assert result["summary"]["error_count"] == 0
+    assert {"error", "warning", "info"}.isdisjoint(result["summary"])
     assert set(result["checks"]) == {
         LINT_SKILL_FRONTMATTER,
         LINT_SKILL_MD_SIZE,
@@ -48,7 +49,7 @@ def test_run_v1_lints_passes_complete_skill(tmp_path):
         LINT_SKILL_CATALOG_CATEGORY,
         LINT_SKILL_GLOBAL_NEGATIVE,
         LINT_SKILL_POLICY_COVERAGE,
-        LINT_SKILL_PROCESS_EVAL,
+        LINT_SKILL_PROCESS_METRIC,
         LINT_SKILL_COMMAND_DRIFT,
         LINT_SKILL_HELPER_SCRIPT,
         LINT_SKILL_FIXTURE,
@@ -158,6 +159,40 @@ def test_run_v1_lints_reports_unknown_nvflare_command(tmp_path):
     finding = _finding(result, LINT_SKILL_COMMAND_DRIFT, "skill-command-drift")
     assert isinstance(finding["line"], int)
     _assert_structured_findings(result)
+
+
+def test_run_v1_lints_parses_quoted_nvflare_command_with_shlex(tmp_path):
+    _write_skill(
+        tmp_path / "skills",
+        "nvflare-command-skill",
+        body='Run `nvflare agent skills install --skill "nvflare-valid-skill" --target /tmp/skills`.\n',
+    )
+    docs_root = _write_design_docs(tmp_path, ["nvflare-command-skill"])
+
+    result = run_v1_lints(tmp_path / "skills", docs_root=docs_root, checks=[LINT_SKILL_COMMAND_DRIFT])
+
+    assert result["status"] == "ok"
+    assert result["findings"] == []
+
+
+def test_run_v1_lints_skips_trigger_overlap_when_skill_count_exceeds_cap(monkeypatch, tmp_path):
+    from nvflare.tool.agent_skill_checks import lints
+
+    monkeypatch.setattr(lints, "MAX_TRIGGER_OVERLAP_SKILLS", 1)
+    _write_skill(tmp_path / "skills", "nvflare-one-skill")
+    _write_skill(tmp_path / "skills", "nvflare-two-skill")
+    docs_root = _write_design_docs(tmp_path, ["nvflare-one-skill", "nvflare-two-skill"])
+
+    result = run_v1_lints(tmp_path / "skills", docs_root=docs_root, checks=[LINT_SKILL_TRIGGER_OVERLAP])
+
+    assert result["status"] == "ok"
+    assert result["findings"] == []
+    assert result["skipped_checks"] == [
+        {
+            "id": LINT_SKILL_TRIGGER_OVERLAP,
+            "reason": "category 'Conversion' has 2 skills; limit is 1",
+        }
+    ]
 
 
 def test_run_v1_lints_reports_helper_script_without_test(tmp_path):
@@ -367,14 +402,12 @@ def _default_evals(name, *, category="conversion", adjacent_negative=True, inclu
                 "assertions": ["Uses the expected skill."],
                 "nvflare": {
                     "expected_skill": name,
-                    "process_evaluation": {
-                        "metrics": [
-                            {
-                                "id": "turns_to_acceptable",
-                                "description": "number of turns before an acceptable result",
-                            }
-                        ]
-                    },
+                    "process_metrics": [
+                        {
+                            "id": "turns_to_acceptable",
+                            "description": "number of turns before an acceptable result",
+                        }
+                    ],
                 },
             },
             {

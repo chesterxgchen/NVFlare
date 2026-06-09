@@ -227,7 +227,6 @@ def capture_workspace_delta(
     if include_runtime_artifacts:
         runtime_sources = [
             ("runtime_job_config", nvflare_tmp / "job_config"),
-            ("runtime_skill_eval", nvflare_tmp / "skill_eval"),
         ]
         for label, root in runtime_sources:
             if not root.is_dir():

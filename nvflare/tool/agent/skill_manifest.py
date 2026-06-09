@@ -27,7 +27,7 @@ from typing import Iterable, Optional
 MANIFEST_FILE_NAME = "manifest.json"
 MANIFEST_SCHEMA_VERSION = "1"
 IGNORED_SKILL_FILE_NAMES = {"__pycache__", "*.pyc", "*.pyo"}
-_FRONTMATTER_MODULE = None
+SHARED_SKILL_REFERENCE_DIR = "_shared"
 
 
 def skill_tree_hash(skill_dir: Path, *, exclude_names: Optional[set[str]] = None) -> str:
@@ -111,6 +111,7 @@ def copy_released_skills_to_bundle(
     _clean_bundle_root(target_root)
 
     manifest = build_skill_manifest(source_root, source_type="wheel", nvflare_version=nvflare_version)
+    _copy_shared_references_to_bundle(source_root, target_root)
     for skill in manifest["skills"]:
         shutil.copytree(
             source_root / skill["relative_path"],
@@ -119,6 +120,17 @@ def copy_released_skills_to_bundle(
         )
     write_manifest(manifest, target_root / MANIFEST_FILE_NAME)
     return manifest
+
+
+def _copy_shared_references_to_bundle(source_root: Path, target_root: Path) -> None:
+    shared_root = source_root / SHARED_SKILL_REFERENCE_DIR
+    if not shared_root.is_dir():
+        return
+    shutil.copytree(
+        shared_root,
+        target_root / SHARED_SKILL_REFERENCE_DIR,
+        ignore=shutil.ignore_patterns(*IGNORED_SKILL_FILE_NAMES),
+    )
 
 
 def write_empty_skill_bundle(bundle_root: Path | str, *, nvflare_version: str = "") -> dict:
@@ -184,12 +196,7 @@ def _iter_skill_files(skill_dir: Path, *, exclude_names: set[str]) -> Iterable[P
 
 
 def _validate_skill_dir(skill_dir: Path):
-    global _FRONTMATTER_MODULE
-
-    if _FRONTMATTER_MODULE is None:
-        _FRONTMATTER_MODULE = _load_frontmatter_module()
-
-    return _FRONTMATTER_MODULE.validate_skill_dir(skill_dir)
+    return _load_frontmatter_module().validate_skill_dir(skill_dir)
 
 
 def _load_frontmatter_module():
@@ -200,7 +207,11 @@ def _load_frontmatter_module():
 
     # setup.py loads this file before build isolation has all NVFLARE runtime
     # dependencies, so fall back to loading the validator file directly.
+    # TODO: remove this direct-loader workaround when skill packaging no longer
+    # imports manifest building from setup.py/build isolation.
     module_name = "nvflare_agent_skill_frontmatter"
+    if module_name in sys.modules:
+        return sys.modules[module_name]
     module_path = Path(__file__).resolve().parents[1] / "agent_skill_checks" / "frontmatter.py"
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     if spec is None or spec.loader is None:

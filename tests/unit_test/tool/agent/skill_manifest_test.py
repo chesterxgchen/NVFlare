@@ -15,10 +15,11 @@
 import json
 import os
 from importlib import resources
+from types import SimpleNamespace
 
 import pytest
 
-from nvflare.tool.agent import bundled_skills
+from nvflare.tool.agent import bundled_skills, skill_manifest
 from nvflare.tool.agent.skill_manifest import (
     build_skill_manifest,
     copy_released_skills_to_bundle,
@@ -132,6 +133,17 @@ def test_skill_tree_hash_ignores_python_cache_files(tmp_path):
     skill_dir.joinpath("cache.pyo").write_bytes(b"optimized cache")
 
     assert skill_tree_hash(skill_dir) == first_hash
+
+
+def test_validate_skill_dir_uses_current_frontmatter_loader(monkeypatch, tmp_path):
+    first = SimpleNamespace(validate_skill_dir=lambda _path: "first")
+    second = SimpleNamespace(validate_skill_dir=lambda _path: "second")
+
+    monkeypatch.setattr(skill_manifest, "_load_frontmatter_module", lambda: first)
+    assert skill_manifest._validate_skill_dir(tmp_path) == "first"
+
+    monkeypatch.setattr(skill_manifest, "_load_frontmatter_module", lambda: second)
+    assert skill_manifest._validate_skill_dir(tmp_path) == "second"
 
 
 def test_copy_released_skills_to_bundle_writes_manifest_and_files(tmp_path):

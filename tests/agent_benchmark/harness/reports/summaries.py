@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run-summary writers for pair and skill-eval ablation wrappers."""
+"""Run-summary writers for benchmark wrappers."""
 
 from __future__ import annotations
 
@@ -22,15 +22,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from ..common import flatten_numbers, load_json, write_json
-from ..modes import (
-    NO_SKILLS_MODE,
-    PAIR_MODE_NAMES,
-    PAIR_WITH_MODE,
-    PAIR_WITHOUT_MODE,
-    PROCESS_EVAL_MODE_NAMES,
-    SKILLS_EVAL_OFF_MODE,
-    SKILLS_EVAL_ON_MODE,
-)
+from ..modes import PAIR_MODE_NAMES, PAIR_WITH_MODE, PAIR_WITHOUT_MODE
 
 
 def coerce_status(value: Any) -> int:
@@ -71,7 +63,25 @@ def metrics_by_name_for_runs(runs: dict[str, dict[str, Any]]) -> dict[str, dict[
     return dict(sorted(metrics_by_name.items()))
 
 
-def write_pair_summary(root: Path, status_by_mode: dict[str, Any]) -> None:
+def format_seconds(value: Any) -> str:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "NA"
+    return f"{value:.1f}s"
+
+
+def pair_summary_status_line(root: Path, summary: dict[str, Any]) -> str:
+    statuses = summary.get("status") if isinstance(summary.get("status"), dict) else {}
+    runs = summary.get("runs") if isinstance(summary.get("runs"), dict) else {}
+    mode_parts = []
+    for mode in PAIR_MODE_NAMES:
+        run = runs.get(mode) if isinstance(runs.get(mode), dict) else {}
+        mode_parts.append(
+            f"{mode}: exit={statuses.get(mode, 'NA')}, elapsed={format_seconds(run.get('elapsed_seconds'))}"
+        )
+    return f"Pair summary written: {root / 'pair_summary.json'}; " + "; ".join(mode_parts)
+
+
+def write_pair_summary(root: Path, status_by_mode: dict[str, Any], *, print_summary: bool = True) -> dict[str, Any]:
     modes = PAIR_MODE_NAMES
     statuses = status_map_for_modes(modes, status_by_mode)
     summary: dict[str, Any] = {"result_root": str(root), "runs": {}, "status": statuses}
@@ -94,74 +104,21 @@ def write_pair_summary(root: Path, status_by_mode: dict[str, Any]) -> None:
     metrics_by_name = metrics_by_name_for_runs(summary["runs"])
 
     summary["comparison"] = {
-        "elapsed_seconds_skills_eval_off_minus_without_skills": diff("elapsed_seconds"),
-        "token_count_skills_eval_off_minus_without_skills": diff("token_count"),
+        "elapsed_seconds_with_skills_minus_without_skills": diff("elapsed_seconds"),
+        "token_count_with_skills_minus_without_skills": diff("token_count"),
     }
     summary["metrics_by_name"] = metrics_by_name
     summary["metric_comparisons"] = {
         name: {
-            "skills_eval_off_minus_without_skills": values[PAIR_WITH_MODE] - values[PAIR_WITHOUT_MODE],
+            "with_skills_minus_without_skills": values[PAIR_WITH_MODE] - values[PAIR_WITHOUT_MODE],
         }
         for name, values in sorted(metrics_by_name.items())
         if PAIR_WITH_MODE in values and PAIR_WITHOUT_MODE in values
     }
     write_json(root / "pair_summary.json", summary)
-    print(json.dumps(summary, indent=2, sort_keys=True))
-
-
-def write_process_eval_ablation_summary(root: Path, status_by_mode: dict[str, Any]) -> None:
-    modes = PROCESS_EVAL_MODE_NAMES
-    statuses = status_map_for_modes(modes, status_by_mode)
-    summary: dict[str, Any] = {"result_root": str(root), "runs": {}, "status": statuses}
-    for mode in modes:
-        path = root / mode / "run_summary.json"
-        summary["runs"][mode] = (
-            load_json(path, {"missing_summary": True}) if path.exists() else {"missing_summary": True}
-        )
-
-    def delta(on_mode: str, off_mode: str, key: str) -> float | None:
-        on = summary["runs"].get(on_mode, {}).get(key)
-        off = summary["runs"].get(off_mode, {}).get(key)
-        if isinstance(on, (int, float)) and isinstance(off, (int, float)):
-            return on - off
-        return None
-
-    metrics_by_name = metrics_by_name_for_runs(summary["runs"])
-
-    def metric_delta(values: dict[str, float], on_mode: str, off_mode: str) -> float | None:
-        on = values.get(on_mode)
-        off = values.get(off_mode)
-        if isinstance(on, (int, float)) and isinstance(off, (int, float)):
-            return on - off
-        return None
-
-    summary["comparison"] = {
-        "skill_eval_overhead_with_skills": {
-            "elapsed_seconds": delta(SKILLS_EVAL_ON_MODE, SKILLS_EVAL_OFF_MODE, "elapsed_seconds"),
-            "token_count": delta(SKILLS_EVAL_ON_MODE, SKILLS_EVAL_OFF_MODE, "token_count"),
-        },
-        "skills_overhead_eval_off": {
-            "elapsed_seconds": delta(SKILLS_EVAL_OFF_MODE, NO_SKILLS_MODE, "elapsed_seconds"),
-            "token_count": delta(SKILLS_EVAL_OFF_MODE, NO_SKILLS_MODE, "token_count"),
-        },
-        "skills_plus_eval_overhead": {
-            "elapsed_seconds": delta(SKILLS_EVAL_ON_MODE, NO_SKILLS_MODE, "elapsed_seconds"),
-            "token_count": delta(SKILLS_EVAL_ON_MODE, NO_SKILLS_MODE, "token_count"),
-        },
-    }
-    summary["metrics_by_name"] = metrics_by_name
-    summary["metric_comparisons"] = {}
-    for name, values in sorted(metrics_by_name.items()):
-        comparisons = {
-            "skill_eval_on_minus_off_with_skills": metric_delta(values, SKILLS_EVAL_ON_MODE, SKILLS_EVAL_OFF_MODE),
-            "skills_eval_off_minus_without_skills": metric_delta(values, SKILLS_EVAL_OFF_MODE, NO_SKILLS_MODE),
-            "skills_eval_on_minus_without_skills": metric_delta(values, SKILLS_EVAL_ON_MODE, NO_SKILLS_MODE),
-        }
-        comparisons = {key: value for key, value in comparisons.items() if value is not None}
-        if comparisons:
-            summary["metric_comparisons"][name] = comparisons
-    write_json(root / "process_eval_ablation_summary.json", summary)
-    print(json.dumps(summary, indent=2, sort_keys=True))
+    if print_summary:
+        print(pair_summary_status_line(root, summary), flush=True)
+    return summary
 
 
 def main() -> None:
@@ -172,15 +129,9 @@ def main() -> None:
     pair.add_argument("root", type=Path)
     pair.add_argument("statuses", nargs="+")
 
-    ablation = subparsers.add_parser("process-eval")
-    ablation.add_argument("root", type=Path)
-    ablation.add_argument("statuses", nargs="+")
-
     args = parser.parse_args()
     if args.command == "pair":
         write_pair_summary(args.root, parse_status_map_arg(PAIR_MODE_NAMES, args.statuses))
-    elif args.command == "process-eval":
-        write_process_eval_ablation_summary(args.root, parse_status_map_arg(PROCESS_EVAL_MODE_NAMES, args.statuses))
 
 
 if __name__ == "__main__":

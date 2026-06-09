@@ -18,9 +18,11 @@ import json
 import os
 import shutil
 import tempfile
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from importlib import resources
+from importlib import resources, util
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +30,7 @@ import nvflare
 from nvflare.tool.agent.skill_manifest import (
     IGNORED_SKILL_FILE_NAMES,
     MANIFEST_FILE_NAME,
+    SHARED_SKILL_REFERENCE_DIR,
     build_skill_manifest,
     load_manifest,
     skill_tree_hash,
@@ -36,6 +39,8 @@ from nvflare.tool.agent.skill_manifest import (
 INSTALL_MANIFEST_FILE_NAME = ".nvflare_skill_install.json"
 SUPPORTED_AGENT_TARGETS = ("codex", "claude")
 BUNDLED_SKILLS_PACKAGE = "nvflare.tool.agent.bundled_skills"
+DEFAULT_INSTALL_LOCK_TTL_SECONDS = 300
+INSTALL_LOCK_TIMESTAMP_FILE_NAME = "created_at_ns"
 
 
 @dataclass(frozen=True)
@@ -103,6 +108,13 @@ def install_skills(
         return plan
 
     target.mkdir(parents=True, exist_ok=True)
+    try:
+        _sync_shared_references(source, target)
+    except Exception as e:
+        error = _install_error(SHARED_SKILL_REFERENCE_DIR, e)
+        plan["errors"].append(error)
+        plan["applied"] = False
+        return plan
     for entry in plan["skills"]:
         try:
             if entry["action"] == "copy":
@@ -175,13 +187,14 @@ def list_skills(*, agent: str, target_dir: Optional[Path | str] = None, source: 
 def _install_plan(
     source: SkillSource, skills: list[dict], target: Path, *, agent: str, requested_skill: Optional[str]
 ) -> dict:
-    now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     planned_skills = []
     conflicts = []
     for skill in skills:
         source_skill_dir = source.root / skill["relative_path"]
         target_skill_dir = target / skill["name"]
         source_symlink = _first_symlink_in_tree(source_skill_dir)
+        # The dry-run plan is advisory: source symlinks are checked again in
+        # _stage_skill because the source tree could change before apply.
         # version_delta: new, unknown external state, blocked local edit, same, or update.
         entry = {
             "name": skill["name"],
@@ -247,7 +260,7 @@ def _install_plan(
                         entry["reason"] = "already_installed"
                         entry["version_delta"] = "same"
                     else:
-                        backup_path = target / ".nvflare_bak" / now / skill["name"]
+                        backup_path = _backup_path(target, skill["name"])
                         entry["action"] = "replace"
                         entry["backup_path"] = str(backup_path)
                         entry["version_delta"] = "update"
@@ -268,37 +281,134 @@ def _install_plan(
 
 def _copy_skill(source_dir: Path, target_dir: Path, plan_entry: dict, source: SkillSource) -> None:
     target_dir.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=f".{target_dir.name}.", dir=target_dir.parent) as temp_root:
-        temp_skill_dir = Path(temp_root) / target_dir.name
-        _stage_skill(source_dir, temp_skill_dir, plan_entry, source, installed_path=target_dir)
-        if target_dir.exists():
-            raise FileExistsError(f"target skill directory already exists: {target_dir}")
-        _publish_staged_skill(temp_skill_dir, target_dir)
+    with _skill_install_lock(target_dir):
+        with tempfile.TemporaryDirectory(prefix=f".{target_dir.name}.", dir=target_dir.parent) as temp_root:
+            temp_skill_dir = Path(temp_root) / target_dir.name
+            _stage_skill(source_dir, temp_skill_dir, plan_entry, source, installed_path=target_dir)
+            _publish_staged_skill(temp_skill_dir, target_dir)
 
 
 def _replace_skill(
     source_dir: Path, target_dir: Path, backup_path: Path, plan_entry: dict, source: SkillSource
 ) -> None:
     target_dir.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=f".{target_dir.name}.", dir=target_dir.parent) as temp_root:
-        temp_skill_dir = Path(temp_root) / target_dir.name
-        _stage_skill(source_dir, temp_skill_dir, plan_entry, source, installed_path=target_dir)
-        if not target_dir.exists():
-            raise FileNotFoundError(f"target skill directory no longer exists: {target_dir}")
-        if backup_path.exists():
-            raise FileExistsError(f"backup skill directory already exists: {backup_path}")
-        backup_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(target_dir, backup_path)
-        try:
-            _publish_staged_skill(temp_skill_dir, target_dir)
-        except Exception as publish_error:
-            if not target_dir.exists() and backup_path.exists():
-                try:
-                    shutil.move(backup_path, target_dir)
-                    _remove_empty_dir(backup_path.parent)
-                except Exception as recovery_error:
-                    publish_error.recovery_error = recovery_error
-            raise
+    with _skill_install_lock(target_dir):
+        with tempfile.TemporaryDirectory(prefix=f".{target_dir.name}.", dir=target_dir.parent) as temp_root:
+            temp_skill_dir = Path(temp_root) / target_dir.name
+            _stage_skill(source_dir, temp_skill_dir, plan_entry, source, installed_path=target_dir)
+            if not target_dir.exists():
+                raise FileNotFoundError(f"target skill directory no longer exists: {target_dir}")
+            if backup_path.exists():
+                raise FileExistsError(f"backup skill directory already exists: {backup_path}")
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(target_dir, backup_path)
+            try:
+                _publish_staged_skill(temp_skill_dir, target_dir)
+            except Exception as publish_error:
+                if not target_dir.exists() and backup_path.exists():
+                    try:
+                        shutil.move(backup_path, target_dir)
+                        _remove_empty_dir(backup_path.parent)
+                    except Exception as recovery_error:
+                        publish_error.recovery_error = recovery_error
+                raise
+
+
+def _sync_shared_references(source: SkillSource, target: Path) -> None:
+    source_shared = source.root / SHARED_SKILL_REFERENCE_DIR
+    if not source_shared.is_dir():
+        return
+    source_hash = skill_tree_hash(source_shared)
+    target_shared = target / SHARED_SKILL_REFERENCE_DIR
+    plan_entry = {"name": SHARED_SKILL_REFERENCE_DIR, "source_hash": source_hash}
+    if not target_shared.exists():
+        _copy_skill(source_shared, target_shared, plan_entry, source)
+        return
+    if target_shared.is_symlink():
+        raise ValueError(f"shared reference target must not be a symlink: {target_shared}")
+    install_manifest = _read_install_manifest(target_shared)
+    if not install_manifest or install_manifest.get("managed_by") != "nvflare":
+        raise FileExistsError(f"shared reference target is not managed by nvflare: {target_shared}")
+    installed_source_hash = skill_tree_hash(target_shared, exclude_names={INSTALL_MANIFEST_FILE_NAME})
+    if installed_source_hash == source_hash and install_manifest.get("source_hash") == source_hash:
+        return
+    backup_path = _backup_path(target, target_shared.name)
+    _replace_skill(source_shared, target_shared, backup_path, plan_entry, source)
+
+
+def _backup_path(target: Path, skill_name: str) -> Path:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+    return target / ".nvflare_bak" / f"{timestamp}-{time.time_ns()}" / skill_name
+
+
+@contextmanager
+def _skill_install_lock(target_dir: Path):
+    lock_dir = target_dir.parent / f".{target_dir.name}.install.lock"
+    try:
+        _create_lock_dir(lock_dir)
+    except FileExistsError as e:
+        if _lock_dir_is_stale(lock_dir):
+            shutil.rmtree(lock_dir)
+            try:
+                _create_lock_dir(lock_dir)
+            except FileExistsError as retry_error:
+                raise FileExistsError(
+                    f"target skill directory is already being installed: {target_dir}"
+                ) from retry_error
+        else:
+            raise FileExistsError(f"target skill directory is already being installed: {target_dir}") from e
+    try:
+        yield
+    finally:
+        shutil.rmtree(lock_dir, ignore_errors=True)
+
+
+def _lock_ttl_seconds() -> int:
+    value = os.environ.get("NVFLARE_AGENT_SKILL_INSTALL_LOCK_TTL_SECONDS")
+    if value is None:
+        return DEFAULT_INSTALL_LOCK_TTL_SECONDS
+    try:
+        return max(0, int(value))
+    except ValueError:
+        return DEFAULT_INSTALL_LOCK_TTL_SECONDS
+
+
+def _lock_dir_is_stale(lock_dir: Path) -> bool:
+    if lock_dir.is_symlink() or not lock_dir.is_dir():
+        return False
+    ttl_seconds = _lock_ttl_seconds()
+    if ttl_seconds <= 0:
+        return False
+    lock_started_at = _read_lock_started_at(lock_dir)
+    if lock_started_at is not None:
+        return time.time() - lock_started_at > ttl_seconds
+    try:
+        age_seconds = time.time() - lock_dir.stat().st_mtime
+    except OSError:
+        return False
+    return age_seconds > ttl_seconds
+
+
+def _write_lock_timestamp(lock_dir: Path) -> None:
+    (lock_dir / INSTALL_LOCK_TIMESTAMP_FILE_NAME).write_text(str(time.time_ns()), encoding="utf-8")
+
+
+def _create_lock_dir(lock_dir: Path) -> None:
+    lock_dir.mkdir()
+    try:
+        _write_lock_timestamp(lock_dir)
+    except Exception:
+        shutil.rmtree(lock_dir, ignore_errors=True)
+        raise
+
+
+def _read_lock_started_at(lock_dir: Path) -> float | None:
+    timestamp_path = lock_dir / INSTALL_LOCK_TIMESTAMP_FILE_NAME
+    try:
+        text = timestamp_path.read_text(encoding="utf-8").strip()
+        return int(text) / 1_000_000_000
+    except (OSError, ValueError):
+        return None
 
 
 def _remove_empty_dir(path: Path) -> None:
@@ -327,7 +437,7 @@ def _install_error(skill_name: str, error: Exception) -> dict:
 def _publish_staged_skill(staged_dir: Path, target_dir: Path) -> None:
     if target_dir.exists():
         raise FileExistsError(f"target skill directory already exists: {target_dir}")
-    os.replace(staged_dir, target_dir)
+    os.rename(staged_dir, target_dir)
 
 
 def _stage_skill(
@@ -374,20 +484,22 @@ def _source_summary(source: SkillSource) -> dict:
 
 def _resolve_target_override(target_dir: Path | str) -> Path:
     target = Path(target_dir).expanduser()
-    symlink = _first_symlink_component(target)
-    if symlink:
+    if any(part == ".." for part in target.parts):
+        raise ValueError(f"agent skill target must not contain parent directory traversal: {target}")
+    logical = Path(os.path.abspath(os.path.normpath(str(target))))
+    resolved = target.resolve(strict=False)
+    if resolved != logical:
+        symlink = _first_symlink_component(target) or logical
         raise ValueError(f"agent skill target must not contain symlink components: {symlink}")
-    return target.resolve(strict=False)
+    return resolved
 
 
 def _first_symlink_component(path: Path) -> Optional[Path]:
-    current = Path(path.anchor) if path.is_absolute() else Path.cwd()
-    parts = path.parts[1:] if path.is_absolute() else path.parts
+    absolute = path if path.is_absolute() else Path.cwd() / path
+    current = Path(absolute.anchor)
+    parts = absolute.parts[1:]
     for part in parts:
         if part in ("", "."):
-            continue
-        if part == "..":
-            current = current.parent
             continue
         current = current / part
         if current.is_symlink():
@@ -474,7 +586,10 @@ def _target_symlink_conflict(skill_name: str, target_path: Path, symlink_path: P
 
 
 def _source_checkout_root() -> Optional[Path]:
-    repo_root = Path(__file__).resolve().parents[3]
+    spec = util.find_spec("nvflare")
+    if spec is None or not spec.submodule_search_locations:
+        return None
+    repo_root = Path(next(iter(spec.submodule_search_locations))).resolve().parent
     source_root = repo_root / "skills"
     if source_root.is_dir() and (repo_root / "pyproject.toml").is_file() and (repo_root / "setup.py").is_file():
         return source_root

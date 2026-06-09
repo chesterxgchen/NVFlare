@@ -15,7 +15,9 @@
 """Deterministic v1 admission lints for NVFLARE-owned agent skills."""
 
 import json
+import os
 import re
+import shlex
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,7 +38,7 @@ V1_LINT_IDS = (
     "skill-catalog-category-lint",
     "skill-global-negative-lint",
     "skill-policy-coverage-lint",
-    "skill-process-eval-lint",
+    "skill-process-metric-lint",
     "skill-command-drift-lint",
     "skill-helper-script-lint",
     "skill-fixture-lint",
@@ -50,7 +52,7 @@ LINT_SKILL_TRIGGER_OVERLAP = "skill-trigger-overlap-lint"
 LINT_SKILL_CATALOG_CATEGORY = "skill-catalog-category-lint"
 LINT_SKILL_GLOBAL_NEGATIVE = "skill-global-negative-lint"
 LINT_SKILL_POLICY_COVERAGE = "skill-policy-coverage-lint"
-LINT_SKILL_PROCESS_EVAL = "skill-process-eval-lint"
+LINT_SKILL_PROCESS_METRIC = "skill-process-metric-lint"
 LINT_SKILL_COMMAND_DRIFT = "skill-command-drift-lint"
 LINT_SKILL_HELPER_SCRIPT = "skill-helper-script-lint"
 LINT_SKILL_FIXTURE = "skill-fixture-lint"
@@ -61,6 +63,7 @@ FINDING_WARNING = "warning"
 FINDING_INFO = "info"
 SKILL_MD_MAX_LINES = 200
 SKILL_MD_ADVISORY_WORDS = 2000
+MAX_TRIGGER_OVERLAP_SKILLS = int(os.environ.get("NVFLARE_AGENT_MAX_TRIGGER_OVERLAP_SKILLS", "200"))
 
 _PUBLIC_EXEMPT_STATUS = {"draft", "internal", "private"}
 _SIZE_EXCEPTION_MARKERS = (
@@ -80,6 +83,7 @@ _BOUNDARY_TERMS = ("do not use", "do-not-use", "use boundary", "boundary", "nega
 _NORMATIVE_RE = re.compile(r"\b(must|must not|required|prohibited|approval)\b", re.IGNORECASE)
 _MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 _BACKTICK_NVFLARE_RE = re.compile(r"`(nvflare(?:\s+[^`]+)?)`")
+_SAFE_COMMAND_TOKEN_RE = re.compile(r"^(?:--?[A-Za-z0-9][\w-]*(?:=[^\s`;&|]+)?|[A-Za-z0-9_./:=+@%,-]+|<[^>\n]+>)$")
 _SIGNIFICANT_TOKEN_RE = re.compile(r"[a-z][a-z0-9_-]{2,}")
 _STOPWORDS = {
     "and",
@@ -116,7 +120,7 @@ _KNOWN_NVFLARE_ROOT_COMMANDS = {
     "system",
 }
 _KNOWN_AGENT_COMMANDS = {"doctor", "info", "inspect", "skills"}
-_KNOWN_AGENT_SKILLS_COMMANDS = {"benchmark", "evaluate", "install", "list", "performance"}
+_KNOWN_AGENT_SKILLS_COMMANDS = {"benchmark", "install", "list", "performance"}
 _PLANNED_AGENT_SKILLS_COMMANDS = set()
 _KNOWN_AGENT_FLAGS = {
     "agent": {"--format", "--schema"},
@@ -125,18 +129,6 @@ _KNOWN_AGENT_FLAGS = {
     "agent inspect": {"--format", "--redact", "--schema"},
     "agent skills": {"--format", "--schema"},
     "agent skills benchmark": {"--case", "--dry-run", "--format", "--output", "--records", "--schema", "--skill"},
-    "agent skills evaluate": {
-        "--agent",
-        "--artifacts",
-        "--case",
-        "--checklist",
-        "--format",
-        "--records",
-        "--run-mode",
-        "--schema",
-        "--skill",
-        "--skill-version",
-    },
     "agent skills install": {"--agent", "--dry-run", "--format", "--schema", "--skill", "--target"},
     "agent skills list": {"--agent", "--format", "--schema", "--target"},
     "agent skills performance": {"--case", "--format", "--records", "--schema", "--skill"},
@@ -240,7 +232,7 @@ def run_v1_lints(
         "skill-catalog-category-lint": _lint_catalog_category,
         "skill-global-negative-lint": _lint_global_negative,
         "skill-policy-coverage-lint": _lint_policy_coverage,
-        "skill-process-eval-lint": _lint_process_eval,
+        "skill-process-metric-lint": _lint_process_metrics,
         "skill-command-drift-lint": _lint_command_drift,
         "skill-helper-script-lint": _lint_helper_scripts,
         "skill-fixture-lint": _lint_fixtures,
@@ -305,9 +297,6 @@ def _summary_from_counts(severity_counts: Counter, finding_count: int, skill_cou
         "error_count": severity_counts.get(FINDING_ERROR, 0),
         "warning_count": severity_counts.get(FINDING_WARNING, 0),
         "info_count": severity_counts.get(FINDING_INFO, 0),
-        "error": severity_counts.get(FINDING_ERROR, 0),
-        "warning": severity_counts.get(FINDING_WARNING, 0),
-        "info": severity_counts.get(FINDING_INFO, 0),
     }
 
 
@@ -512,9 +501,17 @@ def _lint_trigger_overlap(context: LintContext) -> None:
             grouped[category].append(record)
 
     for category, records in grouped.items():
+        if len(records) > MAX_TRIGGER_OVERLAP_SKILLS:
+            _skip(
+                context,
+                "skill-trigger-overlap-lint",
+                f"category {category!r} has {len(records)} skills; limit is {MAX_TRIGGER_OVERLAP_SKILLS}",
+            )
+            continue
+        token_cache = {record.name: _trigger_tokens(record) for record in records}
         for i, left in enumerate(records):
             for right in records[i + 1 :]:
-                if not _records_overlap(left, right):
+                if not _records_overlap(left, right, token_cache):
                     continue
                 if _has_boundary_text(left) and _has_boundary_text(right) and _has_adjacent_negative_pair(left, right):
                     continue
@@ -670,19 +667,19 @@ def _lint_policy_coverage(context: LintContext) -> None:
             break
 
 
-def _lint_process_eval(context: LintContext) -> None:
+def _lint_process_metrics(context: LintContext) -> None:
     for record in _public_records(context.records):
         if record.evals_error:
-            _add_evals_error(context, "skill-process-eval-lint", record)
+            _add_evals_error(context, LINT_SKILL_PROCESS_METRIC, record)
             continue
         if not record.evals_path.is_file():
             context.findings.append(
                 _finding(
-                    "skill-process-eval-lint",
+                    LINT_SKILL_PROCESS_METRIC,
                     FINDING_ERROR,
                     record.evals_path,
-                    "evals/evals.json is required for process-evaluation coverage",
-                    "Add process evaluation metrics under nvflare.process_evaluation.metrics.",
+                    "evals/evals.json is required for process-metric coverage",
+                    "Add process metric contracts under nvflare.process_metrics.",
                     code="skill-evals-missing",
                     skill=record.name,
                 )
@@ -697,13 +694,13 @@ def _lint_process_eval(context: LintContext) -> None:
         if not process_metrics:
             context.findings.append(
                 _finding(
-                    "skill-process-eval-lint",
+                    LINT_SKILL_PROCESS_METRIC,
                     FINDING_ERROR,
                     record.evals_path,
-                    "missing process-evaluation metrics for this public skill",
-                    "Add nvflare.process_evaluation.metrics entries for first-pass quality, correction count, "
-                    "unwanted actions, validation evidence, or other skill-process outcomes.",
-                    code="skill-process-eval-missing",
+                    "missing process metric contracts for this public skill",
+                    "Add nvflare.process_metrics entries for first-pass quality, correction count, unwanted actions, "
+                    "validation evidence, or other skill-process outcomes.",
+                    code="skill-process-metric-missing",
                     skill=record.name,
                 )
             )
@@ -713,12 +710,12 @@ def _lint_process_eval(context: LintContext) -> None:
             if not isinstance(metric, dict):
                 context.findings.append(
                     _finding(
-                        "skill-process-eval-lint",
+                        LINT_SKILL_PROCESS_METRIC,
                         FINDING_ERROR,
                         record.evals_path,
                         f"eval '{item.get('id', '<missing>')}' process metric must be an object",
                         "Use objects with at least id and description fields.",
-                        code="skill-process-eval-metric-type",
+                        code="skill-process-metric-type",
                         skill=record.name,
                     )
                 )
@@ -728,24 +725,24 @@ def _lint_process_eval(context: LintContext) -> None:
             if not isinstance(metric_id, str) or not metric_id.strip():
                 context.findings.append(
                     _finding(
-                        "skill-process-eval-lint",
+                        LINT_SKILL_PROCESS_METRIC,
                         FINDING_ERROR,
                         record.evals_path,
                         f"eval '{item.get('id', '<missing>')}' process metric is missing id",
                         "Add a stable metric id such as turns_to_acceptable or user_correction_count.",
-                        code="skill-process-eval-metric-id-missing",
+                        code="skill-process-metric-id-missing",
                         skill=record.name,
                     )
                 )
             if not isinstance(description, str) or not description.strip():
                 context.findings.append(
                     _finding(
-                        "skill-process-eval-lint",
+                        LINT_SKILL_PROCESS_METRIC,
                         FINDING_ERROR,
                         record.evals_path,
                         f"eval '{item.get('id', '<missing>')}' process metric '{metric_id}' is missing description",
                         "Describe what the metric measures and what evidence records it.",
-                        code="skill-process-eval-metric-description-missing",
+                        code="skill-process-metric-description-missing",
                         skill=record.name,
                     )
                 )
@@ -1092,12 +1089,8 @@ def _behavior_id_count(item: dict[str, Any]) -> int:
 
 def _process_metrics(item: dict[str, Any]) -> list[Any]:
     nvflare = _nvflare_ext(item)
-    process_evaluation = nvflare.get("process_evaluation", {})
-    if isinstance(process_evaluation, dict):
-        metrics = process_evaluation.get("metrics", [])
-        return metrics if isinstance(metrics, list) else [metrics]
-    legacy_metrics = nvflare.get("process_metrics", [])
-    return legacy_metrics if isinstance(legacy_metrics, list) else [legacy_metrics]
+    metrics = nvflare.get("process_metrics", [])
+    return metrics if isinstance(metrics, list) else [metrics]
 
 
 def _eval_text(item: dict[str, Any]) -> str:
@@ -1108,9 +1101,10 @@ def _eval_text(item: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def _records_overlap(left: SkillRecord, right: SkillRecord) -> bool:
-    left_tokens = _trigger_tokens(left)
-    right_tokens = _trigger_tokens(right)
+def _records_overlap(left: SkillRecord, right: SkillRecord, token_cache: dict[str, set[str]] | None = None) -> bool:
+    token_cache = token_cache or {}
+    left_tokens = token_cache.get(left.name) or _trigger_tokens(left)
+    right_tokens = token_cache.get(right.name) or _trigger_tokens(right)
     if not left_tokens or not right_tokens:
         return False
     shared = left_tokens.intersection(right_tokens)
@@ -1258,7 +1252,26 @@ def _command_drift_message(command: str, *, check_flags: bool = True, allow_plan
 
 
 def _command_tokens(command: str) -> list[str]:
-    return re.findall(r"nvflare|--?[A-Za-z0-9][\w-]*(?:=[^\s`]+)?|<[^>]+>|[A-Za-z0-9][\w.-]*", command)
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return []
+    try:
+        start = tokens.index("nvflare")
+    except ValueError:
+        return []
+    command_tokens = []
+    for token in tokens[start:]:
+        if token in {"&&", "|", ";"}:
+            break
+        if not _safe_command_token(token):
+            return []
+        command_tokens.append(token)
+    return command_tokens
+
+
+def _safe_command_token(token: str) -> bool:
+    return bool(_SAFE_COMMAND_TOKEN_RE.match(token))
 
 
 def _looks_like_value(token: str) -> bool:

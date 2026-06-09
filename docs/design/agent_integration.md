@@ -295,23 +295,18 @@ Milestone 7 is intentionally small:
   NVFLARE installs with local edit/version conflicts. Existing third-party
   agent skills with unrelated names are ignored by default.
 - `nvflare agent skills performance [--skill <name>] [--case <eval-id>]
-  [--records <path>] [--format json]` is a read-only reviewer report. It summarizes packaged
-  process-evaluation metric definitions and optional runtime process records,
-  including process score, elapsed time, token count, correction count, and
-  workflow-quality metrics. It must not execute a skill, call an LLM, infer
-  missing token counts, or mutate evaluation artifacts.
-- `nvflare agent skills evaluate --skill <name> --case <eval-id>
-  [--agent codex|claude|other|unknown]
-  [--run-mode without_skill|with_skill|with_skill_forced]
-  [--skill-version <version>] [--artifacts <path>] [--checklist <path>]
-  [--records <path>] --format json` is the explicit runtime process-evaluator
-  entry point defined by [Agent Skill Evaluation](agent_skill_evaluation.md#runtime-evaluator-and-records).
+  [--records <path>] [--format json]` is a read-only reviewer report. It
+  summarizes packaged process metric definitions and optional runtime evidence
+  records, including elapsed time, token count, correction count, behavior
+  status counts, validation status, and workflow-quality metrics. It must not
+  execute a skill, call an LLM, infer missing token counts, or mutate evaluation
+  artifacts.
 - `nvflare agent skills benchmark --skill <name> [--case <eval-id>]
   [--records <path>] [--output <path>] [--dry-run] [--format json]` renders a
   reviewable `BENCHMARK.md` draft from `skills performance` summaries. This is
   an implemented Milestone 7 command. It is mutating only when `--dry-run` is
   omitted and must not execute skills, parse raw artifacts, or mutate runtime
-  process records.
+  evidence records.
 - `nvflare agent skills install --target <dir>` may be supported for explicit
   custom or project-local installation when named agent shortcuts are not
   enough.
@@ -324,20 +319,10 @@ skills doctor, compatibility reports, changelog, uninstall, revert, report-bug,
 feedback, transcript replay, and workspace cleanup are deferred to
 the future roadmap. They should not be required for the first implementation.
 
-Runtime process evaluation can also be activated by the agent or harness
-environment. `NVFLARE_SKILL_EVAL=on` means the agent should attempt to call
-`nvflare agent skills evaluate` after completing a skill run when a matching
-eval case and bounded artifact or checklist evidence are available. The
-NVFLARE CLI does not read this variable directly; unset means normal skill use
-with no process-evaluation packaging and zero evaluator overhead. Agents should
-still collect normal task evidence needed for the user-facing result, but should
-not create evaluation-only artifacts unless the variable is `on`. Harnesses may set
-`NVFLARE_SKILL_EVAL_CASE=<eval-id>` to make the case explicit. If that variable
-is unset, the agent may inspect the selected skill's `evals/evals.json` and
-choose a case only when the task context maps unambiguously to one case. If no
-unambiguous case exists, it should skip runtime evaluation and report why.
-Harnesses should pass explicit `--run-mode` values when comparing baseline and
-skill-assisted runs.
+Runtime skill-performance evidence is produced by benchmark harnesses, research
+workflows, or reviewer processes that run normal agent tasks and record bounded
+evidence. Installed skills do not activate a separate evaluator mode and do not
+create evaluator-only artifacts during normal use.
 
 Installer authority rules:
 
@@ -897,32 +882,20 @@ ignored by default.
 
 `nvflare agent skills performance [--skill <name>] [--case <eval-id>]
 [--records <path>] [--format json]` is a read-only review command for
-process-evaluation evidence.
-It reports the metric contract from packaged `evals/evals.json` files and
-aggregates runtime process records when provided. It should render a concise
-human summary with simple visual bars and a structured JSON summary for
-automation.
-
-`nvflare agent skills evaluate --skill <name> --case <eval-id>
-[--agent codex|claude|other|unknown]
-[--run-mode without_skill|with_skill|with_skill_forced]
-[--skill-version <version>] [--artifacts <path>] [--checklist <path>]
-[--records <path>] --format json` is the explicit runtime process-evaluator
-entry point. It follows the input, output, scoring, and error-code contract in
-[Agent Skill Evaluation](agent_skill_evaluation.md#runtime-evaluator-and-records).
+runtime skill-performance evidence. It reports the metric contract from
+packaged `evals/evals.json` files and aggregates runtime evidence records when
+provided. It should render a concise human summary with simple visual bars and a
+structured JSON summary for automation.
 
 `nvflare agent skills benchmark --skill <name> [--case <eval-id>]
 [--records <path>] [--output <path>] [--dry-run] [--format json]` renders a
 reviewable benchmark draft from the performance summary for one skill. It is an
 implemented Milestone 7 command and does not collect or score evidence itself.
 
-Installed skills should also honor the `NVFLARE_SKILL_EVAL=on` convention by
-attempting a post-run `skills evaluate` call when the case and bounded evidence
-are available. They should check the variable before creating evaluation-only
-artifacts; unset means normal task evidence only. Harnesses can set
-`NVFLARE_SKILL_EVAL_CASE=<eval-id>`; otherwise the agent should read the
-selected skill's `evals/evals.json` and choose a case only when task context
-maps unambiguously to one case. This is an agent/harness convention, not a CLI
+Installed skills collect normal task evidence for user-facing results. Runtime
+skill-performance evidence is recorded by benchmark harnesses, research
+workflows, or reviewer processes outside the normal skill path. This is an
+agent/harness convention, not a CLI
 environment switch.
 
 Full discovery, audit, validation, compatibility, transcript, feedback,

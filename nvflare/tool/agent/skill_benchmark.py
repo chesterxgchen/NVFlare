@@ -22,6 +22,7 @@ from typing import Optional
 from nvflare.tool.agent.skill_performance import summarize_skill_performance
 
 BENCHMARK_FILE_NAME = "BENCHMARK.md"
+BENCHMARK_MAX_RECENT_RECORDS = 20
 
 
 class SkillBenchmarkError(ValueError):
@@ -104,7 +105,7 @@ def _render_markdown(performance: dict) -> str:
     lines = [
         "# Agent Skill Benchmark",
         "",
-        "Generated from runtime process-evaluation records. Review before treating as release evidence.",
+        "Generated from runtime process records. Review before treating as release evidence.",
         "",
         "## Scope",
         "",
@@ -143,9 +144,9 @@ def _append_summaries(lines: list[str], summaries: list[dict]) -> None:
         return
 
     lines.append(
-        "| Skill | Case | Mode | Source Hash | Records | Pass Rate | Score | Time Avg | Token Avg | Corrections Avg | Quality Avg |"
+        "| Skill | Case | Mode | Source Hash | Records | Time Avg | Token Avg | Corrections Avg | Quality Avg |"
     )
-    lines.append("| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    lines.append("| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |")
     for summary in summaries:
         lines.append(
             "| "
@@ -154,8 +155,6 @@ def _append_summaries(lines: list[str], summaries: list[dict]) -> None:
             f"{_md(summary.get('run_mode') or '')} | "
             f"{_short_hash(summary.get('source_hash'))} | "
             f"{summary.get('record_count', 0)} | "
-            f"{_format_number(summary.get('eval_pass_rate'))} | "
-            f"{_metric_avg(summary, 'score')} | "
             f"{_metric_avg(summary, 'elapsed_seconds')} | "
             f"{_metric_avg(summary, 'token_count')} | "
             f"{_metric_avg(summary, 'user_correction_count')} | "
@@ -168,17 +167,14 @@ def _append_records(lines: list[str], records: list[dict]) -> None:
         lines.append("No individual runtime records matched this scope.")
         return
 
-    lines.append("| Timestamp | Skill | Case | Eval Passed | Score | Path |")
-    lines.append("| --- | --- | --- | --- | ---: | --- |")
-    for record in records[:20]:
-        score = record.get("score") or {}
+    lines.append("| Timestamp | Skill | Case | Path |")
+    lines.append("| --- | --- | --- | --- |")
+    for record in records[:BENCHMARK_MAX_RECENT_RECORDS]:
         lines.append(
             "| "
             f"{_md(record.get('timestamp'))} | "
             f"{_md(record.get('skill'))} | "
             f"{_md(record.get('case_id'))} | "
-            f"{record.get('eval_passed')} | "
-            f"{_format_number(score.get('value'))} | "
             f"{_md(record.get('path'))} |"
         )
 

@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import nvflare
+from nvflare.tool.agent.command_registry import agent_command_registry
 from nvflare.tool.agent.skill_manager import find_skill_source
 
 OPTIONAL_DEPENDENCIES = ("torch", "tensorflow", "sklearn", "xgboost", "jax", "flwr")
@@ -53,14 +54,7 @@ def doctor_environment(*, online: bool = False, args=None) -> dict:
 
 
 def _command_registry() -> dict:
-    commands = [
-        {"command": "nvflare agent info", "mutating": False, "streaming": False},
-        {"command": "nvflare agent inspect", "mutating": False, "streaming": False},
-        {"command": "nvflare agent doctor", "mutating": False, "streaming": False},
-        {"command": "nvflare agent skills install", "mutating": True, "streaming": False},
-        {"command": "nvflare agent skills list", "mutating": False, "streaming": False},
-    ]
-    return {"status": "ok", "commands": commands}
+    return agent_command_registry()
 
 
 def _startup_kit_summary() -> dict:
@@ -350,7 +344,7 @@ def _online_read_only_preflight(startup_kit: dict) -> dict | None:
         return _finding(
             "ONLINE_CHECK_ADMIN_CONFIG_UNREADABLE",
             "warning",
-            "Online check skipped because fed_admin.json could not be read without side effects.",
+            "Online check skipped because fed_admin.json could not be read before guarded session creation.",
         )
 
     admin = config.get("admin") if isinstance(config, dict) else None

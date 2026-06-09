@@ -166,6 +166,22 @@ def test_parse_skill_frontmatter_rejects_non_mapping(tmp_path):
         parse_skill_frontmatter(skill_file)
 
 
+def test_parse_skill_frontmatter_rejects_yaml_anchors_and_aliases(tmp_path):
+    skill_file = tmp_path / "SKILL.md"
+    skill_file.write_text(
+        "---\n"
+        "name: nvflare-anchor-skill\n"
+        "description: &shared Test skill fixture.\n"
+        'min_flare_version: "2.8.0"\n'
+        "blast_radius: *shared\n"
+        "---\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SkillFrontmatterError, match="anchors or aliases"):
+        parse_skill_frontmatter(skill_file)
+
+
 def test_validate_skill_dir_reports_missing_directory(tmp_path):
     result = validate_skill_dir(tmp_path / "nvflare-missing-directory")
 

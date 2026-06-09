@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compatibility exports for migrated host report helpers."""
+"""Pytest setup for agent benchmark harness tests."""
 
-from __future__ import annotations
+import sys
+from pathlib import Path
 
-from .host.reports import *  # noqa: F401,F403
+BENCHMARK_ROOT = Path(__file__).resolve().parents[2] / "agent_benchmark"
+if str(BENCHMARK_ROOT) not in sys.path:
+    sys.path.insert(0, str(BENCHMARK_ROOT))

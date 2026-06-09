@@ -15,12 +15,16 @@
 """Read-only process-performance reporting for NVFLARE-owned agent skills."""
 
 import json
+import math
+import os
 from pathlib import Path
 from typing import Any, Optional
 
-DEFAULT_RECORDS_ROOT = Path("~/.nvflare/agent_skill_eval_runs").expanduser()
 EVALS_FILE = "evals/evals.json"
 SCHEMA_VERSION = "1"
+SUPPORTED_SCHEMA_VERSIONS = {SCHEMA_VERSION}
+MAX_RECORD_FILES = int(os.environ.get("NVFLARE_AGENT_MAX_RECORD_FILES", "10000"))
+MAX_RECORD_BYTES = int(os.environ.get("NVFLARE_AGENT_MAX_RECORD_BYTES", str(5 * 1024 * 1024)))
 ALLOWED_STATUSES = {"pass", "fail", "missing", "not_applicable", "non_scoring_note"}
 SUMMARY_METRICS = (
     "elapsed_seconds",
@@ -57,8 +61,8 @@ def summarize_skill_performance(
     """Summarize packaged process metrics and optional runtime process records.
 
     This read-only reporting surface does not run skills, evaluate artifacts,
-    infer scores, mutate runtime records, or fill missing runtime fields from
-    the currently packaged skill manifest.
+    infer correctness fields, mutate runtime records, or fill missing runtime
+    fields from the currently packaged skill manifest.
     """
     from nvflare.tool.agent import skill_manager
 
@@ -68,8 +72,10 @@ def summarize_skill_performance(
     if case_id and not contracts:
         raise ValueError(f"NVFLARE eval case not found: {case_id}")
 
-    resolved_records_path = Path(records_path).expanduser() if records_path else DEFAULT_RECORDS_ROOT
-    loaded_records, records_status = _load_records(resolved_records_path, explicit=records_path is not None)
+    resolved_records_path = Path(records_path).expanduser() if records_path else None
+    loaded_records, records_status = (
+        _load_records(resolved_records_path) if resolved_records_path else ([], "not_supplied")
+    )
     selected_names = {skill["name"] for skill in selected_skills}
     matching_records = _filter_records(loaded_records, selected_names=selected_names, case_id=case_id)
 
@@ -79,7 +85,7 @@ def summarize_skill_performance(
             "root": str(source.root),
             "skill_count": len(source.manifest.get("skills") or []),
         },
-        "records_root": str(resolved_records_path),
+        "records_root": str(resolved_records_path) if resolved_records_path else None,
         "records_status": records_status,
         "filters": {
             "skill": skill_name,
@@ -151,35 +157,45 @@ def _load_eval_cases(skill_dir: Path) -> list[dict]:
 
 def _process_metrics(eval_case: dict) -> list[dict]:
     nvflare = eval_case.get("nvflare") or {}
-    process_evaluation = nvflare.get("process_evaluation") or {}
+    process_metrics = nvflare.get("process_metrics") or []
     metrics = []
-    for metric in process_evaluation.get("metrics") or []:
+    for metric in process_metrics:
+        if not isinstance(metric, dict):
+            continue
         metric_id = metric.get("id")
         if metric_id:
             metrics.append({"id": metric_id, "description": metric.get("description", "")})
     return metrics
 
 
-def _load_records(records_path: Path, *, explicit: bool) -> tuple[list[dict], str]:
+def _load_records(records_path: Path) -> tuple[list[dict], str]:
     if not records_path.exists():
-        if explicit:
-            raise ValueError(f"process records path does not exist: {records_path}")
-        return [], "not_found"
+        raise ValueError(f"process records path does not exist: {records_path}")
 
     if records_path.is_file():
         return _read_record_file(records_path), "loaded"
 
-    records = []
-    for path in sorted(records_path.rglob("*")):
+    record_files = []
+    for path in records_path.rglob("*"):
         if path.is_symlink() or not path.is_file():
             continue
         if path.suffix in (".json", ".jsonl"):
-            records.extend(_read_record_file(path))
+            record_files.append(path)
+            if len(record_files) > MAX_RECORD_FILES:
+                raise SkillPerformanceError(
+                    "PROCESS_RECORD_FILE_LIMIT_EXCEEDED",
+                    f"Process records path has more than {MAX_RECORD_FILES} JSON/JSONL files: {records_path}.",
+                    "Pass a narrower --records path or archive older benchmark records.",
+                )
+    records = []
+    for path in sorted(record_files):
+        records.extend(_read_record_file(path))
     records.sort(key=lambda record: record.get("_timestamp") or "", reverse=True)
     return records, "loaded"
 
 
 def _read_record_file(path: Path) -> list[dict]:
+    _validate_record_file_size(path)
     if path.suffix == ".jsonl":
         records = []
         for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
@@ -216,6 +232,20 @@ def _read_record_file(path: Path) -> list[dict]:
     return []
 
 
+def _validate_record_file_size(path: Path) -> None:
+    try:
+        size = path.stat().st_size
+    except OSError as e:
+        raise ValueError(f"could not stat process record file {path}: {e}") from e
+    if size > MAX_RECORD_BYTES:
+        raise SkillPerformanceError(
+            "PROCESS_RECORD_FILE_TOO_LARGE",
+            f"Process record file exceeds {MAX_RECORD_BYTES} bytes: {path}.",
+            "Pass a narrower --records path, remove oversized files, or raise NVFLARE_AGENT_MAX_RECORD_BYTES.",
+            detail=f"size_bytes={size}",
+        )
+
+
 def _read_json_file(path: Path) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -232,22 +262,12 @@ def _with_record_metadata(record: dict, path: Path) -> dict:
 
 def _validate_record(record: dict, path: Path) -> None:
     schema_version = record.get("schema_version")
-    if schema_version != SCHEMA_VERSION:
+    if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
+        supported = ", ".join(sorted(SUPPORTED_SCHEMA_VERSIONS))
         raise SkillPerformanceError(
             "UNSUPPORTED_SCHEMA_VERSION",
             f"Unsupported runtime process record schema_version {schema_version!r} in {path}.",
-            'Use records with schema_version "1".',
-        )
-    if not isinstance(record.get("eval_passed"), bool):
-        raise SkillPerformanceError(
-            "AGENT_SKILL_PERFORMANCE_FAILED",
-            f"Runtime process record missing boolean eval_passed in {path}.",
-        )
-    score = record.get("score")
-    if score is not None and not isinstance(score, dict):
-        raise SkillPerformanceError(
-            "AGENT_SKILL_PERFORMANCE_FAILED",
-            f"Runtime process record score must be an object or null in {path}.",
+            f"Use records with a supported schema_version: {supported}.",
         )
     for category in ("mandatory_behavior", "prohibited_behavior", "optional_behavior"):
         _validate_behavior_statuses(record.get(category), category, path)
@@ -319,8 +339,6 @@ def _summaries(records: list[dict], skills: list[dict]) -> list[dict]:
             "skill_version": skill_version,
             "case_id": case_id,
             "record_count": len(group_records),
-            "eval_pass_rate": _eval_pass_rate(group_records),
-            "score": _numeric_summary([_score_value(record) for record in group_records], len(group_records)),
         }
         for metric_id in SUMMARY_METRICS:
             summary[metric_id] = _numeric_summary(
@@ -347,18 +365,6 @@ def _sortable_summary_key(key: tuple) -> tuple:
     return tuple("" if value is None else str(value) for value in key)
 
 
-def _eval_pass_rate(records: list[dict]) -> float:
-    if not records:
-        return 0.0
-    passed = sum(1 for record in records if record.get("eval_passed") is True)
-    return _round(passed / len(records))
-
-
-def _score_value(record: dict) -> Optional[float]:
-    score = record.get("score") or {}
-    return _as_float(score.get("value"))
-
-
 def _process_metric(record: dict, metric_id: str) -> Optional[float]:
     process_metrics = record.get("process_metrics") or {}
     if isinstance(process_metrics, dict):
@@ -378,18 +384,12 @@ def _numeric_summary(values: list[Optional[float]], total: int) -> dict:
 
 
 def _compact_record(record: dict) -> dict:
-    score = record.get("score") if isinstance(record.get("score"), dict) else {}
     compact = {
         "path": record.get("_path"),
         "timestamp": record.get("_timestamp"),
         "skill": record.get("skill") or record.get("skill_name"),
         "skill_version": record.get("skill_version"),
         "case_id": record.get("case_id"),
-        "eval_passed": record.get("eval_passed"),
-        "score": {
-            "value": score.get("value"),
-            "max": score.get("max", 5),
-        },
     }
     if record.get("run_mode") is not None:
         compact["run_mode"] = record.get("run_mode")
@@ -423,13 +423,10 @@ def _append_summaries(lines: list[str], summaries: list[dict]) -> None:
         return
 
     for summary in summaries:
-        score = summary.get("score") or {}
         lines.append(
             "  - "
             f"{summary.get('skill', '<unknown>')} / {summary.get('case_id', '<unknown>')}: "
-            f"records {summary.get('record_count', 0)}, "
-            f"pass {_format_number(summary.get('eval_pass_rate'))}, "
-            f"score {_format_number(score.get('avg'))}/5 {_score_bar(score.get('avg'))}"
+            f"records {summary.get('record_count', 0)}"
         )
         for metric_id in SUMMARY_METRICS:
             metric = summary.get(metric_id) or {}
@@ -445,20 +442,16 @@ def _as_float(value: Any) -> Optional[float]:
     if isinstance(value, bool) or value is None:
         return None
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return None
+    if not math.isfinite(number):
+        return None
+    return number
 
 
 def _round(value: float) -> float:
     return round(value, 3)
-
-
-def _score_bar(score: Optional[float]) -> str:
-    if score is None:
-        return ""
-    filled = max(0, min(10, int(round((score / 5.0) * 10))))
-    return "[" + "#" * filled + "-" * (10 - filled) + "]"
 
 
 def _format_number(value: Any, *, default: str = "n/a") -> str:

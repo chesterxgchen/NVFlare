@@ -23,10 +23,17 @@ from pathlib import Path
 from typing import Any
 
 FLOAT_PATTERN = r"(?<![A-Za-z0-9_])([0-9]+\.[0-9]+)(?![A-Za-z0-9_])"
-GENERIC_VALIDATION_METRIC_PATTERN = r"\b(?:(?:aggregated|aggregate|global|server)\s+)?(?:best\s+)?validation\s+metric\b"
+GENERIC_VALIDATION_METRIC_PATTERN = (
+    r"\b(?:"
+    r"(?:(?:aggregated|aggregate|global|server)\s+)?(?:best\s+)?validation\s+(?:metric|[A-Za-z0-9_/-]+)"
+    r"|(?:best\s+)?(?:aggregated|aggregate|global|server)\s+validation\s+(?:metric|[A-Za-z0-9_/-]+)"
+    r")\b"
+)
 METRIC_ALIAS_PATTERNS = {
     "AUROC": r"\b(?:AUROC|AUC)\b|\b(?:valid|validation)[_-]?auroc\b",
     "accuracy": r"\baccuracy\b|\b(?:valid|validation)[_-]?accuracy\b|\bacc\b",
+    "loss": r"\b(?:loss|valid[_-]?loss|validation[_-]?loss|train[_-]?loss)\b",
+    "f1": r"\b(?:f1|f1[_-]?score|valid[_-]?f1|validation[_-]?f1)\b",
 }
 
 
@@ -41,6 +48,14 @@ def canonical_metric_name(name: Any) -> str:
         "acc": "accuracy",
         "valid_accuracy": "accuracy",
         "validation_accuracy": "accuracy",
+        "loss": "loss",
+        "valid_loss": "loss",
+        "validation_loss": "loss",
+        "train_loss": "loss",
+        "f1": "f1",
+        "f1_score": "f1",
+        "valid_f1": "f1",
+        "validation_f1": "f1",
     }
     return aliases.get(normalized.lower(), normalized)
 
@@ -259,18 +274,29 @@ def reported_metric_payload(name: str, entries: list[dict[str, Any]]) -> dict[st
         "site_value_count": len(site_entries),
         "summary_value_label": summary_entry.get("label") if summary_entry else None,
         "value_scope": value_scope,
-        "source": "codex_last_message",
+        "source": "agent_last_message",
     }
 
 
-def primary_metric_from_readme(readme_text: str) -> str | None:
-    patterns = [
-        r"^\s*[-*]?\s*([A-Za-z][A-Za-z0-9_./ -]{0,40}?)\s+is\s+the\s+main\s+metric\b",
-        r"\bmain\s+metric\s*(?:to\s+watch\s+)?(?:is|:)\s*([A-Za-z][A-Za-z0-9_./ -]{0,40})",
-        r"\bprimary\s+(?:validation\s+)?metric\s*(?:is|:)\s*([A-Za-z][A-Za-z0-9_./ -]{0,40})",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, readme_text, flags=re.IGNORECASE | re.MULTILINE)
+PRIMARY_METRIC_PATTERNS = (
+    r"^\s*[-*]?\s*([A-Za-z][A-Za-z0-9_./ -]{0,40}?)\s+is\s+the\s+main\s+metric\b",
+    r"\bmain\s+metric\s*(?:to\s+watch\s+)?(?:is|:)\s*([A-Za-z][A-Za-z0-9_./ -]{0,40})",
+    r"\bprimary\s+(?:validation\s+)?metric\s*(?:is|:)\s*([A-Za-z][A-Za-z0-9_./ -]{0,40})",
+    r"\btarget\s+(?:validation\s+)?metric\s*(?:is|:)\s*([A-Za-z][A-Za-z0-9_./ -]{0,40})",
+)
+
+
+def primary_metric_from_guidance(guidance_text: str) -> str | None:
+    metric, _source = primary_metric_from_guidance_sources(
+        [{"source_type": "job_guidance", "text": guidance_text}],
+        guidance_text,
+    )
+    return metric
+
+
+def primary_metric_from_text(guidance_text: str) -> str | None:
+    for pattern in PRIMARY_METRIC_PATTERNS:
+        match = re.search(pattern, guidance_text, flags=re.IGNORECASE | re.MULTILINE)
         if match:
             metric = re.split(r"[,.;\n]", match.group(1).strip(), maxsplit=1)[0].strip()
             metric = canonical_metric_name(metric)
@@ -279,10 +305,93 @@ def primary_metric_from_readme(readme_text: str) -> str | None:
     return None
 
 
+def primary_metric_from_readme(readme_text: str) -> str | None:
+    return primary_metric_from_guidance(readme_text)
+
+
+def guidance_source_payload(source: Any) -> tuple[str | None, list[dict[str, Any]]]:
+    if source is None:
+        return None, []
+    if isinstance(source, Path):
+        path = str(source)
+        return path, [{"path": path, "source_type": "job_guidance"}]
+    if isinstance(source, list):
+        sources = []
+        for item in source:
+            if isinstance(item, dict):
+                path = item.get("path")
+                if path:
+                    sources.append(
+                        {
+                            "path": str(path),
+                            "source_type": str(item.get("source_type") or "job_guidance"),
+                        }
+                    )
+            elif item:
+                sources.append({"path": str(item), "source_type": "job_guidance"})
+        primary = sources[0]["path"] if sources else None
+        return primary, sources
+    path = str(source)
+    return path, [{"path": path, "source_type": "job_guidance"}]
+
+
+def guidance_source_entries(source: Any, guidance_text: str) -> list[dict[str, Any]]:
+    if isinstance(source, list):
+        entries = []
+        for item in source:
+            if isinstance(item, dict):
+                entries.append(
+                    {
+                        "path": str(item.get("path") or ""),
+                        "source_type": str(item.get("source_type") or "job_guidance"),
+                        "text": str(item.get("text") or ""),
+                    }
+                )
+            elif item:
+                entries.append({"path": str(item), "source_type": "job_guidance", "text": ""})
+        if any(entry["text"] for entry in entries):
+            return entries
+
+    primary_source, sources = guidance_source_payload(source)
+    if sources:
+        return [
+            {
+                "path": str(sources[0].get("path") or primary_source or ""),
+                "source_type": str(sources[0].get("source_type") or "job_guidance"),
+                "text": guidance_text,
+            }
+        ]
+    return [{"path": "", "source_type": "job_guidance", "text": guidance_text}]
+
+
+def public_guidance_source(entry: dict[str, Any]) -> dict[str, Any]:
+    result = {
+        "source_type": str(entry.get("source_type") or "job_guidance"),
+    }
+    if entry.get("path"):
+        result["path"] = str(entry["path"])
+    return result
+
+
+def primary_metric_from_guidance_sources(
+    guidance_sources: list[dict[str, Any]], guidance_text: str
+) -> tuple[str | None, dict[str, Any] | None]:
+    entries = guidance_sources or [{"source_type": "job_guidance", "text": guidance_text}]
+    for entry in entries:
+        metric = primary_metric_from_text(str(entry.get("text") or ""))
+        if metric:
+            return metric, entry
+    if not any(entry.get("text") for entry in entries):
+        metric = primary_metric_from_text(guidance_text)
+        if metric:
+            return metric, entries[0] if entries else None
+    return None, None
+
+
 def reported_validation_metric(last_message: str, expected_metric: str | None) -> dict[str, Any]:
     detected = []
     generic_entries = generic_validation_metric_entries(last_message)
-    for name in ("AUROC", "accuracy"):
+    for name in ("AUROC", "accuracy", "loss", "f1"):
         entries = metric_value_entries(name, last_message)
         if entries or metric_mentioned(name, last_message):
             detected.append(reported_metric_payload(name, entries))
@@ -303,15 +412,24 @@ def reported_validation_metric(last_message: str, expected_metric: str | None) -
         "site_value_labels": [],
         "site_value_count": 0,
         "value_scope": "not_available",
-        "source": "codex_last_message",
+        "source": "agent_last_message",
     }
 
 
-def metric_signal(readme_path: Path | None, readme_text: str, final_message: str) -> dict[str, Any]:
-    expected = primary_metric_from_readme(readme_text)
+def metric_signal(guidance_source: Any, guidance_text: str, final_message: str) -> dict[str, Any]:
+    guidance_entries = guidance_source_entries(guidance_source, guidance_text)
+    expected, matched_source = primary_metric_from_guidance_sources(guidance_entries, guidance_text)
     reported = reported_validation_metric(final_message, expected)
+    _primary_source, sources = guidance_source_payload(guidance_source)
+    if not sources and guidance_entries:
+        sources = [public_guidance_source(entry) for entry in guidance_entries if entry.get("path")]
+    matched_public_source = public_guidance_source(matched_source) if matched_source else {}
+    primary_source = matched_public_source.get("path") or (sources[0]["path"] if sources else None)
     signal: dict[str, Any] = {
-        "source": str(readme_path) if readme_path is not None else None,
+        "source": primary_source,
+        "matched_source": matched_public_source or None,
+        "sources": sources,
+        "source_type": "job_guidance",
         "expected_primary_metric": expected,
         "reported_validation_metric": reported,
         "available": bool(expected),
@@ -341,51 +459,51 @@ def metric_signal(readme_path: Path | None, readme_text: str, final_message: str
         status = "pass"
         if has_value:
             evidence = (
-                f"README declares {expected} as the primary metric, and the final response reported "
+                f"Job guidance declares {expected} as the primary metric, and the final response reported "
                 f"{reported.get('name')} {value:.4f}."
             )
         elif site_values:
             evidence = (
-                f"README declares {expected} as the primary metric, and the final response reported "
+                f"Job guidance declares {expected} as the primary metric, and the final response reported "
                 f"{len(site_values)} site-level {reported.get('name')} values."
             )
         else:
             evidence = (
-                f"README declares {expected} as the primary metric, and the final response reported "
+                f"Job guidance declares {expected} as the primary metric, and the final response reported "
                 f"{len(numeric_reported_values)} {reported.get('name')} values."
             )
     elif mismatch:
         status = "fail"
         if has_value:
             evidence = (
-                f"README declares {expected} as the primary metric, but the final response reported "
+                f"Job guidance declares {expected} as the primary metric, but the final response reported "
                 f"{reported.get('name')}" + (f" {value:.4f}." if isinstance(value, float) else ".")
             )
         else:
             evidence = (
-                f"README declares {expected} as the primary metric, but the final response reported "
+                f"Job guidance declares {expected} as the primary metric, but the final response reported "
                 f"{reported.get('name')}."
             )
     elif reported.get("name"):
         status = "missing"
         if site_values:
             evidence = (
-                f"README declares {expected} as the primary metric, and the final response reported "
+                f"Job guidance declares {expected} as the primary metric, and the final response reported "
                 f"{len(site_values)} site-level {reported.get('name')} values but no single FL-level value."
             )
         elif reported_values:
             evidence = (
-                f"README declares {expected} as the primary metric, and the final response reported "
+                f"Job guidance declares {expected} as the primary metric, and the final response reported "
                 f"{len(reported_values)} {reported.get('name')} values but no single FL-level value."
             )
         else:
             evidence = (
-                f"README declares {expected} as the primary metric, and the final response mentioned "
+                f"Job guidance declares {expected} as the primary metric, and the final response mentioned "
                 f"{reported.get('name')} but did not report a numeric value."
             )
     else:
         status = "missing"
-        evidence = f"README declares {expected} as the primary metric, but the final response did not report it."
+        evidence = f"Job guidance declares {expected} as the primary metric, but the final response did not report it."
 
     signal.update(
         {
@@ -393,6 +511,7 @@ def metric_signal(readme_path: Path | None, readme_text: str, final_message: str
             "evidence": evidence,
             "metric_value_available": has_reported_numeric,
             "metric_scalar_available": has_value,
+            "aligned_with_job_guidance": aligned,
             "aligned_with_readme": aligned,
             "mismatch": mismatch,
         }
