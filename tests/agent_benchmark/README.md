@@ -5,11 +5,14 @@ NVFLARE job-conversion task with and without packaged NVFLARE agent skills.
 
 Current runnable scope:
 
-- Agent: Codex only.
+- Agents: Codex and Claude. Claude requires an explicit `CLAUDE_MODEL` or
+  `BENCHMARK_AGENT_MODEL`.
 - Modes: `without_skills` and `with_skills`.
 - Job input: a folder containing scripts, data, docs, and any local
   requirements files.
 - Prompt input: a local prompt file passed with `--prompt`.
+- Scenario input: optional YAML compiled into `scenario.json` and
+  `run_plan.json`.
 - Results: written under `tests/agent_benchmark/results/` by default.
 
 There is no runtime evaluator mode. The harness measures what the agent does
@@ -29,18 +32,18 @@ The paired run creates a timestamped result directory:
 
 ```text
 results/<timestamp>/
-|-- benchmark_insights.md
-|-- metrics_report.html
-|-- metrics_report.md
-|-- pair_summary.json
+|-- scenario.json
+|-- run_plan.json
+|-- scenario_summary.json
+|-- reports/
+|   |-- scenario_report.json
+|   `-- scenario_report.md
 |-- records/
-|-- without_skills/
-`-- with_skills/
+|   `-- agent=.../model=.../workflow=.../job=.../repeat=01/mode=.../
 ```
 
-Read `benchmark_insights.md` first. It summarizes status, runtime, metrics, and
-failure analysis. Use `metrics_report.html` or `metrics_report.md` for the
-comparison table and charts.
+Read `reports/scenario_report.md` first. It summarizes scenario status,
+aggregate timing, quality-gate results, and the selected winner policy.
 
 ## Prerequisites
 
@@ -81,6 +84,12 @@ The build creates:
 - `nvflare-agent-benchmark:codex-baseline`
 - `nvflare-agent-benchmark:codex-skills`
 
+Select another supported agent at build time:
+
+```bash
+BENCHMARK_AGENT=claude ./bin/build.sh
+```
+
 Both images install NVFLARE from local wheels built from the checkout. The
 baseline image builds with packaged agent skills disabled. The skills image
 builds with packaged agent skills enabled.
@@ -98,6 +107,7 @@ BUILD_NVFLARE_WHEEL=false ./bin/build.sh
 ALLOW_EXISTING_WHEEL_FALLBACK=true ./bin/build.sh
 DOCKER_BUILD_NO_CACHE=true ./bin/build.sh
 CODEX_CLI_VERSION=0.137.0 ./bin/build.sh
+CLAUDE_CLI_VERSION=latest ./bin/build.sh
 NODE_IMAGE=node:22.16.0-bookworm-slim ./bin/build.sh
 UV_IMAGE=ghcr.io/astral-sh/uv:0.11.19 ./bin/build.sh
 ```
@@ -195,8 +205,67 @@ CODEX_MODEL=<model-name> \
   ./bin/run.sh pair --prompt ./prompt.txt /path/to/job-folder
 ```
 
-`BENCHMARK_AGENT` defaults to `codex`. Non-Codex adapters are not implemented
-yet; setting another value fails during build/run preflight.
+Select Claude:
+
+```bash
+BENCHMARK_AGENT=claude CLAUDE_MODEL=<model-name> \
+  ./bin/run.sh pair --prompt ./prompt.txt /path/to/job-folder
+```
+
+`BENCHMARK_AGENT` defaults to `codex`. Known but unimplemented agents such as
+Hermes and OpenClaw fail during build/run preflight.
+
+`pair` is a shortcut over the scenario/run-plan execution path. It writes the
+same canonical scenario records as `scenario`.
+
+## Run A Scenario
+
+Scenario YAML files describe agents, models, workflows, jobs, comparison type,
+and repeat count. The harness compiles them into `scenario.json` and
+`run_plan.json` before Docker execution:
+
+```bash
+./bin/run.sh scenario /path/to/scenario.yaml --output-dir /path/to/result-root
+```
+
+Runnable starting points are in `examples/` (`mode_ablation.yaml`,
+`model_comparison.yaml`). Edit the `prompt` and `jobs[].path` values, then:
+
+```bash
+./bin/run.sh scenario examples/mode_ablation.yaml --output-dir /path/to/result-root
+```
+
+The scenario command writes:
+
+```text
+result-root/
+|-- scenario.json
+|-- run_plan.json
+|-- scenario_summary.json
+|-- reports/
+|   |-- scenario_report.json
+|   `-- scenario_report.md
+`-- records/
+    `-- agent=<agent>/model=<model>/workflow=<workflow>/job=<job>/repeat=<NN>/mode=<mode>/
+```
+
+Each mode directory contains direct canonical artifacts such as
+`record_summary.json`, `agent_events.jsonl`, `agent_usage.json`,
+`agent_activity.json`, `agent_last_message.txt`, `agent_stderr.txt`,
+`agent_record.json`, and `benchmark_record.json`.
+
+## Replay Captured Results
+
+Use `replay` to regenerate parser artifacts, repeat summaries, scenario
+summaries, and scenario reports from an existing result root without invoking a
+live agent or Docker:
+
+```bash
+./bin/run.sh replay /path/to/result-root
+```
+
+Replay requires a `run_plan.json` in the result root and captured
+`agent_events.jsonl` files under the canonical records tree.
 
 ## Run One Mode
 
@@ -248,44 +317,45 @@ ls -la /workspace/prompts
 
 ## Result Layout
 
-Each mode directory contains the normalized run artifacts:
+Each scenario mode directory contains the normalized run artifacts:
 
 ```text
-with_skills/
+records/agent=<agent>/model=<model>/workflow=<workflow>/job=<job>/repeat=01/mode=with_skills/
 |-- agent_activity.json
 |-- agent_events.jsonl
+|-- agent_record.json
 |-- agent_last_message.txt
 |-- agent_stderr.txt
 |-- agent_usage.json
+|-- benchmark_record.json
 |-- container_exit_code.json
 |-- prompt.txt
 |-- prompt_metadata.json
 |-- records/
 |   |-- with_skills_agent_record.json
 |   `-- with_skills_record.json
+|-- record_summary.json
 |-- run_summary.json
 |-- timing.json
 |-- workspace_delta/
 `-- workspace_delta_manifest.json
 ```
 
-`without_skills/` has the same shape with `without_skills` record names.
+`without_skills` has the same shape with `without_skills` record names.
 
-The paired result root contains comparison-level files:
+The paired result root contains canonical scenario files:
 
 ```text
 results/<timestamp>/
-|-- benchmark_insights.md
 |-- console_output.log
 |-- host_report_status.json
-|-- metrics_report.html
-|-- metrics_report.json
-|-- metrics_report.md
-|-- pair_summary.json
-|-- records/
-|-- report_generator_status.json
-|-- without_skills/
-`-- with_skills/
+|-- scenario.json
+|-- run_plan.json
+|-- scenario_summary.json
+|-- reports/
+|   |-- scenario_report.json
+|   `-- scenario_report.md
+`-- records/
 ```
 
 For Codex compatibility, the harness also writes aliases such as
@@ -295,24 +365,25 @@ For Codex compatibility, the harness also writes aliases such as
 
 Start with these files:
 
-- `benchmark_insights.md`: human-readable comparison status, failure analysis,
-  and validation-metric alignment.
-- `metrics_report.html`: comparison table and charts.
-- `pair_summary.json`: machine-readable mode status summary.
-- `<mode>/run_summary.json`: normalized per-mode metrics, exit codes, and
-  quality signals.
-- `<mode>/agent_last_message.txt`: final agent response.
-- `<mode>/agent_stderr.txt`: agent stderr.
-- `<mode>/workspace_delta/`: generated files retained for review.
+- `reports/scenario_report.md`: human-readable scenario status, aggregate
+  results, quality-gate status, and winner policy.
+- `scenario_summary.json`: machine-readable scenario, comparison, and aggregate
+  summaries.
+- `records/.../mode=<mode>/record_summary.json`: normalized per-run metrics,
+  exit codes, prompt hash, and quality signals.
+- `records/.../mode=<mode>/agent_last_message.txt`: final agent response.
+- `records/.../mode=<mode>/agent_stderr.txt`: agent stderr.
+- `records/.../mode=<mode>/workspace_delta/`: generated files retained for
+  review.
 - `console_output.log`: complete host-side console log for paired runs.
 
 When a case fails, look for:
 
-- `<mode>/early_failure.json`
-- `<mode>/late_harness_failure.json`
-- `<mode>/container_exit_code.json`
-- `<mode>/agent_stderr.txt`
-- `<mode>/agent_last_message.txt`
+- `records/.../mode=<mode>/early_failure.json`
+- `records/.../mode=<mode>/late_harness_failure.json`
+- `records/.../mode=<mode>/container_exit_code.json`
+- `records/.../mode=<mode>/agent_stderr.txt`
+- `records/.../mode=<mode>/agent_last_message.txt`
 
 ## Environment Reference
 
@@ -321,10 +392,17 @@ When a case fails, look for:
 | `AGENT_BENCHMARK_RESULTS_ROOT` | Parent directory for timestamped results. Defaults to `./results`. |
 | `CODEX_DOCKER_RESULTS_ROOT` | Compatibility alias used only when `AGENT_BENCHMARK_RESULTS_ROOT` is unset. |
 | `CODEX_MODEL` | Codex model name passed to `codex exec`. |
-| `BENCHMARK_AGENT` | Agent name. Only `codex` is runnable today; unsupported values fail early. |
+| `CLAUDE_MODEL` | Claude model name passed to Claude Code. Required for Claude runs unless `BENCHMARK_AGENT_MODEL` is set. |
+| `BENCHMARK_AGENT_MODEL` | Agent-neutral model override used by scenario and direct runs. |
+| `BENCHMARK_AGENT` | Agent name. Supported values are `codex` and `claude`; unsupported values fail early. |
+| `BENCHMARK_JOB_SCALE` | Job scale used by `pair` compatibility scenarios. Defaults to `small`. |
 | `OPENAI_API_KEY` | Optional API key passed through to the container. |
+| `ANTHROPIC_API_KEY` | Optional Anthropic API key passed through to the container. |
+| `ANTHROPIC_AUTH_TOKEN` | Optional Anthropic auth token passed through to the container. |
 | `HOST_CODEX_HOME` | Host Codex config directory. Defaults to `~/.codex`. |
 | `MOUNT_HOST_CODEX_AUTH` | Mount host Codex auth/config files. Defaults to `true`. |
+| `HOST_CLAUDE_HOME` | Host Claude config directory. Defaults to `~/.claude`. |
+| `MOUNT_HOST_CLAUDE_AUTH` | Mount host Claude auth/config files. Defaults to `true`. |
 | `NVFLARE_REPO` | Checkout used for local wheel builds. |
 | `IMAGE_NAME` | Override skills runtime image. |
 | `BASELINE_IMAGE_NAME` | Override baseline runtime image. |
@@ -341,6 +419,7 @@ When a case fails, look for:
 | `BUILD_BASELINE_IMAGE` | Build the baseline image. Defaults to `true`. |
 | `DOCKER_BUILD_NO_CACHE` | Pass `--no-cache` to `docker build`. Defaults to `false`. |
 | `CODEX_CLI_VERSION` | Codex CLI npm package version installed in the image. |
+| `CLAUDE_CLI_VERSION` | Claude Code npm package version installed in the image. |
 | `NODE_IMAGE` | Base Node image build arg. |
 | `UV_IMAGE` | Base uv image build arg. |
 
@@ -391,7 +470,6 @@ No report generated:
 Check these files in the result root:
 
 - `host_report_status.json`
-- `report_generator_status.json`
 - `console_output.log`
 
 No validation metric in reports:
@@ -402,33 +480,36 @@ instead of inventing a value.
 
 Slow skills run:
 
-Compare `phase_seconds.agent_runtime`, `activity.command_count`,
+Compare `phase_seconds.agent_elapsed_seconds`, `activity.command_count`,
 `activity.command_prefix_counts`, and `activity.hint_counts` in each
 `run_summary.json`. Skill installation happens at image-build time, not during
 the measured agent run.
 
 Job dependency failure:
 
-Inspect `<mode>/agent_last_message.txt`, `<mode>/agent_stderr.txt`, and
-`<mode>/workspace_delta/`. The prompt should instruct the agent to install job
-dependencies from available requirements files when needed.
+Inspect `records/.../mode=<mode>/agent_last_message.txt`,
+`records/.../mode=<mode>/agent_stderr.txt`, and
+`records/.../mode=<mode>/workspace_delta/`. The prompt should instruct the
+agent to install job dependencies from available requirements files when needed.
 
 ## Harness Modules
 
 - `bin/build.sh`: thin wrapper around `harness.host.build`.
 - `bin/run.sh`: thin wrapper around `harness.host.runner`.
 - `docker/Dockerfile`: runtime image with Codex and NVFLARE wheels.
+- `harness/scenarios.py`: scenario validation, run-plan expansion, repeat
+  aggregation, and scenario reports.
 - `harness/host/`: Docker orchestration, path handling, image selection, and
-  report launching.
+  scenario execution.
 - `harness/container/`: in-container agent execution and artifact capture.
 - `harness/artifacts.py`, `events.py`, `records.py`, `timing.py`, and
   `quality_signals.py`: normalized measurement semantics.
-- `harness/reports/`: benchmark insights and metrics report generation.
+- `harness/reports/`: scenario report helpers and structure rendering.
 
 ## Current Limits
 
-- Only Codex is implemented.
-- Scenario YAML execution is design-stage and not the runnable path yet.
+- Codex and Claude adapters are implemented. Hermes and OpenClaw are registered
+  as known-pending adapters.
 - The harness does not require or validate a structured job schema.
 - The harness does not infer a framework or workflow from the job folder. The
   prompt and job documentation define the requested task.

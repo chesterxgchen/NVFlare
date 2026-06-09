@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -71,6 +72,29 @@ def test_claude_agent_config_uses_config_dir_and_valid_final_message_source():
     assert "model_argv" not in config.launch
 
 
+def test_adapter_template_rejects_positional_placeholders():
+    from harness.agents.config import render_string
+
+    try:
+        render_string("agent {}", {"agent": "codex"})
+    except ValueError as exc:
+        assert "positional" in str(exc)
+    else:
+        raise AssertionError("adapter templates should reject positional placeholders")
+
+
+def test_adapter_template_rejects_attribute_and_index_access():
+    from harness.agents.config import render_string
+
+    for template in ("{workspace_dir.parent}", "{argv[0]}"):
+        try:
+            render_string(template, {"workspace_dir": "workspace", "argv": ["agent"]})
+        except ValueError as exc:
+            assert "attribute or index access" in str(exc)
+        else:
+            raise AssertionError("adapter templates should reject attribute and index access")
+
+
 def test_claude_adapter_launch_spec_uses_stream_json_without_prompt_text(tmp_path):
     from harness.agents.base import AgentLaunchContext
     from harness.agents.registry import load_agent_adapter
@@ -116,6 +140,34 @@ def test_claude_adapter_requires_explicit_model():
         assert "CLAUDE_MODEL" in str(exc)
     else:
         raise AssertionError("Claude benchmark runs must require an explicit model")
+
+
+def test_runtime_env_uses_agent_run_config_model_explicit_field():
+    from harness.agents.registry import load_agent_adapter
+
+    class Config:
+        agent_model = "claude-test"
+        agent_model_was_explicit = True
+
+    env = load_agent_adapter("claude").runtime_env(Config())
+
+    assert env["BENCHMARK_AGENT_MODEL"] == "claude-test"
+
+
+def test_runtime_env_rejects_unexplicit_model_for_required_agent():
+    from harness.agents.registry import load_agent_adapter
+
+    class Config:
+        agent_model = "unspecified_default"
+        agent_model_was_explicit = False
+
+    try:
+        load_agent_adapter("claude").runtime_env(Config())
+    except ValueError as exc:
+        assert "requires an explicit benchmark model before runtime setup" in str(exc)
+        assert "CLAUDE_MODEL" in str(exc)
+    else:
+        raise AssertionError("availability/runtime setup should enforce required explicit models")
 
 
 def test_claude_launch_spec_rejects_unexplicit_model_context(tmp_path):
@@ -174,6 +226,14 @@ def test_claude_stream_parser_normalizes_event_usage_and_activity(tmp_path):
             "subtype": "success",
             "result": "Final AUROC 0.75",
             "total_cost_usd": 0.01,
+            "message": {
+                "usage": {
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                }
+            },
             "usage": {
                 "input_tokens": 100,
                 "output_tokens": 20,
@@ -204,6 +264,95 @@ def test_claude_stream_parser_normalizes_event_usage_and_activity(tmp_path):
     assert result_event["final_message"] == "Final AUROC 0.75"
     assistant_event = json.loads(events_path.read_text(encoding="utf-8").splitlines()[1])
     assert "command" not in assistant_event
+
+
+def test_claude_stream_usage_falls_back_when_result_usage_is_zero(tmp_path):
+    from harness.agents.registry import load_agent_adapter
+
+    adapter = load_agent_adapter("claude")
+    events_path = tmp_path / "agent_events.jsonl"
+    raw_events = [
+        {
+            "type": "assistant",
+            "message": {
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_creation_input_tokens": 2,
+                    "cache_read_input_tokens": 3,
+                }
+            },
+        },
+        {
+            "type": "result",
+            "subtype": "success",
+            "usage": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+        },
+    ]
+    with events_path.open("w", encoding="utf-8") as stream:
+        for raw_event in raw_events:
+            stream.write(json.dumps(adapter.normalize_event(json.dumps(raw_event))) + "\n")
+
+    usage = adapter.parse_usage(events_path)
+
+    assert usage["total_tokens"] == 20
+    assert usage["cache_tokens"] == 5
+    assert "no nonzero token fields" in usage["parser_warnings"][0]
+
+
+def test_claude_stream_usage_accumulates_multiple_result_events(tmp_path):
+    from harness.agents.registry import load_agent_adapter
+
+    adapter = load_agent_adapter("claude")
+    events_path = tmp_path / "agent_events.jsonl"
+    raw_events = [
+        {
+            "type": "assistant",
+            "message": {
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "cache_creation_input_tokens": 10,
+                    "cache_read_input_tokens": 20,
+                }
+            },
+        },
+        {
+            "type": "result",
+            "subtype": "success",
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "cache_creation_input_tokens": 1,
+                "cache_read_input_tokens": 2,
+            },
+        },
+        {
+            "type": "result",
+            "subtype": "success",
+            "usage": {
+                "input_tokens": 20,
+                "output_tokens": 7,
+                "cache_creation_input_tokens": 3,
+                "cache_read_input_tokens": 4,
+            },
+        },
+    ]
+    with events_path.open("w", encoding="utf-8") as stream:
+        for raw_event in raw_events:
+            stream.write(json.dumps(adapter.normalize_event(json.dumps(raw_event))) + "\n")
+
+    usage = adapter.parse_usage(events_path)
+
+    assert usage["total_tokens"] == 34
+    assert usage["cache_tokens"] == 7
+    assert usage["result_usage_objects_seen"] == 2
+    assert "final cumulative result usage was used" in usage["parser_warnings"][0]
 
 
 def test_claude_stream_parser_ignores_non_shell_tool_command_fields(tmp_path):
@@ -286,6 +435,49 @@ def test_claude_final_message_source_materializes_structured_result_event(tmp_pa
     assert metadata["parser_warnings"]
 
 
+def test_structured_final_message_not_read_when_stdout_reader_active(tmp_path):
+    from collections import deque
+
+    from harness.agents.registry import load_agent_adapter
+    from harness.container.agent_run import AgentRunConfig, materialize_final_message
+
+    adapter = load_agent_adapter("claude")
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+    config = AgentRunConfig(
+        mode="with_skills",
+        use_preinstalled_skills=True,
+        job_input_dir=tmp_path / "job",
+        result_dir=result_dir,
+        records_dir=result_dir / "records",
+        run_root=tmp_path / "run",
+        prompt_source=tmp_path / "prompt.txt",
+        progress_interval_seconds=0,
+        nvflare_image_kind="test-skills",
+        agent="claude",
+        agent_model="claude-test",
+        agent_home=tmp_path / ".claude",
+        agent_model_was_explicit=True,
+    )
+    with config.agent_events_path.open("w", encoding="utf-8") as stream:
+        stream.write(
+            json.dumps(
+                adapter.normalize_event(
+                    json.dumps({"type": "result", "subtype": "success", "result": "Final Claude response"})
+                )
+            )
+            + "\n"
+        )
+
+    materialize_final_message(config, adapter, deque(), stdout_tail_truncated=True)
+
+    assert config.agent_last_message_path.read_text(encoding="utf-8") == ""
+    metadata = json.loads((result_dir / "final_message_source.json").read_text(encoding="utf-8"))
+    assert metadata["status"] == "missing"
+    assert metadata["stdout_tail_truncated"] is True
+    assert "still active" in metadata["message"]
+
+
 def test_launch_spec_metadata_records_sandbox_flags_and_bypass_reason(tmp_path):
     from harness.agents.base import AgentLaunchSpec, SkillExposureResult
     from harness.container.agent_run import AgentRunConfig, write_launch_spec_metadata
@@ -359,6 +551,18 @@ def test_claude_exit_classifier_detects_auth_and_model_failures(tmp_path):
     assert auth_summary["failure_category"] == "agent_auth_failure"
     assert model_summary["failure_category"] == "agent_model_unsupported"
     assert permission_summary["failure_category"] == "agent_sandbox_or_approval_failure"
+
+
+def test_codex_exit_classifier_prioritizes_missing_cli_over_stderr_text(tmp_path):
+    from harness.agents.registry import load_agent_adapter
+
+    adapter = load_agent_adapter("codex")
+    stderr = tmp_path / "stderr.txt"
+    stderr.write_text("Authentication failed because command was not found.\n", encoding="utf-8")
+
+    summary = adapter.exit_summary(127, stderr)
+
+    assert summary["failure_category"] == "agent_cli_missing"
 
 
 def test_agent_config_rejects_unknown_parser_id(tmp_path):
@@ -521,6 +725,56 @@ def test_claude_adapter_build_auth_and_skill_exposure_contract(tmp_path):
     assert spec.metadata_files == []
 
 
+def test_adapter_auth_mounts_reject_path_components(tmp_path):
+    from types import SimpleNamespace
+
+    import yaml
+    from harness.agents.config import ConfigurableAgentAdapter
+
+    config_path = tmp_path / "bad-agent.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "name": "bad",
+                "display_name": "Bad",
+                "agent_home_env": "BAD_HOME",
+                "container_home": "/workspace/.bad",
+                "launch": {
+                    "argv": ["bad", "{prompt_file}"],
+                    "prompt_input_mode": "file_arg",
+                },
+                "skill_exposure": {"mechanism_type": "none"},
+                "final_message": {"source_type": "not_available"},
+                "events": {"parser": "generic_jsonl"},
+                "usage": {"parser": "generic_cli_usage"},
+                "activity": {"parser": "generic_jsonl_activity"},
+                "exit": {"classifier": "generic_cli"},
+                "auth": {"files": [{"source": "../token.json", "target": "token.json"}]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    adapter = ConfigurableAgentAdapter(config_path)
+
+    try:
+        adapter.auth_mounts(SimpleNamespace(host_agent_home=tmp_path))
+    except ValueError as exc:
+        assert "auth file source must be a file name" in str(exc)
+    else:
+        raise AssertionError("auth mount source paths should not escape the configured agent home")
+
+
+def test_docker_build_args_reject_embedded_equals():
+    from harness.host.build import render_agent_build_args
+
+    try:
+        render_agent_build_args({"AGENT_CLI_VERSION": "1.0=bad"})
+    except ValueError as exc:
+        assert "must not contain '='" in str(exc)
+    else:
+        raise AssertionError("Docker build arg values with embedded '=' should fail before docker build")
+
+
 def test_agent_config_rejects_prompt_text_placeholder(tmp_path):
     from harness.agents.config import AgentConfig
 
@@ -545,6 +799,38 @@ def test_agent_config_rejects_prompt_text_placeholder(tmp_path):
         assert "must not use {prompt_text}" in str(exc)
     else:
         raise AssertionError("agent adapter config must reject prompt_text injection paths")
+
+
+def test_agent_config_rejects_file_arg_without_prompt_file_placeholder(tmp_path):
+    from harness.agents.config import AgentConfig
+
+    config_path = tmp_path / "missing_prompt_file.yaml"
+    config_path.write_text(
+        json.dumps(
+            {
+                "name": "unsafe",
+                "display_name": "Unsafe Agent",
+                "default_model": "default",
+                "agent_home_env": "UNSAFE_HOME",
+                "container_home": "/workspace/.unsafe",
+                "launch": {"argv": ["unsafe", "run"], "prompt_input_mode": "file_arg"},
+                "skill_exposure": {"mechanism_type": "none"},
+                "final_message": {"source_type": "not_available"},
+                "events": {"parser": "generic_jsonl"},
+                "usage": {"parser": "generic_cli_usage"},
+                "activity": {"parser": "generic_jsonl_activity"},
+                "exit": {"classifier": "generic_cli"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        AgentConfig.load(config_path)
+    except ValueError as exc:
+        assert "must include {prompt_file}" in str(exc)
+    else:
+        raise AssertionError("file_arg prompt delivery must include the prompt file in argv")
 
 
 def test_codex_adapter_launch_spec_uses_prompt_file_without_prompt_text(tmp_path):
@@ -630,6 +916,20 @@ def test_container_config_requires_benchmark_agent(monkeypatch):
         raise AssertionError("in-container config should require explicit BENCHMARK_AGENT")
 
 
+def test_container_config_rejects_invalid_progress_interval(monkeypatch):
+    from harness.container.agent_run import AgentRunConfig
+
+    monkeypatch.setenv("BENCHMARK_AGENT", "codex")
+    monkeypatch.setenv("PROGRESS_INTERVAL_SECONDS", "fast")
+
+    try:
+        AgentRunConfig.from_env()
+    except SystemExit as exc:
+        assert "PROGRESS_INTERVAL_SECONDS must be an integer" in str(exc)
+    else:
+        raise AssertionError("invalid progress interval should fail with a clean config error")
+
+
 def test_agent_subprocess_env_hides_harness_controls_and_adapter_model_env(monkeypatch):
     from harness.agents.registry import load_agent_adapter
     from harness.container.agent_run import agent_subprocess_env
@@ -640,6 +940,7 @@ def test_agent_subprocess_env_hides_harness_controls_and_adapter_model_env(monke
     monkeypatch.setenv("BENCHMARK_AGENT", "codex")
     monkeypatch.setenv("BENCHMARK_AGENT_MODEL", "generic-model")
     monkeypatch.setenv("CODEX_MODEL", "legacy-model")
+    monkeypatch.setenv("AGENT_TIMEOUT_SECONDS", "120")
     monkeypatch.setenv("OPENAI_API_KEY", "kept-for-agent-auth")
 
     env = agent_subprocess_env({"CODEX_HOME": "/workspace/.codex"}, adapter)
@@ -649,8 +950,19 @@ def test_agent_subprocess_env_hides_harness_controls_and_adapter_model_env(monke
     assert "BENCHMARK_AGENT" not in env
     assert "BENCHMARK_AGENT_MODEL" not in env
     assert "CODEX_MODEL" not in env
+    assert "AGENT_TIMEOUT_SECONDS" not in env
     assert env["OPENAI_API_KEY"] == "kept-for-agent-auth"
     assert env["CODEX_HOME"] == "/workspace/.codex"
+
+
+def test_launch_subprocess_argv_wraps_login_shell_command():
+    from harness.container.agent_run import launch_subprocess_argv
+
+    argv = launch_subprocess_argv(["agent", "run", "prompt with spaces"], login_shell=True)
+
+    assert argv[:3] == ["/bin/bash", "--login", "-c"]
+    assert argv[3].startswith("exec agent run")
+    assert "'prompt with spaces'" in argv[3]
 
 
 def test_run_agent_enforces_launch_timeout(tmp_path, monkeypatch):
@@ -710,6 +1022,245 @@ def test_run_agent_enforces_launch_timeout(tmp_path, monkeypatch):
     assert "timed out after 1 seconds" in config.agent_stderr_path.read_text(encoding="utf-8")
 
 
+def test_run_agent_stops_stdout_reader_before_events_file_closes(tmp_path, monkeypatch):
+    import threading
+    import time
+
+    from harness.agents.base import AgentLaunchSpec, FinalMessageSource
+    from harness.container import agent_run
+    from harness.container.agent_run import AgentRunConfig, ProgressWriter, run_agent
+
+    class GuardedEventsDest:
+        def __init__(self):
+            self.closed = False
+            self.write_after_close = False
+            self.writes: list[str] = []
+
+        def __str__(self):
+            return "guarded-agent-events.jsonl"
+
+        def open(self, *args, **kwargs):
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            self.closed = True
+            return False
+
+        def write(self, value):
+            if self.closed:
+                self.write_after_close = True
+            self.writes.append(value)
+
+        def flush(self):
+            return None
+
+    normalize_started = threading.Event()
+    release_normalize = threading.Event()
+    guarded_events = GuardedEventsDest()
+
+    class SlowNormalizeAdapter:
+        def launch_spec(self, config):
+            return AgentLaunchSpec(
+                argv=[sys.executable, "-c", 'print(\'{"type":"event"}\')'],
+                cwd=config.workspace_dir,
+                prompt_file=config.prompt_file,
+                prompt_input_mode="stdin",
+                stdout_events_dest=guarded_events,
+                stderr_dest=config.stderr_dest,
+                final_message_dest=config.final_message_dest,
+            )
+
+        def normalize_event(self, raw_line):
+            normalize_started.set()
+            release_normalize.wait(timeout=2)
+            return {"type": "event"}
+
+        def final_message_source(self, result_dir):
+            return FinalMessageSource(source_type="not_available")
+
+        def model_env_names(self):
+            return ()
+
+    result_dir = tmp_path / "results"
+    run_root = tmp_path / "run"
+    result_dir.mkdir()
+    (run_root / "workspace").mkdir(parents=True)
+    prompt = result_dir / "prompt.txt"
+    prompt.write_text("prompt\n", encoding="utf-8")
+    config = AgentRunConfig(
+        mode="with_skills",
+        use_preinstalled_skills=True,
+        job_input_dir=tmp_path / "job",
+        result_dir=result_dir,
+        records_dir=result_dir / "records",
+        run_root=run_root,
+        prompt_source=prompt,
+        progress_interval_seconds=0,
+        nvflare_image_kind="test-skills",
+        agent="test",
+        agent_model="test-model",
+        agent_home=tmp_path / ".agent",
+        agent_model_was_explicit=False,
+    )
+    monkeypatch.setattr(agent_run, "AGENT_TERMINATE_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr(agent_run, "load_agent_adapter", lambda _agent: SlowNormalizeAdapter())
+
+    _start, _end, exit_code = run_agent(config, ProgressWriter(config.mode, 0, config.progress_log_path))
+    assert normalize_started.is_set()
+    assert exit_code == 0
+
+    release_normalize.set()
+    time.sleep(0.1)
+
+    assert guarded_events.closed is True
+    assert guarded_events.write_after_close is False
+
+
+def test_run_agent_closes_stdout_pipe_when_reader_is_blocked(tmp_path, monkeypatch):
+    import threading
+
+    from harness.agents.base import AgentLaunchSpec, FinalMessageSource
+    from harness.container import agent_run
+    from harness.container.agent_run import AgentRunConfig, ProgressWriter, run_agent
+
+    class BlockingStdout:
+        def __init__(self):
+            self.closed = False
+            self.close_event = threading.Event()
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            self.close_event.wait(timeout=2)
+            raise StopIteration
+
+        def close(self):
+            self.closed = True
+            self.close_event.set()
+
+    blocked_stdout = BlockingStdout()
+
+    class FakeProcess:
+        stdout = blocked_stdout
+
+        def wait(self, timeout=None):
+            return 0
+
+    class BlockedReaderAdapter:
+        def launch_spec(self, config):
+            return AgentLaunchSpec(
+                argv=[sys.executable, "-c", "pass"],
+                cwd=config.workspace_dir,
+                prompt_file=config.prompt_file,
+                prompt_input_mode="stdin",
+                stdout_events_dest=config.events_dest,
+                stderr_dest=config.stderr_dest,
+                final_message_dest=config.final_message_dest,
+            )
+
+        def normalize_event(self, raw_line):
+            return {"type": "event"}
+
+        def final_message_source(self, result_dir):
+            return FinalMessageSource(source_type="not_available")
+
+        def model_env_names(self):
+            return ()
+
+    result_dir = tmp_path / "results"
+    run_root = tmp_path / "run"
+    result_dir.mkdir()
+    (run_root / "workspace").mkdir(parents=True)
+    prompt = result_dir / "prompt.txt"
+    prompt.write_text("prompt\n", encoding="utf-8")
+    config = AgentRunConfig(
+        mode="with_skills",
+        use_preinstalled_skills=True,
+        job_input_dir=tmp_path / "job",
+        result_dir=result_dir,
+        records_dir=result_dir / "records",
+        run_root=run_root,
+        prompt_source=prompt,
+        progress_interval_seconds=0,
+        nvflare_image_kind="test-skills",
+        agent="test",
+        agent_model="test-model",
+        agent_home=tmp_path / ".agent",
+        agent_model_was_explicit=False,
+    )
+    monkeypatch.setattr(agent_run, "AGENT_TERMINATE_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr(agent_run, "load_agent_adapter", lambda _agent: BlockedReaderAdapter())
+    monkeypatch.setattr(agent_run.subprocess, "Popen", lambda *args, **kwargs: FakeProcess())
+
+    _start, _end, exit_code = run_agent(config, ProgressWriter(config.mode, 0, config.progress_log_path))
+
+    assert exit_code == 0
+    assert blocked_stdout.closed is True
+
+
+def test_run_agent_materializes_final_message_before_reader_error(tmp_path, monkeypatch):
+    from harness.agents.base import AgentLaunchSpec, FinalMessageSource
+    from harness.container import agent_run
+    from harness.container.agent_run import AgentRunConfig, ProgressWriter, run_agent
+
+    class ReaderErrorAdapter:
+        def launch_spec(self, config):
+            return AgentLaunchSpec(
+                argv=[sys.executable, "-c", "print('partial final message')"],
+                cwd=config.workspace_dir,
+                prompt_file=config.prompt_file,
+                prompt_input_mode="stdin",
+                stdout_events_dest=config.events_dest,
+                stderr_dest=config.stderr_dest,
+                final_message_dest=config.final_message_dest,
+            )
+
+        def normalize_event(self, raw_line):
+            raise ValueError("bad event")
+
+        def final_message_source(self, result_dir):
+            return FinalMessageSource(source_type="stdout_tail", tail_bytes=100, parser="generic_stdout_last_message")
+
+        def model_env_names(self):
+            return ()
+
+    result_dir = tmp_path / "results"
+    run_root = tmp_path / "run"
+    result_dir.mkdir()
+    (run_root / "workspace").mkdir(parents=True)
+    prompt = result_dir / "prompt.txt"
+    prompt.write_text("prompt\n", encoding="utf-8")
+    config = AgentRunConfig(
+        mode="with_skills",
+        use_preinstalled_skills=True,
+        job_input_dir=tmp_path / "job",
+        result_dir=result_dir,
+        records_dir=result_dir / "records",
+        run_root=run_root,
+        prompt_source=prompt,
+        progress_interval_seconds=0,
+        nvflare_image_kind="test-skills",
+        agent="test",
+        agent_model="test-model",
+        agent_home=tmp_path / ".agent",
+        agent_model_was_explicit=False,
+    )
+    monkeypatch.setattr(agent_run, "load_agent_adapter", lambda _agent: ReaderErrorAdapter())
+
+    try:
+        run_agent(config, ProgressWriter(config.mode, 0, config.progress_log_path))
+    except RuntimeError as exc:
+        assert "Failed to read agent stdout" in str(exc)
+    else:
+        raise AssertionError("reader errors should still propagate after final message materialization")
+
+    assert config.agent_last_message_path.read_text(encoding="utf-8") == "partial final message\n"
+
+
 def test_materialize_final_message_from_stdout_tail(tmp_path):
     from collections import deque
 
@@ -738,12 +1289,138 @@ def test_materialize_final_message_from_stdout_tail(tmp_path):
         agent_model_was_explicit=False,
     )
 
-    materialize_final_message(config, StdoutAdapter(), deque(["first line\n", "final message\n"]))
+    materialize_final_message(
+        config,
+        StdoutAdapter(),
+        deque(["first line\n", "final message\n"]),
+        stdout_tail_truncated=True,
+    )
 
     assert config.agent_last_message_path.read_text(encoding="utf-8") == "nal message\n"
     metadata = json.loads((result_dir / "final_message_source.json").read_text(encoding="utf-8"))
     assert metadata["source_type"] == "stdout_tail"
     assert metadata["status"] == "materialized"
+    assert metadata["stdout_tail_truncated"] is True
+
+
+def test_collect_report_artifacts_skips_symlinks(tmp_path):
+    from harness.artifacts import collect_report_artifacts
+
+    root = tmp_path / "results"
+    root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret\n", encoding="utf-8")
+    root.joinpath("leak.txt").symlink_to(outside)
+    root.joinpath("kept.txt").write_text("normal\n", encoding="utf-8")
+
+    artifacts = collect_report_artifacts(root)
+
+    assert {item["relative_path"] for item in artifacts} == {"kept.txt"}
+
+
+def test_parse_usage_activity_scans_hints_from_raw_line_without_json_reserialize(tmp_path, monkeypatch):
+    from harness import events
+
+    events_path = tmp_path / "events.jsonl"
+    events_path.write_text(json.dumps({"type": "turn", "message": "read SKILL.md"}) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(events.json, "dumps", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unused")))
+
+    _usage, activity = events.parse_usage_and_activity_data(events_path)
+
+    assert activity["hint_counts"]["skill_md"] == 1
+
+
+def test_parse_usage_activity_caps_command_list(tmp_path):
+    from harness import events
+
+    events_path = tmp_path / "events.jsonl"
+    with events_path.open("w", encoding="utf-8") as stream:
+        for index in range(events.MAX_ACTIVITY_COMMANDS + 3):
+            stream.write(json.dumps({"type": "turn", "cmd": f"python job.py --round {index}"}) + "\n")
+
+    _usage, activity = events.parse_usage_and_activity_data(events_path)
+
+    assert activity["command_count"] == events.MAX_ACTIVITY_COMMANDS + 3
+    assert len(activity["commands"]) == events.MAX_ACTIVITY_COMMANDS
+    assert activity["unique_command_count"] == events.MAX_ACTIVITY_COMMANDS + 3
+    assert activity["commands_truncated"] is True
+
+
+def test_prepare_input_workspace_rejects_symlink_escaping_input(tmp_path):
+    from harness.container.agent_run import AgentRunConfig, prepare_input_workspace
+
+    job = tmp_path / "job"
+    job.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret\n", encoding="utf-8")
+    job.joinpath("escape.txt").symlink_to(outside)
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+    config = AgentRunConfig(
+        mode="with_skills",
+        use_preinstalled_skills=True,
+        job_input_dir=job,
+        result_dir=result_dir,
+        records_dir=result_dir / "records",
+        run_root=tmp_path / "run",
+        prompt_source=tmp_path / "prompt.txt",
+        progress_interval_seconds=0,
+        nvflare_image_kind="test-skills",
+        agent="test",
+        agent_model="test-model",
+        agent_home=tmp_path / ".agent",
+        agent_model_was_explicit=False,
+    )
+
+    try:
+        prepare_input_workspace(config)
+    except RuntimeError as exc:
+        assert "symlink escapes input directory" in str(exc)
+    else:
+        raise AssertionError("job input symlinks that escape the input directory should be rejected")
+
+
+def test_prepare_prompt_hashes_copied_prompt_file(tmp_path):
+    from harness.container.agent_run import AgentRunConfig, prepare_prompt
+
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("convert this job\n", encoding="utf-8")
+    config = AgentRunConfig(
+        mode="with_skills",
+        use_preinstalled_skills=True,
+        job_input_dir=tmp_path / "job",
+        result_dir=result_dir,
+        records_dir=result_dir / "records",
+        run_root=tmp_path / "run",
+        prompt_source=prompt,
+        progress_interval_seconds=0,
+        nvflare_image_kind="test-skills",
+        agent="test",
+        agent_model="test-model",
+        agent_home=tmp_path / ".agent",
+        agent_model_was_explicit=False,
+    )
+
+    prepare_prompt(config)
+
+    copied = config.prompt_file_path.read_bytes()
+    metadata = json.loads((result_dir / "prompt_metadata.json").read_text(encoding="utf-8"))
+    expected_hash = hashlib.sha256(copied).hexdigest()
+    assert metadata["template_sha256"] == expected_hash
+    assert metadata["prompt_sha256"] == expected_hash
+    assert metadata["template_bytes"] == len(copied)
+    assert metadata["prompt_bytes"] == len(copied)
+    assert metadata["verbatim_copy"] is True
+
+
+def test_expand_home_path_uses_pathlib_expanduser():
+    from harness.host.common import expand_home_path
+
+    assert expand_home_path("~/nvflare") == str(Path.home() / "nvflare")
+    assert expand_home_path("/workspace/input") == "/workspace/input"
 
 
 def test_agent_availability_probe_records_missing_cli(tmp_path, monkeypatch):
@@ -848,6 +1525,76 @@ def test_host_docker_args_use_migrated_container_entrypoint(tmp_path):
     assert "RECORDS_DIR=/workspace/results/records" in args
 
 
+def test_enforce_result_size_budget_reports_oversized_results(tmp_path):
+    from harness.agents.registry import load_agent_adapter
+    from harness.host.common import CaseConfig, ImageConfig
+    from harness.host.runner import enforce_result_size_budget
+
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+    result_dir.joinpath("large.txt").write_text("too large\n", encoding="utf-8")
+    config = CaseConfig(
+        mode="with_skills",
+        use_preinstalled_skills=True,
+        job_input_dir=tmp_path / "job",
+        result_dir=result_dir,
+        prompt_path=tmp_path / "prompt.txt",
+        images=ImageConfig(
+            image_name="nvflare-agent-benchmark:codex-skills",
+            baseline_image_name="nvflare-agent-benchmark:codex-baseline",
+            report_image_name="nvflare-agent-benchmark:codex-skills",
+        ),
+        progress_interval_seconds="0",
+        agent="codex",
+        agent_model="unspecified_default",
+        model_was_explicit=False,
+        adapter=load_agent_adapter("codex"),
+        host_agent_home=tmp_path / ".codex",
+        mount_host_agent_auth=False,
+        result_size_budget_bytes=1,
+    )
+
+    assert enforce_result_size_budget(config) is True
+    payload = json.loads((result_dir / "result_size_budget.json").read_text(encoding="utf-8"))
+    assert payload["status"] == "fail"
+    assert payload["budget_bytes"] == 1
+
+
+def test_case_config_for_entry_applies_resource_policy(tmp_path, monkeypatch):
+    from harness.host import runner
+
+    entry = {
+        "agent": "codex",
+        "mode": "with_skills",
+        "skills_enabled": True,
+        "job_path": str(tmp_path / "job"),
+        "record_dir": "records/run",
+        "prompt_source": str(tmp_path / "prompt.txt"),
+        "agent_model": "unspecified_default",
+        "model_source": "adapter_default",
+        "resource_policy": {
+            "agent_timeout_seconds": 11,
+            "container_timeout_seconds": 22,
+            "result_size_budget_bytes": 33,
+        },
+    }
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / ".codex"))
+
+    config = runner.case_config_for_entry(entry, tmp_path / "results")
+
+    assert config.agent_timeout_seconds == 11
+    assert config.container_timeout_seconds == 22
+    assert config.result_size_budget_bytes == 33
+
+
+def test_positive_numeric_timeout_accepts_float_values():
+    from harness.host.runner import positive_numeric_timeout
+
+    assert positive_numeric_timeout(1800.0) == 1800
+    assert positive_numeric_timeout(0.0) is None
+    assert positive_numeric_timeout(True) is None
+
+
 def test_host_cli_accepts_results_root(tmp_path):
     from harness.host.common import parse_host_cli_options
 
@@ -867,6 +1614,67 @@ def test_host_cli_accepts_results_root(tmp_path):
     assert options.results_root == results_root
     assert options.result_root is None
     assert options.result_dir is None
+
+
+def test_default_results_root_uses_codex_compat_alias(monkeypatch, tmp_path):
+    from harness.host.common import default_results_root
+
+    compat_root = tmp_path / "compat-results"
+    monkeypatch.delenv("AGENT_BENCHMARK_RESULTS_ROOT", raising=False)
+    monkeypatch.setenv("CODEX_DOCKER_RESULTS_ROOT", str(compat_root))
+
+    assert default_results_root() == compat_root
+
+
+def test_pair_compilation_accepts_explicit_absolute_prompt_path(tmp_path):
+    from harness.host.common import parse_host_cli_options
+    from harness.host.runner import pair_compilation_from_options
+
+    job_input = tmp_path / "job"
+    prompt = tmp_path / "prompt.txt"
+    results_root = tmp_path / "bench-results"
+    job_input.mkdir()
+    prompt.write_text("convert this job\n", encoding="utf-8")
+    options = parse_host_cli_options(
+        ["--prompt", str(prompt), "--results-root", str(results_root), "--training-code", str(job_input)],
+        "pair",
+    )
+
+    compilation = pair_compilation_from_options(options)
+
+    assert compilation.scenario["prompt"]["path"] == str(prompt.resolve())
+
+
+def test_run_pair_returns_failure_for_any_run_id_status(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from harness.host import runner
+
+    job_input = tmp_path / "job"
+    prompt = tmp_path / "prompt.txt"
+    result_root = tmp_path / "results"
+    job_input.mkdir()
+    prompt.write_text("convert this job\n", encoding="utf-8")
+    monkeypatch.setattr(
+        runner.ImageConfig,
+        "from_env",
+        classmethod(
+            lambda cls: SimpleNamespace(
+                image_name="skills-image",
+                baseline_image_name="baseline-image",
+                report_image_name="report-image",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "execute_run_plan",
+        lambda *args, **kwargs: ({"run_00001": 1, "run_00002": 0}, {"status": "ok"}),
+    )
+
+    status = runner.run_pair(["--prompt", str(prompt), "--output-dir", str(result_root), str(job_input)])
+
+    assert status == 1
 
 
 def test_host_cli_output_dir_maps_to_exact_result_location(tmp_path):
@@ -987,6 +1795,7 @@ def test_skill_exposure_carries_launch_args_and_environment(tmp_path):
     result = apply_skill_exposure(
         spec=SkillExposureSpec(
             mechanism_type="launch_flag",
+            container_home=tmp_path,
             skill_root=skill_root,
             launch_args=["--add-dir", str(skill_root)],
             environment={"AGENT_SKILLS_DIR": str(skill_root)},
@@ -1032,6 +1841,61 @@ def test_skill_exposure_rejects_skill_root_outside_container_home(tmp_path):
     assert state["skill_root"] == str(outside)
 
 
+def test_skill_exposure_requires_container_home_when_skill_root_is_configured(tmp_path):
+    from harness.agents.base import SkillExposureSpec
+    from harness.container.skills import apply_skill_exposure
+
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+    skill_root = tmp_path / "skills"
+
+    try:
+        apply_skill_exposure(
+            spec=SkillExposureSpec(mechanism_type="preinstalled_home", skill_root=skill_root),
+            skills_enabled=False,
+            result_dir=result_dir,
+            nvflare_image_kind="test-baseline",
+        )
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("configured skill_root without container_home should fail before removal")
+
+    state = json.loads((result_dir / "skills_state.json").read_text(encoding="utf-8"))
+    assert state["reason"] == "container_home_required_for_skill_root"
+
+
+def test_skill_exposure_rejects_bundled_root_outside_workspace(tmp_path):
+    from harness.agents.base import SkillExposureSpec
+    from harness.container.skills import apply_skill_exposure
+
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+    container_home = tmp_path / "home"
+    skill_root = container_home / "skills"
+
+    try:
+        apply_skill_exposure(
+            spec=SkillExposureSpec(
+                mechanism_type="preinstalled_home",
+                container_home=container_home,
+                skill_root=skill_root,
+                disable_packaged_source=True,
+            ),
+            skills_enabled=False,
+            result_dir=result_dir,
+            nvflare_image_kind="test-baseline",
+            bundled_skills_root=lambda: str(tmp_path / "unsafe-bundled-source"),
+        )
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("out-of-scope bundled skill root should fail before removal")
+
+    state = json.loads((result_dir / "skills_state.json").read_text(encoding="utf-8"))
+    assert state["reason"] == "bundled_skill_source_outside_workspace"
+
+
 def test_copy_optional_metadata_files_strips_nvflare_prefix(tmp_path):
     from harness.container.agent_run import copy_optional_metadata_files
 
@@ -1057,6 +1921,75 @@ def test_copy_optional_metadata_files_strips_nvflare_prefix(tmp_path):
     assert payload["missing"] == [str(source_dir / "nvflare_skills_build_install.json")]
 
 
+def test_copy_optional_metadata_files_rejects_path_traversal(tmp_path):
+    from harness.container.agent_run import copy_optional_metadata_files
+
+    source_dir = tmp_path / "source"
+    result_dir = tmp_path / "results"
+    source_dir.mkdir()
+    result_dir.mkdir()
+
+    try:
+        copy_optional_metadata_files(source_dir, result_dir, ("../unsafe.json",))
+    except ValueError as exc:
+        assert "path separators" in str(exc)
+    else:
+        raise AssertionError("metadata file names must not traverse outside the source dir")
+
+
+def test_infer_from_events_scores_installed_skill_names_in_single_pass(monkeypatch):
+    from harness import records
+
+    monkeypatch.setattr(records, "available_skill_names", lambda: {"nvflare-a", "nvflare-b"})
+
+    inferred = records.infer_from_events("nvflare-a did work. nvflare-b helped. nvflare-b finished.")
+
+    assert inferred["skill"] == "nvflare-b"
+    assert inferred["skill_source"] == "installed_skill_name_seen_in_events"
+
+
+def test_infer_from_events_uses_case_id_boundaries(monkeypatch):
+    from harness import records
+
+    monkeypatch.setattr(records, "available_skill_names", lambda: {"nvflare-a"})
+    monkeypatch.setattr(records, "eval_case_ids_for_skill", lambda _skill: ["basic", "basic-v2"])
+
+    inferred = records.infer_from_events("nvflare-a ran case basic-v2 successfully.")
+
+    assert inferred["case_id"] == "basic-v2"
+
+
+def test_iter_json_records_enforces_file_count_limit(tmp_path, monkeypatch):
+    from harness import records
+
+    for index in range(3):
+        (tmp_path / f"record-{index}.json").write_text(
+            json.dumps({"skill": "nvflare-test", "case_id": f"case-{index}"}),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(records, "MAX_JSON_RECORD_FILES", 1)
+
+    loaded = list(records.iter_json_records(tmp_path))
+
+    assert len(loaded) == 1
+
+
+def test_iter_json_records_skips_oversized_json_files(tmp_path, monkeypatch):
+    from harness import records
+
+    small = tmp_path / "small.json"
+    small.write_text(json.dumps({"skill": "nvflare-test"}), encoding="utf-8")
+    (tmp_path / "large.json").write_text(
+        json.dumps({"skill": "nvflare-large-value-that-exceeds-the-limit"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(records, "MAX_JSON_RECORD_FILE_BYTES", small.stat().st_size)
+
+    loaded = list(records.iter_json_records(tmp_path))
+
+    assert [record["skill"] for _path, record in loaded] == ["nvflare-test"]
+
+
 def test_login_shell_runtime_probe_uses_configured_venv_path(monkeypatch):
     from harness.container import agent_run
 
@@ -1080,6 +2013,52 @@ def test_login_shell_runtime_probe_uses_configured_venv_path(monkeypatch):
     assert probe["ok"] is True
     assert probe["expected_python"] == "/custom/venv/bin/python"
     assert probe["expected_nvflare"] == "/custom/venv/bin/nvflare"
+
+
+def test_runtime_metadata_skips_login_shell_probe_when_launch_does_not_require_it(tmp_path, monkeypatch):
+    from harness.agents.base import AgentLaunchSpec
+    from harness.container import agent_run
+    from harness.container.agent_run import AgentRunConfig, persist_container_runtime_metadata
+
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+    config = AgentRunConfig(
+        mode="with_skills",
+        use_preinstalled_skills=True,
+        job_input_dir=tmp_path / "job",
+        result_dir=result_dir,
+        records_dir=result_dir / "records",
+        run_root=tmp_path / "run",
+        prompt_source=tmp_path / "prompt.txt",
+        progress_interval_seconds=0,
+        nvflare_image_kind="test-skills",
+        agent="test",
+        agent_model="test-model",
+        agent_home=tmp_path / ".agent",
+        agent_model_was_explicit=False,
+    )
+    launch = AgentLaunchSpec(
+        argv=["agent", "run"],
+        cwd=tmp_path,
+        prompt_file=tmp_path / "prompt.txt",
+        prompt_input_mode="stdin",
+        stdout_events_dest=result_dir / "agent_events.jsonl",
+        stderr_dest=result_dir / "agent_stderr.txt",
+        final_message_dest=result_dir / "agent_last_message.txt",
+        login_shell=False,
+    )
+    monkeypatch.setattr(agent_run, "command_output", lambda _command: None)
+
+    def fail_probe():
+        raise AssertionError("login shell probe should be skipped")
+
+    monkeypatch.setattr(agent_run, "login_shell_runtime_probe", fail_probe)
+
+    persist_container_runtime_metadata(config, launch)
+
+    metadata = json.loads((result_dir / "runtime_image.json").read_text(encoding="utf-8"))
+    assert metadata["login_shell_required"] is False
+    assert metadata["login_shell_runtime_probe"]["reason"] == "skipped_adapter_does_not_use_login_shell"
 
 
 def test_finalize_timing_uses_named_lifecycle_epochs(tmp_path):
@@ -1480,6 +2459,48 @@ def test_job_guidance_metric_alignment_uses_non_readme_docs(tmp_path):
     assert signal["reported_validation_metric"]["name"] == "accuracy"
 
 
+def test_job_guidance_dedupes_symlinks_when_resolve_fails(tmp_path, monkeypatch):
+    from harness import records
+
+    job = tmp_path / "job"
+    job.mkdir()
+    job.joinpath("target.md").write_text("Target validation metric: accuracy.\n", encoding="utf-8")
+    left = job / "readme-left.md"
+    right = job / "readme-right.md"
+    try:
+        left.symlink_to("target.md")
+        right.symlink_to("target.md")
+    except (OSError, NotImplementedError):
+        return
+    original_resolve = Path.resolve
+
+    def flaky_resolve(path, *args, **kwargs):
+        if path in {left, right}:
+            raise OSError("synthetic resolve failure")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", flaky_resolve)
+
+    sources, guidance_text = records.discover_job_guidance(job)
+
+    assert len(sources) == 1
+    assert guidance_text.count("Target validation metric") == 1
+
+
+def test_job_guidance_skips_oversized_guidance_files(tmp_path):
+    from harness.records import MAX_GUIDANCE_FILE_BYTES, discover_job_guidance
+
+    job = tmp_path / "job"
+    job.mkdir()
+    with job.joinpath("README.md").open("wb") as stream:
+        stream.truncate(MAX_GUIDANCE_FILE_BYTES + 1)
+
+    sources, guidance_text = discover_job_guidance(job)
+
+    assert sources == []
+    assert guidance_text == ""
+
+
 def test_job_guidance_metric_alignment_includes_prompt(tmp_path):
     from harness.quality_signals import metric_signal
     from harness.records import discover_job_guidance
@@ -1581,6 +2602,14 @@ def test_metric_mismatch_reports_actual_metric_without_marking_missing():
     assert "accuracy 0.8123" in missing_result_metrics_section(runs, [NO_SKILLS_MODE])
     assert "no parseable validation metric" not in missing_result_metrics_section(runs, [NO_SKILLS_MODE])
     assert "| Metrics (accuracy) | accuracy 0.8123 |" in outcome_metrics_table(runs, [NO_SKILLS_MODE])
+
+
+def test_metric_mismatch_evidence_includes_integer_metric_value():
+    from harness.quality_signals import format_metric_value
+
+    assert format_metric_value(1) == " 1."
+    assert format_metric_value(1.0) == " 1.0000."
+    assert format_metric_value(None) == "."
 
 
 def test_missing_target_metric_section_reports_observed_alternate_metrics():
@@ -1877,27 +2906,6 @@ def test_structure_tree_renderer_uses_tree_format():
     assert "`-- runtime_job_config" in tree
     assert "        `-- ames_fedavg" in tree
     assert "- runtime_job_config/ames_fedavg" not in tree
-
-
-def test_pair_summary_prints_compact_status_line(tmp_path, capsys):
-    from harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
-    from harness.reports.summaries import write_pair_summary
-
-    for mode, elapsed in ((NO_SKILLS_MODE, 12.3), (WITH_SKILLS_MODE, 34.5)):
-        mode_dir = tmp_path / mode
-        mode_dir.mkdir()
-        (mode_dir / "run_summary.json").write_text(
-            json.dumps({"elapsed_seconds": elapsed, "all_metrics": {}}) + "\n",
-            encoding="utf-8",
-        )
-
-    write_pair_summary(tmp_path, {NO_SKILLS_MODE: 0, WITH_SKILLS_MODE: 1})
-
-    output = capsys.readouterr().out.strip()
-    assert output.startswith("Pair summary written:")
-    assert "without_skills: exit=0, elapsed=12.3s" in output
-    assert "with_skills: exit=1, elapsed=34.5s" in output
-    assert not output.startswith("{")
 
 
 def test_run_summary_uses_agent_keys_without_codex_aliases(tmp_path):

@@ -137,26 +137,26 @@ def write_workspace_baseline(workspace_root: Path, out: Path) -> None:
     )
 
 
-def copy_limited(src: Path, dst: Path, copied_state: dict[str, int], skipped: list[dict[str, Any]]) -> bool:
+def copy_limited(src: Path, dst: Path, copied_state: dict[str, int], skipped: list[dict[str, Any]]) -> int | None:
     try:
         size = src.stat().st_size
     except OSError as exc:
         skipped.append({"path": str(src), "reason": f"stat_failed:{exc}"})
-        return False
+        return None
     if size > WORKSPACE_MAX_FILE_BYTES:
         skipped.append({"path": str(src), "reason": "file_size_limit", "size_bytes": size})
-        return False
+        return None
     if copied_state["files"] >= WORKSPACE_MAX_FILES:
         skipped.append({"path": str(src), "reason": "file_count_limit", "size_bytes": size})
-        return False
+        return None
     if copied_state["bytes"] + size > WORKSPACE_MAX_TOTAL_BYTES:
         skipped.append({"path": str(src), "reason": "total_size_limit", "size_bytes": size})
-        return False
+        return None
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
     copied_state["files"] += 1
     copied_state["bytes"] += size
-    return True
+    return size
 
 
 def capture_workspace_delta(
@@ -204,11 +204,12 @@ def capture_workspace_delta(
         if before and before.get("sha256") == file_hash:
             continue
         status = "modified" if before else "added"
-        if copy_limited(path, changed_root / rel_path, copied_state, skipped_files):
+        copied_size = copy_limited(path, changed_root / rel_path, copied_state, skipped_files)
+        if copied_size is not None:
             entry = {
                 "path": rel,
                 "status": status,
-                "size_bytes": size,
+                "size_bytes": copied_size,
                 "sha256": file_hash,
                 "artifact_path": (changed_root / rel_path).relative_to(delta_root).as_posix(),
             }
@@ -239,18 +240,16 @@ def capture_workspace_delta(
                 if should_skip_rel(rel_path) or not is_source_like(path, include_logs=True):
                     continue
                 dst = runtime_root / label / rel_path
-                before_files = copied_state["files"]
-                if copy_limited(path, dst, copied_state, skipped_files):
+                copied_size = copy_limited(path, dst, copied_state, skipped_files)
+                if copied_size is not None:
                     runtime_artifacts.append(
                         {
                             "path": f"{label}/{rel}",
                             "source_path": str(path),
-                            "size_bytes": path.stat().st_size,
+                            "size_bytes": copied_size,
                             "artifact_path": dst.relative_to(delta_root).as_posix(),
                         }
                     )
-                elif copied_state["files"] == before_files:
-                    continue
 
     final_files: list[dict[str, Any]] = []
     final_structure_files: list[dict[str, Any]] = []
@@ -312,7 +311,7 @@ def collect_report_artifacts(root: Path) -> list[dict[str, Any]]:
     for path in sorted(root.rglob("*")):
         if len(artifacts) >= REPORT_MAX_FILES:
             break
-        if not path.is_file():
+        if not path.is_file() or path.is_symlink():
             continue
         rel_path = path.relative_to(root)
         rel = rel_path.as_posix()

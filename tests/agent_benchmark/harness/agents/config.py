@@ -53,6 +53,16 @@ MODEL_ARGV_POSITION_APPEND = "append"
 MODEL_ARGV_POSITIONS = {MODEL_ARGV_POSITION_BEFORE_STDIN_SENTINEL, MODEL_ARGV_POSITION_APPEND}
 
 
+def template_contains(value: Any, needle: str) -> bool:
+    if isinstance(value, str):
+        return needle in value
+    if isinstance(value, list):
+        return any(template_contains(item, needle) for item in value)
+    if isinstance(value, dict):
+        return any(template_contains(item, needle) for item in value.values())
+    return False
+
+
 @dataclass(frozen=True)
 class ParserConfig:
     parser: str
@@ -115,6 +125,8 @@ class AgentConfig:
         prompt_input_mode = launch.get("prompt_input_mode")
         if prompt_input_mode not in {"stdin", "file_arg"}:
             raise ValueError(f"{config_path}: launch.prompt_input_mode must be stdin or file_arg")
+        if prompt_input_mode == "file_arg" and not template_contains(launch["argv"], "{prompt_file}"):
+            raise ValueError(f"{config_path}: launch.argv must include {{prompt_file}} for file_arg prompt delivery")
         if launch.get("model_argv"):
             model_position = str(launch.get("model_argv_position") or "")
             if model_position not in MODEL_ARGV_POSITIONS:
@@ -195,8 +207,13 @@ def parser_config(data: Mapping[str, Any], key: str, config_path: Path) -> Parse
 def template_fields(value: str) -> set[str]:
     fields = set()
     for _literal, field_name, _format_spec, _conversion in string.Formatter().parse(value):
-        if field_name:
-            fields.add(field_name)
+        if field_name is None:
+            continue
+        if field_name == "":
+            raise ValueError("Adapter templates must not use positional '{}' placeholders")
+        if "." in field_name or "[" in field_name or "]" in field_name:
+            raise ValueError("Adapter templates must not use attribute or index access")
+        fields.add(field_name)
     return fields
 
 
@@ -296,7 +313,7 @@ class ConfigurableAgentAdapter(AgentAdapter):
                 default = value.get("default", "")
                 args[str(key)] = str(env.get(str(env_name), default)) if env_name else str(default)
             else:
-                args[str(key)] = render_string(str(value), {"agent": self.name, **env})
+                args[str(key)] = render_string(str(value), {"agent": self.name})
         return args
 
     def image_targets(self, env: Mapping[str, str] | None = None) -> AgentImageTargets:
@@ -328,6 +345,10 @@ class ConfigurableAgentAdapter(AgentAdapter):
             target_name = str(item.get("target") or source_name)
             if not source_name or not target_name:
                 continue
+            if Path(source_name).name != source_name:
+                raise ValueError(f"{self._cfg.source_path}: auth file source must be a file name: {source_name}")
+            if Path(target_name).name != target_name:
+                raise ValueError(f"{self._cfg.source_path}: auth file target must be a file name: {target_name}")
             mounts.append(
                 DockerMount(
                     host_path=host_home / source_name,
@@ -360,7 +381,18 @@ class ConfigurableAgentAdapter(AgentAdapter):
             "BENCHMARK_AGENT_HOME": self.container_home,
             "BENCHMARK_AGENT": self.name,
         }
-        if getattr(config, "model_was_explicit", False):
+        model_was_explicit = getattr(config, "model_was_explicit", None)
+        if model_was_explicit is None:
+            model_was_explicit = getattr(config, "agent_model_was_explicit", False)
+        if self._cfg.requires_explicit_model and not model_was_explicit:
+            accepted = ["BENCHMARK_AGENT_MODEL"]
+            if self._cfg.model_env:
+                accepted.append(self._cfg.model_env)
+            raise ValueError(
+                f"{self.display_name} requires an explicit benchmark model before runtime setup. "
+                f"Set one of: {', '.join(accepted)}."
+            )
+        if model_was_explicit:
             env["BENCHMARK_AGENT_MODEL"] = getattr(config, "agent_model", self.default_model)
         for key, value in (self._cfg.raw.get("runtime_env") or {}).items():
             env[str(key)] = render_string(str(value), {"container_home": self.container_home, "agent": self.name})

@@ -117,9 +117,7 @@ tests/agent_benchmark/
 |   |   |-- hermes.yaml        # illustrative/planned
 |   |   `-- openclaw.yaml      # illustrative/planned
 |   `-- reports/
-|       |-- benchmark_insights.py
-|       |-- metrics_report.py
-|       |-- summaries.py
+|       |-- scenario_report.py
 |       `-- structure_tree.py
 |-- scenarios/
 |   |-- ci_smoke.yaml
@@ -554,8 +552,8 @@ runtime layer must not hard-code a provider-specific bypass flag.
 
 The agent process receives a sanitized environment assembled from the adapter's
 runtime requirements. Benchmark control variables such as mode, result paths,
-record paths, retry state, and skill-exposure bookkeeping remain harness-internal
-state and are not exposed as task instructions. If a scenario intentionally
+record paths, and skill-exposure bookkeeping remain harness-internal state and
+are not exposed as task instructions. If a scenario intentionally
 exposes a benchmark variable to the agent, that exposure is part of the
 experimental condition and must be recorded in prompt or run metadata.
 
@@ -704,29 +702,6 @@ The harness runtime, not the adapter, writes `harness_preflight_failure`,
 `harness_execution_skipped`, and `harness_execution_error` when the failure is
 clearly caused by run-plan validation, skipped execution policy, Docker/runtime
 or artifact/report pipeline failure rather than the agent CLI.
-
-### Retry Policy
-
-Benchmark run-plan entries execute once by default. The default is no automatic
-retry because retries change elapsed time, token use, and failure-rate
-interpretation.
-
-A scenario may opt into an explicit retry policy:
-
-```text
-retry_policy.max_attempts
-retry_policy.retryable_categories
-retry_policy.initial_backoff_seconds
-retry_policy.max_backoff_seconds
-```
-
-Only categories declared in `retryable_categories` may retry, typically
-`agent_rate_limited` or transient `harness_execution_error`. Auth failures,
-unsupported models, quality-gate failures, and source-mutation failures are not
-retryable by default. Every attempt is recorded. Reports show attempt count and
-retry reasons; winner-policy calculations use the terminal successful attempt
-only when the scenario explicitly declares that retry cost is excluded. Otherwise
-retry time and token usage remain part of the run cost.
 
 ### Shared Benchmark Core
 
@@ -1401,17 +1376,16 @@ results/
                         `-- repeat=<NN>/
                             |-- repeat_summary.json
                             `-- mode=<mode>/
-                                `-- attempt=<NN>/
-                                    |-- record_summary.json
-                                    |-- agent_events.jsonl
-                                    |-- agent_usage.json
-                                    |-- agent_activity.json
-                                    |-- agent_last_message.txt
-                                    |-- agent_stderr.txt
-                                    |-- agent_record.json
-                                    |-- benchmark_record.json
-                                    |-- input_delta_manifest.json
-                                    `-- workspace_delta_manifest.json
+                                |-- record_summary.json
+                                |-- agent_events.jsonl
+                                |-- agent_usage.json
+                                |-- agent_activity.json
+                                |-- agent_last_message.txt
+                                |-- agent_stderr.txt
+                                |-- agent_record.json
+                                |-- benchmark_record.json
+                                |-- input_delta_manifest.json
+                                `-- workspace_delta_manifest.json
 ```
 
 Slugs are filesystem-safe and stable: lowercase, replace every non-alphanumeric
@@ -1439,9 +1413,10 @@ The normalized `agent_*` artifacts are the source of truth. Provider-specific
 files such as `codex_*`, `claude_*`, `hermes_*`, or `openclaw_*` may exist only
 as debug or compatibility artifacts; reports must not require them.
 
-Every run has at least `attempt=01`. When retry policy creates additional
-attempts, each attempt gets its own complete artifact directory. Repeat and mode
-summaries point at the terminal attempt and include all attempt metadata.
+Each run-plan entry executes once. If a run fails, the failure is benchmark
+evidence and the harness preserves the artifacts needed to diagnose it. A user
+may rerun the scenario into a new result root when they want another sample, but
+the harness does not create additional executions for a failed run.
 
 ## Summary Schema
 
@@ -1461,8 +1436,6 @@ job_slug
 job_path
 job_scale
 repeat_index
-attempt_index
-attempt_count
 mode
 skills_enabled
 runtime_image
@@ -1570,10 +1543,6 @@ model
 workflow
 job
 repeat_index
-attempt_count
-terminal_attempt
-attempts[]
-retry_reasons[]
 ```
 
 Scenario-level summaries aggregate across repeats:

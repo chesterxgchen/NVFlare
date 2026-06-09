@@ -235,9 +235,7 @@ def docker_build(
     no_cache: bool,
 ) -> None:
     cache_args = ["--no-cache"] if no_cache else []
-    rendered_build_args = []
-    for key, value in sorted(agent_build_args.items()):
-        rendered_build_args.extend(["--build-arg", f"{key}={value}"])
+    rendered_build_args = render_agent_build_args(agent_build_args)
     status = subprocess.call(
         [
             "docker",
@@ -259,6 +257,15 @@ def docker_build(
         raise SystemExit(status)
 
 
+def render_agent_build_args(agent_build_args: dict[str, str]) -> list[str]:
+    rendered_build_args = []
+    for key, value in sorted(agent_build_args.items()):
+        if "=" in str(value):
+            raise ValueError(f"Docker build arg {key} value must not contain '='")
+        rendered_build_args.extend(["--build-arg", f"{key}={value}"])
+    return rendered_build_args
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build NVFLARE agent benchmark Docker images.")
     parser.parse_args(argv)
@@ -277,9 +284,10 @@ def main(argv: list[str] | None = None) -> int:
     node_image = os.environ.get("NODE_IMAGE", DEFAULT_NODE_IMAGE)
     agent_build_args = adapter.build_args_from_env(os.environ)
 
-    context = prepare_build_context()
+    context = None
     try:
         emit("=== Preparing minimal Docker build context ===")
+        context = prepare_build_context()
         if build_skills_image or build_baseline_image:
             repo = resolve_nvflare_repo()
             emit(f"Using NVFlare repo: {repo}")
@@ -360,7 +368,8 @@ def main(argv: list[str] | None = None) -> int:
         emit(f"Report image: {report_image_name}")
         return 0
     finally:
-        shutil.rmtree(context, ignore_errors=True)
+        if context is not None:
+            shutil.rmtree(context, ignore_errors=True)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,8 @@ Usage: $(basename "$0") COMMAND --prompt PATH [--training-code PATH] [--results-
 Commands:
   one              Run one benchmark case using MODE/USE_PREINSTALLED_SKILLS env.
   pair             Run paired skills/no-skills benchmark cases.
+  scenario         Run a compiled scenario YAML.
+  replay           Rebuild parser artifacts and scenario reports from captured results.
   interactive      Start an interactive benchmark container.
   with-skills      Shortcut for: MODE=with_skills USE_PREINSTALLED_SKILLS=true one.
   without-skills   Shortcut for: MODE=without_skills USE_PREINSTALLED_SKILLS=false one.
@@ -20,6 +22,8 @@ Examples:
   ./bin/run.sh pair --prompt /path/to/prompt.txt --training-code /path/to/job-folder
   ./bin/run.sh pair --prompt /path/to/prompt.txt --results-root /path/to/results /path/to/job-folder
   ./bin/run.sh pair --prompt /path/to/prompt.txt --output-dir /path/to/exact-run-dir /path/to/job-folder
+  ./bin/run.sh scenario /path/to/scenario.yaml --output-dir /path/to/exact-run-dir
+  ./bin/run.sh replay /path/to/existing-run-dir
   ./bin/run.sh one --prompt /path/to/prompt.txt /path/to/job-folder
 EOF
 }
@@ -38,6 +42,12 @@ case "${command}" in
     ;;
   pair)
     exec python3 -m harness.host.runner pair "$@"
+    ;;
+  scenario)
+    exec python3 -m harness.host.runner scenario "$@"
+    ;;
+  replay)
+    exec python3 -m harness.host.runner replay "$@"
     ;;
   interactive|shell)
     exec python3 -m harness.host.runner interactive "$@"

@@ -591,6 +591,6 @@ def _source_checkout_root() -> Optional[Path]:
         return None
     repo_root = Path(next(iter(spec.submodule_search_locations))).resolve().parent
     source_root = repo_root / "skills"
-    if source_root.is_dir() and (repo_root / "pyproject.toml").is_file() and (repo_root / "setup.py").is_file():
+    if source_root.is_dir() and (repo_root / "pyproject.toml").is_file():
         return source_root
     return None

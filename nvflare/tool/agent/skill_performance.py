@@ -78,6 +78,11 @@ def summarize_skill_performance(
     )
     selected_names = {skill["name"] for skill in selected_skills}
     matching_records = _filter_records(loaded_records, selected_names=selected_names, case_id=case_id)
+    record_warnings = []
+    if loaded_records and not selected_names and not skill_name:
+        record_warnings.append(
+            "No packaged skill names were available from the manifest; runtime records were not matched to summaries."
+        )
 
     return {
         "source": {
@@ -94,6 +99,7 @@ def summarize_skill_performance(
         "metric_contracts": contracts,
         "summaries": _summaries(matching_records, selected_skills),
         "records": [_compact_record(record) for record in matching_records],
+        "record_warnings": record_warnings,
     }
 
 
@@ -181,7 +187,7 @@ def _load_records(records_path: Path) -> tuple[list[dict], str]:
             continue
         if path.suffix in (".json", ".jsonl"):
             record_files.append(path)
-            if len(record_files) > MAX_RECORD_FILES:
+            if len(record_files) >= MAX_RECORD_FILES + 1:
                 raise SkillPerformanceError(
                     "PROCESS_RECORD_FILE_LIMIT_EXCEEDED",
                     f"Process records path has more than {MAX_RECORD_FILES} JSON/JSONL files: {records_path}.",
@@ -190,7 +196,9 @@ def _load_records(records_path: Path) -> tuple[list[dict], str]:
     records = []
     for path in sorted(record_files):
         records.extend(_read_record_file(path))
-    records.sort(key=lambda record: record.get("_timestamp") or "", reverse=True)
+    records.sort(key=lambda record: record.get("_sort_timestamp") or 0, reverse=True)
+    for record in records:
+        record.pop("_sort_timestamp", None)
     return records, "loaded"
 
 
@@ -257,6 +265,7 @@ def _with_record_metadata(record: dict, path: Path) -> dict:
     copied = dict(record)
     copied["_path"] = str(path)
     copied["_timestamp"] = _record_timestamp(record, path)
+    copied["_sort_timestamp"] = _record_sort_timestamp(record, path)
     return copied
 
 
@@ -305,6 +314,22 @@ def _record_timestamp(record: dict, path: Path) -> Optional[str]:
         return str(path.stat().st_mtime_ns)
     except OSError:
         return None
+
+
+def _record_sort_timestamp(record: dict, path: Path) -> int:
+    timestamp = record.get("timestamp")
+    if isinstance(timestamp, str):
+        try:
+            from datetime import datetime
+
+            text = timestamp[:-1] + "+00:00" if timestamp.endswith("Z") else timestamp
+            return int(datetime.fromisoformat(text).timestamp() * 1_000_000_000)
+        except ValueError:
+            pass
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return 0
 
 
 def _filter_records(records: list[dict], *, selected_names: set[str], case_id: Optional[str]) -> list[dict]:

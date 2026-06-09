@@ -20,8 +20,9 @@ import os
 import subprocess
 import sys
 import threading
+from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -37,15 +38,11 @@ OUTPUT_LOCK = threading.Lock()
 
 
 def timestamp_slug() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
 
 
 def expand_home_path(value: str) -> str:
-    if value == "~":
-        return str(Path.home())
-    if value.startswith("~/"):
-        return str(Path.home() / value[2:])
-    return value
+    return str(Path(value).expanduser())
 
 
 def absolute_path(value: str) -> Path:
@@ -64,7 +61,7 @@ def default_results_root() -> Path:
     return Path(
         os.environ.get(
             "AGENT_BENCHMARK_RESULTS_ROOT",
-            str(SCRIPT_DIR / "results"),
+            os.environ.get("CODEX_DOCKER_RESULTS_ROOT", str(SCRIPT_DIR / "results")),
         )
     )
 
@@ -220,7 +217,12 @@ def emit(message: str = "", *, logs: Iterable[Path] = (), prefix: str | None = N
 
 
 def stream_command(
-    command: list[str], *, logs: Iterable[Path] = (), prefix: str | None = None, env: dict[str, str] | None = None
+    command: list[str],
+    *,
+    logs: Iterable[Path] = (),
+    prefix: str | None = None,
+    env: dict[str, str] | None = None,
+    timeout_seconds: int | None = None,
 ) -> int:
     try:
         process = subprocess.Popen(
@@ -238,9 +240,47 @@ def stream_command(
         return 127
     if process.stdout is None:
         raise RuntimeError("subprocess stdout pipe was not created")
-    for line in process.stdout:
-        emit(line.rstrip("\n"), logs=logs, prefix=prefix)
-    return process.wait()
+    reader_errors: list[BaseException] = []
+
+    def _read_stdout() -> None:
+        try:
+            assert process.stdout is not None
+            for line in process.stdout:
+                emit(line.rstrip("\n"), logs=logs, prefix=prefix)
+        except ValueError:
+            pass
+        except BaseException as exc:
+            reader_errors.append(exc)
+
+    reader = threading.Thread(target=_read_stdout, daemon=True)
+    reader.start()
+    timed_out = False
+    try:
+        status = process.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        emit(
+            f"Command timed out after {timeout_seconds} seconds; terminating process.",
+            logs=logs,
+            prefix=prefix,
+            stderr=True,
+        )
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            emit("Process did not terminate; killing process.", logs=logs, prefix=prefix, stderr=True)
+            process.kill()
+            process.wait()
+        status = 124
+    finally:
+        if process.stdout is not None:
+            with suppress(OSError, ValueError):
+                process.stdout.close()
+        reader.join(timeout=2)
+    for error in reader_errors:
+        emit(f"Output reader error: {type(error).__name__}: {error}", logs=logs, prefix=prefix, stderr=True)
+    return 124 if timed_out else status
 
 
 def command_stdout_to_file(
@@ -317,7 +357,12 @@ class ImageConfig:
     @classmethod
     def from_env(cls) -> "ImageConfig":
         adapter = benchmark_agent_adapter_from_env()
-        targets = adapter.image_targets(os.environ)
+        return cls.for_adapter(adapter, os.environ)
+
+    @classmethod
+    def for_adapter(cls, adapter: AgentAdapter, env: dict[str, str] | None = None) -> "ImageConfig":
+        env = os.environ if env is None else env
+        targets = adapter.image_targets(env)
         image = targets.skills
         return cls(
             image_name=image,
@@ -341,6 +386,9 @@ class CaseConfig:
     adapter: AgentAdapter
     host_agent_home: Path
     mount_host_agent_auth: bool
+    agent_timeout_seconds: int | None = None
+    container_timeout_seconds: int | None = None
+    result_size_budget_bytes: int | None = None
 
     @property
     def run_image(self) -> str:
@@ -384,7 +432,23 @@ def case_config(
         adapter=adapter,
         host_agent_home=absolute_path(str(adapter.host_home_from_env(os.environ))),
         mount_host_agent_auth=adapter.mount_auth_from_env(os.environ),
+        agent_timeout_seconds=optional_int_env("AGENT_TIMEOUT_SECONDS"),
+        container_timeout_seconds=optional_int_env("CONTAINER_TIMEOUT_SECONDS"),
+        result_size_budget_bytes=optional_int_env("RESULT_SIZE_BUDGET_BYTES"),
     )
+
+
+def optional_int_env(name: str) -> int | None:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise SystemExit(f"{name} must be an integer; got {value}") from exc
+    if parsed <= 0:
+        raise SystemExit(f"{name} must be positive; got {value}")
+    return parsed
 
 
 def docker_args_for_case(config: CaseConfig, logs: Iterable[Path] = (), prefix: str | None = None) -> list[str]:
@@ -412,6 +476,8 @@ def docker_args_for_case(config: CaseConfig, logs: Iterable[Path] = (), prefix: 
     ]
     for name, value in sorted(runtime_env.items()):
         args.extend(docker_env(name, value))
+    if config.agent_timeout_seconds is not None:
+        args.extend(docker_env("AGENT_TIMEOUT_SECONDS", config.agent_timeout_seconds))
     add_agent_passthrough_env(args, config.adapter)
     if config.mount_host_agent_auth:
         add_agent_auth_mounts(args, mounts=config.adapter.auth_mounts(config), logs=logs, prefix=prefix)
@@ -436,6 +502,11 @@ def write_runtime_image(config: CaseConfig) -> None:
             "container_prompt_source": CONTAINER_PROMPT_PATH,
             "container_python": "/workspace/venv/bin/python",
             "container_virtual_env": "/workspace/venv",
+            "resource_policy": {
+                "agent_timeout_seconds": config.agent_timeout_seconds,
+                "container_timeout_seconds": config.container_timeout_seconds,
+                "result_size_budget_bytes": config.result_size_budget_bytes,
+            },
         },
     )
 

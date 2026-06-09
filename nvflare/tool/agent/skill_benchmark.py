@@ -14,6 +14,7 @@
 
 """Explicit BENCHMARK.md draft rendering for NVFLARE-owned agent skills."""
 
+import contextlib
 import os
 import tempfile
 from pathlib import Path
@@ -212,13 +213,18 @@ def _md(value) -> str:
 
 
 def _write_text_atomic(path: Path, content: str) -> None:
+    temp_path: Path | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as f:
             temp_path = Path(f.name)
             f.write(content)
         os.replace(temp_path, path)
+        temp_path = None
     except Exception as e:
+        if temp_path is not None:
+            with contextlib.suppress(OSError):
+                temp_path.unlink(missing_ok=True)
         raise SkillBenchmarkError(
             "BENCHMARK_WRITE_FAILED",
             "failed to write benchmark file",

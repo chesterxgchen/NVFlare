@@ -22,17 +22,20 @@ import json
 import os
 import re
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
 from .common import bool_from_text, flatten_numbers, load_json, write_json
-from .quality_signals import metric_signal
+from .quality_signals import critical_quality_checks_failed, metric_signal, required_validation_metric_status
 from .record_identity import record_case, record_skill
 from .timing import LifecycleEpochs, finalize_timing
 
 ALLOWED_BEHAVIOR_STATUSES = {"pass", "fail", "missing", "not_applicable", "non_scoring_note"}
+MAX_JSON_RECORD_FILES = 10000
+MAX_JSON_RECORD_FILE_BYTES = 5 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -133,12 +136,21 @@ def load_text(path: Path) -> str:
 
 
 def iter_json_records(root: Path, agent_record_path: Path | None = None) -> Iterable[tuple[Path, dict[str, Any]]]:
+    scanned = 0
     for path in sorted(root.rglob("*.json")):
         if not path.is_file() or path.is_symlink():
             continue
         if agent_record_path is not None and same_path(path, agent_record_path):
             continue
         if path.name.endswith("_agent_record.json") or path.name.endswith("_record.json"):
+            continue
+        scanned += 1
+        if scanned > MAX_JSON_RECORD_FILES:
+            break
+        try:
+            if path.stat().st_size > MAX_JSON_RECORD_FILE_BYTES:
+                continue
+        except OSError:
             continue
         data = load_json(path)
         if isinstance(data, dict):
@@ -170,6 +182,7 @@ GUIDANCE_FILE_STEMS = {
 }
 GUIDANCE_SUFFIXES = {".md", ".rst", ".txt"}
 MAX_GUIDANCE_FILES = 12
+MAX_GUIDANCE_FILE_BYTES = 512 * 1024
 
 
 def guidance_priority(path: Path) -> tuple[int, str]:
@@ -193,6 +206,26 @@ def is_guidance_file(path: Path) -> bool:
     return stem in GUIDANCE_FILE_STEMS or path.name.lower().startswith("readme")
 
 
+def guidance_identity(path: Path) -> tuple:
+    try:
+        return ("resolved", str(path.resolve()))
+    except OSError:
+        pass
+    if path.is_symlink():
+        try:
+            target = path.readlink()
+            if not target.is_absolute():
+                target = path.parent / target
+            return ("symlink_target", str(target))
+        except OSError:
+            pass
+    try:
+        stat_result = path.stat()
+        return ("inode", stat_result.st_dev, stat_result.st_ino)
+    except OSError:
+        return ("path", str(path))
+
+
 def discover_job_guidance(input_root: Path, prompt_path: Path | None = None) -> tuple[list[dict[str, str]], str]:
     if not input_root.is_dir():
         return [], ""
@@ -214,13 +247,15 @@ def discover_job_guidance(input_root: Path, prompt_path: Path | None = None) -> 
     chunks = []
     seen = set()
     for path, source_type in candidates[:MAX_GUIDANCE_FILES]:
-        try:
-            resolved = path.resolve()
-        except OSError:
-            resolved = path
-        if resolved in seen:
+        identity = guidance_identity(path)
+        if identity in seen:
             continue
-        seen.add(resolved)
+        seen.add(identity)
+        try:
+            if path.stat().st_size > MAX_GUIDANCE_FILE_BYTES:
+                continue
+        except OSError:
+            continue
         text = load_text(path)
         if not text:
             continue
@@ -282,6 +317,11 @@ def valid_identity_token(value: str) -> bool:
     )
 
 
+def identity_occurrence_count(text: str, candidate: str) -> int:
+    pattern = re.compile(rf"(?<![A-Za-z0-9_.-]){re.escape(candidate)}(?![A-Za-z0-9_.-])")
+    return sum(1 for _match in pattern.finditer(text))
+
+
 def infer_from_events(events_text: str) -> dict[str, Any]:
     scores: dict[str, int] = {}
     source: dict[str, str] = {}
@@ -298,9 +338,12 @@ def infer_from_events(events_text: str) -> dict[str, Any]:
     for match in re.finditer(r"(?:^|\s)--skill(?:=|\s+)([A-Za-z0-9_.-]+)", events_text):
         add(match.group(1), 100, "agent_skill_arg")
 
-    for name in available_skill_names():
-        occurrences = events_text.count(name)
-        if occurrences:
+    skill_names = sorted(
+        (name for name in available_skill_names() if valid_identity_token(name)), key=len, reverse=True
+    )
+    if skill_names:
+        skill_pattern = re.compile("|".join(re.escape(name) for name in skill_names))
+        for name, occurrences in Counter(match.group(0) for match in skill_pattern.finditer(events_text)).items():
             add(name, occurrences, "installed_skill_name_seen_in_events")
 
     skill = ""
@@ -315,8 +358,13 @@ def infer_from_events(events_text: str) -> dict[str, Any]:
         case_source = "agent_skill_arg"
     elif skill:
         case_scores = {}
-        for candidate in eval_case_ids_for_skill(skill):
-            count = events_text.count(candidate)
+        candidates = sorted(
+            (candidate for candidate in eval_case_ids_for_skill(skill) if valid_identity_token(candidate)),
+            key=len,
+            reverse=True,
+        )
+        for candidate in candidates:
+            count = identity_occurrence_count(events_text, candidate)
             if count:
                 case_scores[candidate] = count
         if case_scores:
@@ -612,8 +660,11 @@ def synthesize_agent_record(inputs: AgentRecordSynthesisInputs) -> None:
     if not isinstance(quality_signals, dict):
         quality_signals = {}
     quality_signals["job_guidance_primary_validation_metric"] = job_guidance_metric_signal
-    quality_signals["readme_primary_validation_metric"] = job_guidance_metric_signal
     record["quality_signals"] = quality_signals
+    record["required_validation_metric_status"] = required_validation_metric_status(job_guidance_metric_signal)
+    record["critical_quality_checks_failed"] = bool(
+        record.get("critical_quality_checks_failed") or critical_quality_checks_failed(record)
+    )
     if job_guidance_metric_signal.get("expected_primary_metric"):
         record["validation_metric_policy"] = {
             "source": job_guidance_metric_signal.get("source"),

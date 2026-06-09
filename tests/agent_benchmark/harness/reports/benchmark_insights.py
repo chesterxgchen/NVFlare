@@ -1621,7 +1621,6 @@ def benchmark_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
             "",
             "## Artifacts",
             "",
-            "- `pair_summary.json`",
             "- `metrics_report.md`",
             "- `metrics_report.html`",
             "- `records/`",

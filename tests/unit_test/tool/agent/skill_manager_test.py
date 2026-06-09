@@ -118,6 +118,24 @@ def test_find_skill_source_does_not_misclassify_site_packages_skills(monkeypatch
     assert source.root == bundle_root
 
 
+def test_find_skill_source_accepts_pyproject_checkout_without_setup_py(monkeypatch, tmp_path):
+    repo_root = tmp_path / "repo"
+    fake_package = repo_root / "nvflare"
+    fake_package.mkdir(parents=True)
+    repo_root.joinpath("pyproject.toml").write_text("[project]\nname='nvflare'\n", encoding="utf-8")
+    _write_skill(repo_root / "skills", "nvflare-test-skill")
+    monkeypatch.setattr(
+        skill_manager.util,
+        "find_spec",
+        lambda _name: type("Spec", (), {"submodule_search_locations": [str(fake_package)]})(),
+    )
+
+    source = find_skill_source()
+
+    assert source.source_type == "editable"
+    assert source.root == repo_root / "skills"
+
+
 def test_install_skills_dry_run_reports_plan_without_copying(tmp_path):
     source = _skill_source(tmp_path)
     target = tmp_path / "target"

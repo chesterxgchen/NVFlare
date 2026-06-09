@@ -13,9 +13,11 @@
 # limitations under the License.
 
 import json
+from pathlib import Path
 
 import pytest
 
+from nvflare.tool.agent import skill_benchmark
 from nvflare.tool.agent.skill_benchmark import SkillBenchmarkError, render_skill_benchmark
 from nvflare.tool.agent.skill_manager import SkillSource
 from nvflare.tool.agent.skill_manifest import build_skill_manifest
@@ -64,6 +66,23 @@ def test_render_skill_benchmark_requires_skill_name(tmp_path):
         render_skill_benchmark(skill_name=None, source=source)
 
     assert exc.value.code == "BENCHMARK_SKILL_REQUIRED"
+
+
+def test_write_text_atomic_removes_temp_file_on_replace_failure(tmp_path, monkeypatch):
+    captured = {}
+
+    def fail_replace(src, dst):
+        captured["src"] = Path(src)
+        assert captured["src"].is_file()
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(skill_benchmark.os, "replace", fail_replace)
+
+    with pytest.raises(SkillBenchmarkError) as exc:
+        skill_benchmark._write_text_atomic(tmp_path / "BENCHMARK.md", "content\n")
+
+    assert exc.value.code == "BENCHMARK_WRITE_FAILED"
+    assert captured["src"].exists() is False
 
 
 def _skill_source(tmp_path) -> SkillSource:

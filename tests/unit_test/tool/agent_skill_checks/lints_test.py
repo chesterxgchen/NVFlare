@@ -14,7 +14,7 @@
 
 import json
 
-from nvflare.tool.agent_skill_checks.lints import V1_LINT_IDS, run_v1_lints, validate_skills
+from nvflare.tool.agent_skill_checks.lints import MAX_SKILL_TEXT_FILE_BYTES, V1_LINT_IDS, run_v1_lints, validate_skills
 
 LINT_SKILL_FRONTMATTER = "skill-frontmatter-lint"
 LINT_SKILL_MD_SIZE = "skill-md-size-lint"
@@ -176,9 +176,7 @@ def test_run_v1_lints_parses_quoted_nvflare_command_with_shlex(tmp_path):
 
 
 def test_run_v1_lints_skips_trigger_overlap_when_skill_count_exceeds_cap(monkeypatch, tmp_path):
-    from nvflare.tool.agent_skill_checks import lints
-
-    monkeypatch.setattr(lints, "MAX_TRIGGER_OVERLAP_SKILLS", 1)
+    monkeypatch.setenv("NVFLARE_AGENT_MAX_TRIGGER_OVERLAP_SKILLS", "1")
     _write_skill(tmp_path / "skills", "nvflare-one-skill")
     _write_skill(tmp_path / "skills", "nvflare-two-skill")
     docs_root = _write_design_docs(tmp_path, ["nvflare-one-skill", "nvflare-two-skill"])
@@ -206,6 +204,25 @@ def test_run_v1_lints_reports_helper_script_without_test(tmp_path):
 
     assert _has_finding(result, LINT_SKILL_HELPER_SCRIPT, "skill-helper-tests-missing")
     _assert_structured_findings(result)
+
+
+def test_run_v1_lints_skips_oversized_helper_script_content_checks(tmp_path):
+    skill_dir = _write_skill(tmp_path / "skills", "nvflare-helper-skill")
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir()
+    helper = scripts_dir / "helper.py"
+    helper.write_text("promoted_to: nvflare agent helper\n", encoding="utf-8")
+    with helper.open("ab") as stream:
+        stream.truncate(MAX_SKILL_TEXT_FILE_BYTES + 1)
+    tests_dir = skill_dir / "tests"
+    tests_dir.mkdir()
+    tests_dir.joinpath("helper_test.txt").write_text("helper test placeholder\n", encoding="utf-8")
+    docs_root = _write_design_docs(tmp_path, ["nvflare-helper-skill"])
+
+    result = run_v1_lints(tmp_path / "skills", docs_root=docs_root, checks=[LINT_SKILL_HELPER_SCRIPT])
+
+    assert result["status"] == "ok"
+    assert result["findings"] == []
 
 
 def test_run_v1_lints_reports_missing_fixture_file(tmp_path):

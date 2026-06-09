@@ -63,7 +63,8 @@ FINDING_WARNING = "warning"
 FINDING_INFO = "info"
 SKILL_MD_MAX_LINES = 200
 SKILL_MD_ADVISORY_WORDS = 2000
-MAX_TRIGGER_OVERLAP_SKILLS = int(os.environ.get("NVFLARE_AGENT_MAX_TRIGGER_OVERLAP_SKILLS", "200"))
+MAX_SKILL_TEXT_FILE_BYTES = 512 * 1024
+DEFAULT_MAX_TRIGGER_OVERLAP_SKILLS = 200
 
 _PUBLIC_EXEMPT_STATUS = {"draft", "internal", "private"}
 _SIZE_EXCEPTION_MARKERS = (
@@ -206,6 +207,22 @@ def run_v1_lints(
     max_skill_md_lines: int = SKILL_MD_MAX_LINES,
 ) -> dict[str, Any]:
     """Run deterministic v1 admission lints and return structured findings."""
+    result, _records = _run_v1_lints_with_records(
+        skills_root,
+        docs_root=docs_root,
+        checks=checks,
+        max_skill_md_lines=max_skill_md_lines,
+    )
+    return result
+
+
+def _run_v1_lints_with_records(
+    skills_root: Path | str = "skills",
+    *,
+    docs_root: Path | str | None = None,
+    checks: Optional[Iterable[str]] = None,
+    max_skill_md_lines: int = SKILL_MD_MAX_LINES,
+) -> tuple[dict[str, Any], list[SkillRecord]]:
     selected = tuple(checks or V1_LINT_IDS)
     unknown = sorted(set(selected).difference(V1_LINT_IDS))
     if unknown:
@@ -254,7 +271,7 @@ def run_v1_lints(
         "skipped_checks": context.skipped_checks,
         "summary": summary,
         "findings": [finding.as_dict() for finding in context.findings],
-    }
+    }, records
 
 
 def validate_skills(
@@ -265,14 +282,16 @@ def validate_skills(
     max_skill_md_lines: int = SKILL_MD_MAX_LINES,
 ) -> dict[str, Any]:
     """Compatibility wrapper for callers that validate one skill source root."""
-    result = run_v1_lints(skills_root, docs_root=docs_root, max_skill_md_lines=max_skill_md_lines)
+    result, records = _run_v1_lints_with_records(
+        skills_root,
+        docs_root=docs_root,
+        max_skill_md_lines=max_skill_md_lines,
+    )
 
     if skill_name is not None:
         result["requested_skill"] = skill_name
         result["findings"] = [finding for finding in result["findings"] if finding.get("skill") in {None, skill_name}]
-        result["summary"] = _summary_from_findings(
-            result["findings"], _matching_skill_count(Path(skills_root), skill_name)
-        )
+        result["summary"] = _summary_from_findings(result["findings"], _matching_skill_count(records, skill_name))
         result["status"] = "failed" if result["summary"]["error_count"] else "ok"
         result["passed"] = result["status"] == "ok"
     else:
@@ -351,8 +370,8 @@ def _load_skill_records(skills_root: Path, findings: list[LintFinding]) -> list[
     return records
 
 
-def _matching_skill_count(skills_root: Path, skill_name: str) -> int:
-    return sum(1 for record in _load_skill_records(skills_root, []) if record.name == skill_name)
+def _matching_skill_count(records: list[SkillRecord], skill_name: str) -> int:
+    return sum(1 for record in records if record.name == skill_name)
 
 
 def _lint_frontmatter(context: LintContext) -> None:
@@ -500,12 +519,13 @@ def _lint_trigger_overlap(context: LintContext) -> None:
         if category:
             grouped[category].append(record)
 
+    max_trigger_overlap_skills = _max_trigger_overlap_skills()
     for category, records in grouped.items():
-        if len(records) > MAX_TRIGGER_OVERLAP_SKILLS:
+        if len(records) > max_trigger_overlap_skills:
             _skip(
                 context,
                 "skill-trigger-overlap-lint",
-                f"category {category!r} has {len(records)} skills; limit is {MAX_TRIGGER_OVERLAP_SKILLS}",
+                f"category {category!r} has {len(records)} skills; limit is {max_trigger_overlap_skills}",
             )
             continue
         token_cache = {record.name: _trigger_tokens(record) for record in records}
@@ -526,6 +546,17 @@ def _lint_trigger_overlap(context: LintContext) -> None:
                         skill=left.name,
                     )
                 )
+
+
+def _max_trigger_overlap_skills() -> int:
+    value = os.environ.get("NVFLARE_AGENT_MAX_TRIGGER_OVERLAP_SKILLS")
+    if value is None or value == "":
+        return DEFAULT_MAX_TRIGGER_OVERLAP_SKILLS
+    try:
+        parsed = int(value)
+    except ValueError:
+        return DEFAULT_MAX_TRIGGER_OVERLAP_SKILLS
+    return parsed if parsed > 0 else DEFAULT_MAX_TRIGGER_OVERLAP_SKILLS
 
 
 def _lint_catalog_category(context: LintContext) -> None:
@@ -789,6 +820,11 @@ def _lint_helper_scripts(context: LintContext) -> None:
             )
 
         for script in script_files:
+            try:
+                if script.stat().st_size > MAX_SKILL_TEXT_FILE_BYTES:
+                    continue
+            except OSError:
+                continue
             text = script.read_text(encoding="utf-8", errors="replace")
             lowered = text.lower()
             if "promoted_to:" in lowered or "_promoted_to:" in lowered:
@@ -803,7 +839,10 @@ def _lint_helper_scripts(context: LintContext) -> None:
                         skill=record.name,
                     )
                 )
-            if "json" in lowered and "json.dumps" not in text and "json.dump" not in text:
+            declares_json_output = any(
+                token in lowered for token in ("json output", "stdout json", "json stdout", "jsonl", "machine-readable")
+            )
+            if script.suffix == ".py" and declares_json_output and "json.dumps" not in text and "json.dump" not in text:
                 context.findings.append(
                     _finding(
                         "skill-helper-script-lint",
@@ -892,12 +931,19 @@ def _lint_doc_crosslinks(context: LintContext) -> None:
         _skip(context, "agent-doc-crosslink-lint", "docs root is not available")
         return
 
-    anchors_by_file = {
-        doc_path.name: _markdown_anchors(doc_path.read_text(encoding="utf-8", errors="replace"))
+    text_by_path = {
+        doc_path: doc_path.read_text(encoding="utf-8", errors="replace")
         for doc_path in _iter_existing_doc_files(docs_root)
     }
-    for doc_path in _iter_existing_doc_files(docs_root):
-        text = doc_path.read_text(encoding="utf-8", errors="replace")
+    anchors_by_path = {doc_path.resolve(): _markdown_anchors(text) for doc_path, text in text_by_path.items()}
+
+    def anchors_for_path(path: Path) -> set[str]:
+        resolved = path.resolve()
+        if resolved not in anchors_by_path and path.suffix.lower() in {".md", ".markdown"} and path.is_file():
+            anchors_by_path[resolved] = _markdown_anchors(path.read_text(encoding="utf-8", errors="replace"))
+        return anchors_by_path.get(resolved, set())
+
+    for doc_path, text in text_by_path.items():
         for line_no, href in _iter_markdown_links(text):
             if href.startswith(("http://", "https://", "mailto:")):
                 continue
@@ -917,8 +963,7 @@ def _lint_doc_crosslinks(context: LintContext) -> None:
                 )
                 continue
             if anchor:
-                target_name = target_path.name if target else doc_path.name
-                if _normalize_anchor(anchor) not in anchors_by_file.get(target_name, set()):
+                if _normalize_anchor(anchor) not in anchors_for_path(target_path):
                     context.findings.append(
                         _finding(
                             "agent-doc-crosslink-lint",
@@ -933,7 +978,7 @@ def _lint_doc_crosslinks(context: LintContext) -> None:
 
     eval_doc = docs_root / "agent_skill_evaluation.md"
     if eval_doc.is_file():
-        text = eval_doc.read_text(encoding="utf-8", errors="replace")
+        text = text_by_path.get(eval_doc) or eval_doc.read_text(encoding="utf-8", errors="replace")
         for lint_id in V1_LINT_IDS:
             if f"`{lint_id}`" not in text:
                 context.findings.append(
@@ -947,10 +992,9 @@ def _lint_doc_crosslinks(context: LintContext) -> None:
                     )
                 )
 
-    for doc_path in _iter_existing_doc_files(docs_root):
+    for doc_path, text in text_by_path.items():
         if doc_path.name == "agent_skills_deferred_roadmap.md":
             continue
-        text = doc_path.read_text(encoding="utf-8", errors="replace")
         for line_no, command in _extract_nvflare_commands(text):
             if not command.startswith("nvflare agent"):
                 continue
@@ -1103,8 +1147,8 @@ def _eval_text(item: dict[str, Any]) -> str:
 
 def _records_overlap(left: SkillRecord, right: SkillRecord, token_cache: dict[str, set[str]] | None = None) -> bool:
     token_cache = token_cache or {}
-    left_tokens = token_cache.get(left.name) or _trigger_tokens(left)
-    right_tokens = token_cache.get(right.name) or _trigger_tokens(right)
+    left_tokens = token_cache[left.name] if left.name in token_cache else _trigger_tokens(left)
+    right_tokens = token_cache[right.name] if right.name in token_cache else _trigger_tokens(right)
     if not left_tokens or not right_tokens:
         return False
     shared = left_tokens.intersection(right_tokens)
@@ -1301,6 +1345,11 @@ def _iter_skill_text_files(skill_dir: Path, *, include_scripts: bool = False) ->
             candidates.extend(sorted(path for path in scripts_dir.rglob("*") if path.is_file()))
     for path in candidates:
         if path.is_file():
+            try:
+                if path.stat().st_size > MAX_SKILL_TEXT_FILE_BYTES:
+                    continue
+            except OSError:
+                continue
             yield path, path.read_text(encoding="utf-8", errors="replace")
 
 

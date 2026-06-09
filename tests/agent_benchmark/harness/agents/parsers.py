@@ -66,6 +66,8 @@ def normalize_claude_stream_event(raw_line: str) -> dict[str, Any] | None:
     event["event_type"] = f"{event_type}.{subtype}" if subtype else event_type
     if event_type == "result" and isinstance(event.get("result"), str):
         event["final_message"] = event["result"]
+    # Neutral events expose one primary tool per raw event. Keep the first
+    # shell-tool command as the stable activity signal for report aggregation.
     for tool_use in claude_tool_uses(event):
         event.setdefault("tool_kind", tool_use.get("name"))
         command = claude_tool_command(tool_use)
@@ -121,6 +123,18 @@ def claude_usage_total(usage: dict[str, Any]) -> float:
     )
 
 
+def claude_usage_has_tokens(usage: dict[str, Any]) -> bool:
+    return any(
+        numeric_token_field(usage, key) > 0
+        for key in (
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+        )
+    )
+
+
 def claude_usage_objects(event: dict[str, Any]) -> list[dict[str, Any]]:
     usage_objects = []
     usage = event.get("usage")
@@ -155,6 +169,7 @@ def iter_json_events(events_path: Path) -> tuple[list[dict[str, Any]], int]:
 def parse_claude_stream_usage(events_path: Path) -> dict[str, Any]:
     events, decode_errors = iter_json_events(events_path)
     result_usage: dict[str, Any] | None = None
+    result_usage_count = 0
     summed = {
         "input_tokens": 0.0,
         "output_tokens": 0.0,
@@ -164,17 +179,29 @@ def parse_claude_stream_usage(events_path: Path) -> dict[str, Any]:
     usage_objects_seen = 0
     total_cost_usd = None
     for event in events:
+        if event.get("type") == "result" and isinstance(event.get("usage"), dict):
+            usage_objects_seen += 1
+            result_usage_count += 1
+            if result_usage is not None:
+                for key in summed:
+                    summed[key] += numeric_token_field(result_usage, key)
+            result_usage = event["usage"]
+            if isinstance(event.get("message"), dict) and isinstance(event["message"].get("usage"), dict):
+                usage_objects_seen += 1
+            if isinstance(event.get("total_cost_usd"), (int, float)):
+                total_cost_usd = event.get("total_cost_usd")
+            continue
         if event.get("type") == "result" and isinstance(event.get("total_cost_usd"), (int, float)):
             total_cost_usd = event.get("total_cost_usd")
         for usage in claude_usage_objects(event):
             usage_objects_seen += 1
-            if event.get("type") == "result":
-                result_usage = usage
-            else:
-                for key in summed:
-                    summed[key] += numeric_token_field(usage, key)
+            for key in summed:
+                summed[key] += numeric_token_field(usage, key)
 
-    selected = result_usage or summed
+    if result_usage is not None and claude_usage_has_tokens(result_usage):
+        selected = result_usage
+    else:
+        selected = summed
     total_tokens = claude_usage_total(selected)
     parser_warnings = []
     if usage_objects_seen == 0:
@@ -183,6 +210,14 @@ def parse_claude_stream_usage(events_path: Path) -> dict[str, Any]:
     elif result_usage is None:
         parser_warnings.append(
             "No Claude result usage object was found; token fields are summed from message usage objects."
+        )
+    elif not claude_usage_has_tokens(result_usage) and claude_usage_has_tokens(summed):
+        parser_warnings.append(
+            "Claude result usage object had no nonzero token fields; token fields are summed from message usage objects."
+        )
+    elif result_usage_count > 1:
+        parser_warnings.append(
+            "Multiple Claude result usage objects were found; final cumulative result usage was used."
         )
     cache_creation_tokens = selected.get("cache_creation_input_tokens")
     cache_read_tokens = selected.get("cache_read_input_tokens")
@@ -203,6 +238,7 @@ def parse_claude_stream_usage(events_path: Path) -> dict[str, Any]:
         "total_cost_usd": total_cost_usd,
         "json_decode_errors": decode_errors,
         "usage_objects_seen": usage_objects_seen,
+        "result_usage_objects_seen": result_usage_count,
         "token_parser": "Claude stream-json result usage; fallback sums message usage objects",
     }
 

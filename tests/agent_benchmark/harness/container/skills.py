@@ -41,6 +41,8 @@ def copy_optional_metadata_files(source_dir: Path, result_dir: Path, names: tupl
     copied = []
     missing = []
     for name in names:
+        if Path(name).name != name:
+            raise ValueError(f"metadata file name must not contain path separators: {name}")
         source = source_dir / name
         if source.is_file():
             target_name = name.removeprefix("nvflare_")
@@ -95,8 +97,19 @@ def is_within_path(path: Path, root: Path) -> bool:
 
 
 def validate_skill_root_scope(spec: SkillExposureSpec, result_dir: Path) -> None:
-    if spec.skill_root is None or spec.container_home is None:
+    if spec.skill_root is None:
         return
+    if spec.container_home is None:
+        write_json(
+            result_dir / "skills_state.json",
+            {
+                "status": "error",
+                "reason": "container_home_required_for_skill_root",
+                "mechanism_type": spec.mechanism_type,
+                "skill_root": str(spec.skill_root),
+            },
+        )
+        raise SystemExit(2)
     if is_within_path(spec.skill_root, spec.container_home):
         return
     write_json(
@@ -237,6 +250,17 @@ def apply_skill_exposure(
     removed_packaged_source = False
     if bundled_root:
         path = Path(bundled_root)
+        if not is_within_path(path, Path("/workspace")):
+            write_json(
+                result_dir / "skills_state.json",
+                {
+                    "status": "error",
+                    "reason": "bundled_skill_source_outside_workspace",
+                    "mechanism_type": spec.mechanism_type,
+                    "bundled_skill_source_path": str(path),
+                },
+            )
+            raise SystemExit(2)
         if path.is_dir():
             shutil.rmtree(path)
             removed_packaged_source = True
