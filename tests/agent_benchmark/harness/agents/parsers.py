@@ -24,6 +24,9 @@ from typing import Any
 
 from ..events import parse_timestamp, parse_usage_and_activity_data
 
+MAX_ACTIVITY_COMMANDS = 200
+SHELL_TOOL_NAMES = {"bash", "shell", "computer_use_bash"}
+
 
 def event_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -68,7 +71,6 @@ def normalize_claude_stream_event(raw_line: str) -> dict[str, Any] | None:
         command = claude_tool_command(tool_use)
         if command:
             event.setdefault("command_text", command)
-            event.setdefault("command", command)
             break
     return event
 
@@ -86,6 +88,9 @@ def claude_tool_uses(event: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def claude_tool_command(tool_use: dict[str, Any]) -> str | None:
+    tool_name = str(tool_use.get("name") or "").lower()
+    if tool_name not in SHELL_TOOL_NAMES and "bash" not in tool_name and "shell" not in tool_name:
+        return None
     tool_input = tool_use.get("input")
     if not isinstance(tool_input, dict):
         return None
@@ -102,6 +107,9 @@ def numeric_token_field(data: dict[str, Any], key: str) -> float:
 
 
 def claude_usage_total(usage: dict[str, Any]) -> float:
+    # Claude cache write/read token fields are included in the headline total
+    # because they contribute to run cost; the neutral cache_tokens field also
+    # exposes them separately for report layers that split cache cost.
     return sum(
         numeric_token_field(usage, key)
         for key in (
@@ -168,25 +176,34 @@ def parse_claude_stream_usage(events_path: Path) -> dict[str, Any]:
 
     selected = result_usage or summed
     total_tokens = claude_usage_total(selected)
-    token_parser_warnings = []
+    parser_warnings = []
     if usage_objects_seen == 0:
-        token_parser_warnings.append("No Claude usage objects were found in the stream-json events.")
+        parser_warnings.append("No Claude usage objects were found in the stream-json events.")
         total_tokens = None
     elif result_usage is None:
-        token_parser_warnings.append(
+        parser_warnings.append(
             "No Claude result usage object was found; token fields are summed from message usage objects."
         )
+    cache_creation_tokens = selected.get("cache_creation_input_tokens")
+    cache_read_tokens = selected.get("cache_read_input_tokens")
+    cache_tokens = numeric_token_field(selected, "cache_creation_input_tokens") + numeric_token_field(
+        selected, "cache_read_input_tokens"
+    )
     return {
         "total_tokens": total_tokens,
         "input_tokens": selected.get("input_tokens"),
         "output_tokens": selected.get("output_tokens"),
+        "cache_tokens": cache_tokens,
+        "cost": total_cost_usd,
+        "parser_warnings": parser_warnings,
         "cache_creation_input_tokens": selected.get("cache_creation_input_tokens"),
         "cache_read_input_tokens": selected.get("cache_read_input_tokens"),
+        "raw_cache_creation_input_tokens": cache_creation_tokens,
+        "raw_cache_read_input_tokens": cache_read_tokens,
         "total_cost_usd": total_cost_usd,
         "json_decode_errors": decode_errors,
         "usage_objects_seen": usage_objects_seen,
         "token_parser": "Claude stream-json result usage; fallback sums message usage objects",
-        "token_parser_warnings": token_parser_warnings,
     }
 
 
@@ -196,6 +213,7 @@ def parse_claude_stream_activity(events_path: Path) -> dict[str, Any]:
     tool_counts: Counter[str] = Counter()
     command_prefixes: Counter[str] = Counter()
     commands: list[str] = []
+    unique_commands_seen: set[str] = set()
     first_event_dt = None
     first_event_timestamp = None
     last_event_dt = None
@@ -224,7 +242,9 @@ def parse_claude_stream_activity(events_path: Path) -> dict[str, Any]:
             tool_counts[tool_kind] += 1
         if isinstance(command, str) and command.strip():
             command = command.strip()
-            commands.append(command)
+            if len(commands) < MAX_ACTIVITY_COMMANDS:
+                commands.append(command)
+            unique_commands_seen.add(command)
             command_prefixes[command.split()[0]] += 1
 
     return {
@@ -243,10 +263,12 @@ def parse_claude_stream_activity(events_path: Path) -> dict[str, Any]:
         ),
         "event_types": dict(event_types.most_common()),
         "tool_counts": dict(tool_counts.most_common()),
-        "command_count": len(commands),
-        "unique_command_count": len(set(commands)),
+        "command_count": sum(command_prefixes.values()),
+        "unique_command_count": len(unique_commands_seen),
         "command_prefix_counts": dict(command_prefixes.most_common()),
         "commands": commands,
+        "commands_truncated": sum(command_prefixes.values()) > len(commands),
+        "max_recorded_commands": MAX_ACTIVITY_COMMANDS,
     }
 
 
@@ -269,7 +291,7 @@ ACTIVITY_PARSERS = {
 }
 
 FINAL_MESSAGE_SOURCE_TYPES = {"file", "structured_event", "stdout_tail", "not_available"}
-FINAL_MESSAGE_PARSERS = {
+VALID_FINAL_MESSAGE_PARSER_IDS = {
     "generic_stdout_last_message",
     "generic_structured_event_message",
 }
@@ -296,7 +318,7 @@ def validate_final_message_config(source_type: str, parser_id: str | None = None
             f"Unknown final message source_type: {source_type}. "
             f"Valid source types: {', '.join(sorted(FINAL_MESSAGE_SOURCE_TYPES))}"
         )
-    if parser_id and parser_id not in FINAL_MESSAGE_PARSERS:
+    if parser_id and parser_id not in VALID_FINAL_MESSAGE_PARSER_IDS:
         raise ValueError(f"Unknown final message parser: {parser_id}")
 
 

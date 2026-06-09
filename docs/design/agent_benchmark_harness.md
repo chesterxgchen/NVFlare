@@ -380,6 +380,11 @@ not add prompt text, task hints, benchmark expectations, metric names, record
 paths, workflow instructions, or other context beyond the explicit benchmark
 prompt selected by the scenario.
 
+If an adapter cannot provide a stable, benchmark-owned default model, it must
+require an explicit model from scenario configuration or the adapter's model env
+var. A supported adapter must not let the underlying agent CLI select an
+implicit default model for measured runs.
+
 ```python
 class AgentAdapter:
     name: str
@@ -449,6 +454,11 @@ The container runtime needs the required fields to start and observe the
 process.
 Optional fields describe agent-specific launch behavior, but missing optional
 fields must not prevent a supported adapter from running.
+`sandbox_flags` and `approval_flags` are audit metadata recorded in
+`launch_spec_metadata.json`; any flag that must affect the measured agent
+process must also be present in the adapter's `argv` template. `bypass_reason`
+must explain why these flags are acceptable inside the isolated benchmark
+container.
 
 `prompt_file` is the path to the already-rendered benchmark prompt. If
 `prompt_input_mode` is `stdin`, the runtime streams the exact file bytes to the
@@ -939,6 +949,7 @@ name: claude
 display_name: Anthropic Claude Code CLI
 default_model: unspecified_default
 model_env: CLAUDE_MODEL
+requires_explicit_model: true
 agent_home_env: CLAUDE_CONFIG_DIR
 container_home: /workspace/.claude
 
@@ -957,17 +968,13 @@ launch:
   prompt_input_mode: stdin
   argv: ["claude", "--dangerously-skip-permissions",
          "--output-format", "stream-json",
-         "--verbose", "--print"]
-  model_argv: ["--model", "{model}"]
+         "--verbose", "--model", "{model}", "--print"]
   sandbox_flags: ["--dangerously-skip-permissions"]
   bypass_reason: "isolated benchmark container; writable state is limited to mounted result/workspace paths"
 
 skill_exposure:
   mechanism_type: launch_flag
   skill_root: "{container_home}/skills"
-  metadata_files:
-    - "{container_home}/nvflare_skills_build_install.json"
-    - "{container_home}/nvflare_skills_list.json"
   launch_args: ["--add-dir", "{skills_dir}"]
 
 final_message:

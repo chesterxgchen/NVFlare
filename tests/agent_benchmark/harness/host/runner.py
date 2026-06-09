@@ -363,7 +363,7 @@ def run_interactive(argv: list[str]) -> int:
         adapter.runtime_env(
             InteractiveRuntimeConfig(
                 agent=adapter.name,
-                agent_model=adapter.model_from_env(os.environ),
+                agent_model=agent_model_from_env(adapter),
                 model_was_explicit=adapter.model_was_explicit(os.environ),
             )
         ).items()
@@ -380,6 +380,13 @@ def run_interactive(argv: list[str]) -> int:
     except OSError as exc:
         emit(f"Failed to start interactive container: {type(exc).__name__}: {exc}", stderr=True)
         return 127
+
+
+def agent_model_from_env(adapter) -> str:
+    try:
+        return adapter.model_from_env(os.environ)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def main() -> None:

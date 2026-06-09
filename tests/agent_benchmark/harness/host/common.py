@@ -365,8 +365,11 @@ def case_config(
     images: ImageConfig,
 ) -> CaseConfig:
     adapter = benchmark_agent_adapter_from_env()
-    agent_model = adapter.model_from_env(os.environ)
-    model_was_explicit = adapter.model_was_explicit(os.environ)
+    try:
+        agent_model = adapter.model_from_env(os.environ)
+        model_was_explicit = adapter.model_was_explicit(os.environ)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     return CaseConfig(
         mode=mode,
         use_preinstalled_skills=use_preinstalled_skills,

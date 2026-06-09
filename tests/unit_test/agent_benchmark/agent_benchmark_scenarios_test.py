@@ -140,6 +140,22 @@ def test_known_pending_agent_is_rejected(tmp_path):
         raise AssertionError("known-pending agents should fail preflight")
 
 
+def test_claude_scenario_requires_explicit_model(tmp_path):
+    from harness.scenarios import ScenarioValidationError, compile_scenario
+
+    raw = base_scenario(tmp_path)
+    raw["agents"] = [{"name": "claude"}]
+    raw["comparison"] = {"type": "one", "mode": "with_skills"}
+
+    try:
+        compile_scenario(raw, base_dir=tmp_path)
+    except ScenarioValidationError as exc:
+        assert "requires an explicit benchmark model" in str(exc)
+        assert "CLAUDE_MODEL" in str(exc)
+    else:
+        raise AssertionError("Claude scenarios must require an explicit model")
+
+
 def test_agent_comparison_requires_unambiguous_model_selection(tmp_path):
     from harness.scenarios import ScenarioValidationError, compile_scenario
 

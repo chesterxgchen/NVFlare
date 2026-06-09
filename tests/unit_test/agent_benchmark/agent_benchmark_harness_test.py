@@ -62,6 +62,7 @@ def test_claude_agent_config_uses_config_dir_and_valid_final_message_source():
     config = AgentConfig.load(config_path)
 
     assert config.agent_home_env == "CLAUDE_CONFIG_DIR"
+    assert config.requires_explicit_model is True
     assert config.final_message["source_type"] == "structured_event"
     assert config.events.parser == "claude_stream_json"
     assert config.usage.parser == "claude_stream_usage"
@@ -99,6 +100,21 @@ def test_claude_adapter_launch_spec_uses_stream_json_without_prompt_text(tmp_pat
     assert "--dangerously-skip-permissions" in spec.sandbox_flags
     assert "Convert this job" not in rendered_argv
     assert "claude-test" in spec.argv
+    assert spec.argv.index("--model") < spec.argv.index("--print")
+
+
+def test_claude_adapter_requires_explicit_model():
+    from harness.agents.registry import load_agent_adapter
+
+    adapter = load_agent_adapter("claude")
+
+    try:
+        adapter.model_from_env({})
+    except ValueError as exc:
+        assert "requires an explicit benchmark model" in str(exc)
+        assert "CLAUDE_MODEL" in str(exc)
+    else:
+        raise AssertionError("Claude benchmark runs must require an explicit model")
 
 
 def test_claude_stream_parser_normalizes_event_usage_and_activity(tmp_path):
@@ -145,6 +161,9 @@ def test_claude_stream_parser_normalizes_event_usage_and_activity(tmp_path):
 
     assert usage["parser_id"] == "claude_stream_usage"
     assert usage["total_tokens"] == 130
+    assert usage["cache_tokens"] == 10
+    assert usage["cost"] == 0.01
+    assert usage["parser_warnings"] == []
     assert usage["total_cost_usd"] == 0.01
     assert activity["parser_id"] == "claude_stream_activity"
     assert activity["event_types"]["result.success"] == 1
@@ -152,6 +171,26 @@ def test_claude_stream_parser_normalizes_event_usage_and_activity(tmp_path):
     assert activity["commands"] == ["python job.py --export"]
     result_event = json.loads(events_path.read_text(encoding="utf-8").splitlines()[-1])
     assert result_event["final_message"] == "Final AUROC 0.75"
+    assistant_event = json.loads(events_path.read_text(encoding="utf-8").splitlines()[1])
+    assert "command" not in assistant_event
+
+
+def test_claude_stream_parser_ignores_non_shell_tool_command_fields(tmp_path):
+    from harness.agents.registry import load_agent_adapter
+
+    adapter = load_agent_adapter("claude")
+    raw_event = {
+        "type": "assistant",
+        "message": {
+            "content": [
+                {"type": "tool_use", "name": "Notebook", "input": {"command": "not a shell command"}},
+            ],
+        },
+    }
+
+    normalized = adapter.normalize_event(json.dumps(raw_event))
+
+    assert "command_text" not in normalized
 
 
 def test_claude_final_message_source_materializes_structured_result_event(tmp_path):
@@ -198,6 +237,62 @@ def test_claude_final_message_source_materializes_structured_result_event(tmp_pa
     assert metadata["parser_warnings"]
 
 
+def test_launch_spec_metadata_records_sandbox_flags_and_bypass_reason(tmp_path):
+    from harness.agents.base import AgentLaunchSpec, SkillExposureResult
+    from harness.container.agent_run import AgentRunConfig, write_launch_spec_metadata
+
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+    config = AgentRunConfig(
+        mode="with_skills",
+        use_preinstalled_skills=True,
+        job_input_dir=tmp_path / "job",
+        result_dir=result_dir,
+        records_dir=result_dir / "records",
+        run_root=tmp_path / "run",
+        prompt_source=tmp_path / "prompt.txt",
+        progress_interval_seconds=0,
+        nvflare_image_kind="test-skills",
+        agent="claude",
+        agent_model="claude-test",
+        agent_home=tmp_path / ".claude",
+        agent_model_was_explicit=True,
+    )
+    launch = AgentLaunchSpec(
+        argv=["claude", "--dangerously-skip-permissions", "--print"],
+        cwd=tmp_path,
+        prompt_file=tmp_path / "prompt.txt",
+        prompt_input_mode="stdin",
+        stdout_events_dest=result_dir / "agent_events.jsonl",
+        stderr_dest=result_dir / "agent_stderr.txt",
+        final_message_dest=result_dir / "agent_last_message.txt",
+        environment={"CLAUDE_CONFIG_DIR": "/workspace/.claude"},
+        sandbox_flags=["--dangerously-skip-permissions"],
+        bypass_reason="isolated benchmark container",
+        launch_timeout=10,
+    )
+    skill_exposure = SkillExposureResult(
+        status="prepared",
+        mechanism_type="launch_flag",
+        launch_args=["--add-dir", "/workspace/.claude/skills"],
+        environment={"CLAUDE_CONFIG_DIR": "/workspace/.claude"},
+    )
+
+    write_launch_spec_metadata(
+        config,
+        [*launch.argv, *skill_exposure.launch_args],
+        {**launch.environment, **skill_exposure.environment},
+        launch,
+        skill_exposure,
+    )
+
+    metadata = json.loads((result_dir / "launch_spec_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["sandbox_flags"] == ["--dangerously-skip-permissions"]
+    assert metadata["bypass_reason"] == "isolated benchmark container"
+    assert metadata["skill_launch_args"] == ["--add-dir", "/workspace/.claude/skills"]
+    assert metadata["environment_keys"] == ["CLAUDE_CONFIG_DIR"]
+
+
 def test_claude_exit_classifier_detects_auth_and_model_failures(tmp_path):
     from harness.agents.registry import load_agent_adapter
 
@@ -208,10 +303,13 @@ def test_claude_exit_classifier_detects_auth_and_model_failures(tmp_path):
     auth_summary = adapter.exit_summary(1, stderr)
     stderr.write_text("Model is not supported in this account.\n", encoding="utf-8")
     model_summary = adapter.exit_summary(1, stderr)
+    stderr.write_text("Permission approval is required.\n", encoding="utf-8")
+    permission_summary = adapter.exit_summary(1, stderr)
 
     assert auth_summary["classifier"] == "claude_cli"
     assert auth_summary["failure_category"] == "agent_auth_failure"
     assert model_summary["failure_category"] == "agent_model_unsupported"
+    assert permission_summary["failure_category"] == "agent_sandbox_or_approval_failure"
 
 
 def test_agent_config_rejects_unknown_parser_id(tmp_path):
@@ -333,10 +431,7 @@ def test_claude_adapter_build_auth_and_skill_exposure_contract(tmp_path):
     )
     assert spec.mechanism_type == "launch_flag"
     assert spec.launch_args == ["--add-dir", str(tmp_path / ".claude-container" / "skills")]
-    assert sorted(path.name for path in spec.metadata_files) == [
-        "nvflare_skills_build_install.json",
-        "nvflare_skills_list.json",
-    ]
+    assert spec.metadata_files == []
 
 
 def test_agent_config_rejects_prompt_text_placeholder(tmp_path):
