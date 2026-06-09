@@ -290,7 +290,8 @@ Exit criteria:
 
 - each public-candidate skill passes the initial admission gate;
 - commands referenced by skills match the installed CLI;
-- each skill has at least one positive trigger and one adjacent negative eval;
+- each skill has at least one positive trigger eval and one adjacent negative
+  trigger case;
 - public-candidate skills pass global negative trigger checks.
 - `BENCHMARK.md` clearly states whether the skill is public-ready based on
   manual initial checks or still draft/internal pending Milestone 7 evaluation.
@@ -543,6 +544,8 @@ Deliverables:
   when that submit-preflight surface is promoted into current scope.
 - Tie released skill content to the NVFLARE release that ships it.
 - Provide guide-compatible skill files and initial evaluation evidence.
+- Use the [Agent Skill Publication Handoff Checklist](agent_publication_handoff_checklist.md)
+  when preparing an external catalog handoff.
 - Keep external catalog registration, signing, public installer metadata, and
   public scoreboard mechanics outside this implementation plan.
 - Do not hand off a skill as public-ready until Milestone 7 runtime evaluation
@@ -559,6 +562,32 @@ Engineering tests:
 - preflight compatibility tests when submit preflight is implemented;
 - publication handoff checks that released skill content is tied to the NVFLARE
   release and has runtime evaluation evidence.
+
+## Agent Benchmark Harness Architecture Catch-Up
+
+The benchmark harness design is ahead of the current implementation. Before a
+second agent adapter is added or the harness is treated as production benchmark
+infrastructure, complete these catch-up items:
+
+- move Codex-specific home, model, auth, launch, and compatibility behavior out
+  of shared host/container modules and into a `CodexAdapter`;
+- replace structural adapter typing with the documented abstract base class and
+  registration validation;
+- implement `harness/scenarios.py` so direct CLI runs and scenario YAMLs compile
+  into one validated `run_plan.json`;
+- implement replay mode for record/report development without live agent
+  invocation;
+- extract container progress and skill-exposure setup into
+  `container/progress.py` and `container/skills.py`;
+- implement `reports/structure_tree.py` or keep `structure_quality_signal`
+  explicitly unavailable until it exists;
+- make flat harness modules explicit re-export shims or remove them;
+- surface `prompt_hash`, stable failure categories, attempt/retry metadata, and
+  unavailable `structure_quality_signal` in run summaries;
+- add `KNOWN_PENDING_BENCHMARK_AGENTS` behavior for planned but unsupported
+  adapters;
+- add a named display-record limit and total/displayed counts for skill
+  benchmark summaries.
 
 ## Deferred Work
 

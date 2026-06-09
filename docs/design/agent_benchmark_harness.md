@@ -6,13 +6,14 @@ conversion and diagnosis tasks. It is benchmark infrastructure, not product API.
 
 The benchmark input is intentionally loose: a job is a folder containing scripts,
 data, configuration, and human documentation. The harness must not require a job
-schema or perform the agent's conversion work. The harness supplies a prompt and
-execution environment, then measures the agent's behavior and produced
-artifacts.
+schema or perform the agent's conversion work. The harness mounts an explicit
+benchmark prompt and execution environment, then measures the agent's behavior
+and produced artifacts.
 
 The architecture supports multiple agents through adapters. Codex is the
-supported adapter until another agent has a defined CLI, auth, event, usage, and
-final-message contract. Unsupported agents fail during preflight.
+supported adapter until another agent has a defined installation,
+configuration, authentication, invocation, event, usage, and final-message
+contract. Unsupported agents fail during preflight.
 
 ## System Boundary
 
@@ -53,25 +54,28 @@ Host runner and scenario expander
 Docker runtime
     |
     v
-Container lifecycle coordinator
+Container runtime environment
     |
-    | prepares prompt, skill exposure, environment, progress, timing
+    | provides Python/uv/pip, selected NVFLARE wheel/skill visibility, agent CLI, mounted prompt/job/results, progress/timing capture
     v
 Agent adapter
     |
-    | invokes agent CLI and normalizes agent-specific events
+    | starts the specified agent CLI, does not modify the prompt, and normalizes agent-specific events
     v
 Artifact, record, and report pipeline
 ```
 
-The host side owns Docker orchestration and run planning. The container side owns
-the ordered lifecycle of one benchmark run. Agent adapters own only
-agent-specific invocation and parsing. Measurement semantics live in shared
-artifact, record, event, timing, quality-signal, and report modules.
+The host side owns Docker orchestration and run planning. The container runtime
+environment provides the neutral infrastructure for one measured run: Python,
+uv/pip, NVFLARE, the selected agent CLI, the explicit prompt, the job mount, the
+result mount, selected skill visibility, and bounded observation artifacts. Agent adapters own
+agent-specific installation metadata, authentication, configuration, invocation,
+and parsing. Measurement semantics live in shared artifact, record, event,
+timing, quality-signal, and report modules.
 
 ## Repository Layout
 
-The benchmark harness lives under `tests/agent_benchmark/`:
+The target benchmark harness layout lives under `tests/agent_benchmark/`:
 
 ```text
 tests/agent_benchmark/
@@ -104,8 +108,14 @@ tests/agent_benchmark/
 |   |   `-- skills.py
 |   |-- agents/
 |   |   |-- base.py
-|   |   |-- codex.py
-|   |   `-- claude.py
+|   |   |-- config.py
+|   |   |-- registry.py
+|   |   |-- parsers.py
+|   |   |-- classifiers.py
+|   |   |-- codex.yaml
+|   |   |-- claude.yaml
+|   |   |-- hermes.yaml        # illustrative/planned
+|   |   `-- openclaw.yaml      # illustrative/planned
 |   `-- reports/
 |       |-- benchmark_insights.py
 |       |-- metrics_report.py
@@ -132,6 +142,20 @@ execution live under `tests/integration_test/agent_benchmark/`.
 `docs/design/agent_benchmark_harness.md` is the architecture document. The
 harness-local README explains how to build and run the tool.
 
+The nested `harness/host/`, `harness/container/`, `harness/agents/`, and
+`harness/reports/` packages are the canonical implementation locations. Flat
+compatibility modules such as `harness/host_runner.py` or `harness/agent_run.py`
+may exist only as explicit re-export shims with deprecation comments. They must
+not own independent logic.
+The layout is normative for the target architecture. Modules listed here are
+the canonical destinations for the corresponding responsibilities; runnable
+scenario YAML support requires `harness/scenarios.py` to compile the YAML into
+`run_plan.json` before any Docker execution.
+Future supported agents add an agent config file under `harness/agents/`, for
+example `harness/agents/<agent>.yaml`. They do not add a per-agent adapter
+subclass when existing launch, skill-exposure, event-parser, usage-parser,
+final-message, and exit-classifier registries cover the agent.
+
 ## Component Ownership
 
 ### CLI Wrappers
@@ -155,6 +179,20 @@ into Python module invocations and do not own benchmark semantics.
 The host runner does not parse agent event streams, infer task success from raw
 logs, derive skill identity from workflow names, or mutate job input folders.
 
+### Case Metadata And Record Identity
+
+`harness/case_metadata.py` owns bounded metadata about the unstructured job
+folder: display name, resolved path, folder hash when affordable, file-count and
+size summaries, documentation-file pointers, and scenario-provided annotations
+such as `job_scale`. It records descriptive context for prompts, run plans, and
+reports. It must not impose a job schema or decide the conversion workflow.
+
+`harness/record_identity.py` owns stable identifiers used in run plans, result
+paths, and aggregation keys: slugs, collision handling, prompt hashes, job
+hashes, repeat IDs, and comparison group IDs. Reports consume these identifiers
+from scenario/run-plan metadata rather than reconstructing them from directory
+names.
+
 ### Scenario Engine
 
 `harness/scenarios.py` owns scenario parsing, validation, and expansion. A
@@ -162,12 +200,21 @@ scenario expands into a concrete `run_plan.json` before the first Docker run
 starts. The run plan is the source of truth for execution order and comparison
 grouping.
 
+Every benchmark entry point compiles into this same run-plan model. Direct
+commands create a single-case scenario and run plan; they do not bypass
+scenario validation, result identity, record synthesis, or report aggregation.
+Scenario YAML files are runnable inputs only when they are consumed by
+`harness/scenarios.py` and produce `run_plan.json`. Scenario examples or YAMLs
+without that compiled run plan are design fixtures, not an alternate execution
+path.
+
 Preflight validation covers:
 
 - supported agent names;
 - unambiguous agent/model selection;
 - valid comparison type and mode names;
 - job paths that exist and are directories;
+- explicit `job_scale` for every scenario job;
 - prompt path existence or renderability;
 - Docker image availability or build inputs;
 - explicit Docker context allowlisting;
@@ -176,6 +223,17 @@ Preflight validation covers:
 Execution is sequential by default. Parallelism is a separate scenario field and
 must be explicit because concurrent agent runs affect timing, resource
 contention, and result interpretation.
+
+Parallelism applies to independent run-plan entries only. A single run-plan
+entry owns one container, one result directory, and one runtime staging root.
+Modes within the same repeat may run in parallel only when each mode gets its
+own container and staging root. No two concurrent entries may share
+`/tmp/nvflare`, a workspace copy, a record directory, or an agent auth/config
+write location.
+Isolation is container-boundary isolation. A fixed path such as `/tmp/nvflare`
+is safe only because each benchmark run gets its own container; if a container
+is reused for multiple concurrent run-plan entries, each entry must receive a
+unique runtime artifact root.
 
 ### Docker Build And Runtime
 
@@ -198,67 +256,506 @@ baseline wheel   NVFLARE_PACKAGE_AGENT_SKILLS=0
 ```
 
 Those wheels are reused across agent images. Agent-specific Docker stages own
-agent CLI installation, auth-home defaults, and native dependencies.
+agent CLI installation, version pinning, auth-home defaults, optional native
+dependencies, and CLI availability probes. The shared builder resolves the
+selected `(agent, variant)` image and passes only namespaced build arguments for
+that agent, for example `CODEX_CLI_VERSION` or `CLAUDE_CLI_VERSION`.
 
-### Container Lifecycle Coordinator
+The Dockerfile may contain agent-specific stages, but shared stages must not
+encode Codex-specific assumptions such as `CODEX_HOME`, `CODEX_MODEL`, Codex
+auth file names, or `codex exec`. Shared stages expose NVFLARE, Python, the
+benchmark harness, prompt mounts, job mounts, result mounts, and generic
+benchmark environment. Agent stages add the selected agent runtime.
 
-`harness/container/agent_run.py` owns the lifecycle of one run inside the
-container:
+The Docker convention is one shared Dockerfile with a shared `base` stage and
+agent-specific runtime stages:
+
+```text
+base
+agent_<agent>
+skills_<agent>
+baseline_<agent>
+```
+
+`agent_<agent>` installs the agent CLI and native dependencies.
+`skills_<agent>` and `baseline_<agent>` install the appropriate NVFLARE wheel
+and any adapter-declared skill metadata. Separate Dockerfiles are reserved for
+agents whose license or runtime constraints make a shared Dockerfile
+impractical; such exceptions must still expose the same `(agent, variant)` image
+contract.
+
+### Container Runtime Environment
+
+`harness/container/agent_run.py` is the container-side runtime setup and
+observation wrapper for one measured run:
 
 - validate mounted input, prompt, and result directories;
-- prepare the container-local workspace;
-- expose or hide packaged NVFLARE skills according to mode;
-- copy prompt metadata into the record directory;
+- provide the configured Python, uv/pip, NVFLARE, and agent CLI environment;
+- provide a container-local workspace copy from the mounted job folder;
+- apply the selected packaged-skill visibility mode;
+- copy the prompt verbatim and write prompt metadata into the record directory;
 - establish workspace baselines for delta capture;
-- invoke the selected agent adapter;
+- hand the prompt and workspace to the selected agent adapter;
 - preserve agent stdout, stderr, events, and final message;
 - synthesize fallback records on failure;
 - run artifact capture and report commands;
 - write final run status.
 
-The lifecycle coordinator does not own agent-specific command construction or
-raw event parsing. It also does not own report meaning, quality-gate policy,
-skill identity trust decisions, or timing semantics beyond calling the timing
-module at defined lifecycle boundaries.
+The container runtime environment does not instruct the agent, construct
+agent-specific commands, or parse raw agent events. It also does not own report
+meaning, quality-gate policy, skill identity trust decisions, or timing
+semantics beyond calling the timing module at defined measurement boundaries.
+Workflow names, mode names, record paths, result paths, and metric expectations
+remain harness metadata unless they are present in the explicit benchmark
+prompt selected by the scenario.
+
+### Timing Boundaries
+
+The container runtime environment records timing marks. Adapters do not decide
+when a benchmark timer starts or stops.
+
+The headline comparison metric is `agent_elapsed_seconds`. It starts
+immediately before the adapter launches the agent process described by
+`AgentLaunchSpec`. It stops when that process exits, or when launch fails and
+the runtime environment records the launch failure. It excludes Docker image build,
+container startup, mounted-input validation, prompt staging, skill exposure,
+workspace baseline capture, artifact capture, record synthesis, and report
+generation.
+
+The run summary also records phase timings:
+
+```text
+container_elapsed_seconds
+setup_elapsed_seconds
+skill_exposure_elapsed_seconds
+agent_elapsed_seconds
+post_process_elapsed_seconds
+report_elapsed_seconds
+```
+
+Skill exposure, agent CLI installation, auth mounting, and configuration setup
+are environment preparation. They are recorded separately and are not eligible
+for the cost/performance winner metric unless a scenario explicitly declares a
+setup-cost experiment.
+
+### Agent Adapter Registry
+
+The harness has a single adapter registry. The registry is the only place that
+maps an agent name to agent-specific behavior. Adding a supported agent requires
+registering one agent config and one install surface; it must not require
+changes to record schemas, report code, mode definitions, quality gates, metric
+extraction, workspace-delta capture, timing, or scenario comparison semantics.
+
+Registration validates the complete adapter contract before an agent can be
+used. A supported adapter must provide all required launch, skill-exposure,
+event, usage, final-message, metadata, and failure-classification behavior at
+registration time; missing methods or unsupported capabilities fail preflight,
+not an in-progress benchmark run.
+The adapter base must be an abstract base class with explicit abstract methods.
+Registration may add additional semantic validation, but structural typing alone
+is not the architecture contract.
+
+The registry supports three categories:
+
+| Category | Meaning |
+| --- | --- |
+| `supported` | The adapter has implementation, Docker image support, contract tests, and can run benchmarks. |
+| `known_pending` | The agent is named in design or docs, but intentionally fails preflight with a clear unsupported message. |
+| `unknown` | The harness rejects the name as invalid input. |
+
+This keeps future names such as `claude`, `hermes`, or `openclaw` visible
+without allowing partially implemented agents to run.
+
+The initial registry state is `codex` as `supported`; names such as `claude`
+may be registered as `known_pending` only when the design and user-facing error
+message intentionally identify them as planned but not runnable.
 
 ### Agent Adapters
 
-An agent adapter owns the agent-specific mechanics required to run and parse one
-agent surface:
+An agent adapter owns only the agent-specific mechanics required to start and
+parse one agent surface. It translates the specified agent name and model into
+provider-specific CLI, auth, environment, launch, and parsing details. It must
+not add prompt text, task hints, benchmark expectations, metric names, record
+paths, workflow instructions, or other context beyond the explicit benchmark
+prompt selected by the scenario.
 
 ```python
 class AgentAdapter:
     name: str
+    display_name: str
+    default_model: str
+    agent_home_env: str
+    container_home: str
 
     def model_from_env(self, env: Mapping[str, str]) -> str: ...
+    def build_args_from_env(self, env: Mapping[str, str]) -> dict[str, str]: ...
+    def image_targets(self) -> AgentImageTargets: ...
     def auth_mounts(self, host_config) -> list[DockerMount]: ...
     def runtime_env(self, config) -> dict[str, str]: ...
-    def command(self, config) -> list[str]: ...
+    def launch_spec(self, config) -> AgentLaunchSpec: ...
+    def skill_exposure(self, config) -> SkillExposureSpec: ...
+    def availability_probe(self) -> list[str]: ...
+    def normalize_event(self, raw_line: str) -> dict | None: ...
     def parse_usage(self, events_path: Path) -> dict: ...
     def parse_activity(self, events_path: Path) -> dict: ...
-    def final_message_path(self, result_dir: Path) -> Path: ...
+    def final_message_source(self, result_dir: Path) -> FinalMessageSource: ...
     def metadata(self) -> dict: ...
+    def exit_summary(self, exit_code: int, stderr_path: Path) -> dict: ...
 ```
+
+The adapter contract covers:
+
+- CLI installation and version metadata;
+- host and container auth/config locations;
+- runtime environment variables;
+- model selection;
+- launch working directory, delivery of the explicit prompt without modification,
+  stdout/stderr/event stream routing, shell/login behavior, approval and
+  sandbox flags, and launch-failure handling;
+- skill-exposure mechanism, setup action, probe action, and metadata locations;
+- final assistant message capture;
+- raw event normalization;
+- token and activity extraction;
+- CLI availability checks;
+- exit-code interpretation;
+- agent-specific parser warnings.
+
+`AgentLaunchSpec` has six required fields with no defaults:
+
+| Field | Meaning |
+| --- | --- |
+| `argv` | Agent CLI argv excluding shell interpolation. |
+| `cwd` | Working directory for the measured agent process. |
+| `prompt_file` | Path to the already-rendered benchmark prompt. |
+| `prompt_input_mode` | How exact prompt bytes are delivered: `stdin` or `file_arg`. |
+| `stdout_events_dest` | File path where stdout or structured event stream is captured. |
+| `stderr_dest` | File path where stderr is captured. |
+
+Optional fields have explicit defaults:
+
+| Field | Default |
+| --- | --- |
+| `final_message_dest` | `none` |
+| `environment` | `{}` |
+| `login_shell` | `false` |
+| `approval_flags` | `[]` |
+| `sandbox_flags` | `[]` |
+| `bypass_reason` | `none` |
+| `launch_timeout` | job-scale policy |
+| `extra_artifact_paths` | `[]` |
+
+The container runtime needs the required fields to start and observe the
+process.
+Optional fields describe agent-specific launch behavior, but missing optional
+fields must not prevent a supported adapter from running.
+
+`prompt_file` is the path to the already-rendered benchmark prompt. If
+`prompt_input_mode` is `stdin`, the runtime streams the exact file bytes to the
+agent process. If it is `file_arg`, the adapter argv may reference
+`{prompt_file}`. Adapter configs must not use `{prompt_text}` or any other
+template that injects prompt content into argv, environment variables, or
+adapter-owned files.
+
+If an argv template references `{final_message_dest}`, the renderer must provide
+a concrete path and set `final_message_dest` to that same path. If no concrete
+final-message path is available, rendering fails preflight or the template must
+omit the flag pair. It must not substitute the literal value `none`.
+`bypass_reason` is required whenever `approval_flags` or `sandbox_flags` disable
+interactive approval or sandbox checks; it is recorded in runtime metadata.
+
+`SkillExposureSpec` is mechanism-typed rather than command-shaped:
+
+```text
+mechanism_type = cli_install | launch_flag | directory_mount | config_file | preinstalled_home | none
+skill_root
+source_paths
+setup_action
+probe_action
+disable_action
+launch_args
+environment
+metadata_files
+expected_post_setup_state
+```
+
+Only fields that make sense for the mechanism are populated. For example, a
+Codex-style adapter can use `cli_install`, while an agent that exposes skills
+through an added directory can use `launch_flag` or `directory_mount`. The
+container runtime requests the adapter's skill exposure spec and records the
+returned `SkillExposureSpec`; it does not branch on agent names or
+provider-specific paths.
+
+`harness/container/skills.py` is the only component that executes
+`SkillExposureSpec` actions. It validates scoped paths, applies `setup_action`
+for `with_skills`, applies `disable_action` for `without_skills`, runs
+`probe_action` when present, captures declared `metadata_files`, and writes
+`SkillExposureResult`. The adapter returns data; it does not execute the setup,
+probe, or disable action itself.
+
+`SkillExposureResult` is written by the container runtime after applying the
+spec:
+
+```text
+status = prepared | disabled | skipped | failed
+mechanism_type
+installed_paths
+disabled_paths
+probe_status
+probe_output_ref
+metadata_files
+parser_warnings
+```
+
+In `with_skills` mode, the container runtime applies the spec's setup action
+unless the mechanism is already prepared. In `without_skills` mode, the
+container runtime applies the spec's disable action. If the no-skills image or launch path
+already guarantees no packaged skills are visible, the adapter returns
+`mechanism_type: none`; the container runtime records `status: skipped` and
+performs no file operation.
+Setup, probe, and disable actions are scoped to benchmark-owned container paths
+such as the benchmark agent home, skill root, workspace config path, or result
+directory. They must not operate on the host user's real agent home, global
+skill catalog, or unrelated agent configuration. Broad operations such as
+`--all` are allowed only when the target root is explicitly the benchmark-owned
+agent home or skill root.
+
+`FinalMessageSource` is also typed:
+
+```text
+source_type = file | structured_event | stdout_tail | not_available
+path
+event_selector
+tail_bytes
+parser_warnings
+```
+
+The container runtime always materializes `agent_last_message.txt` as the
+normalized artifact. Adapters that cannot ask the CLI to write a final-message
+file must extract the final message from structured events or bounded stdout
+and record parser warnings when fidelity is lower.
+
+Benchmark launches are non-interactive. If an agent normally asks for approval,
+uses an interactive sandbox, or blocks tool execution by default, its adapter
+must declare the explicit CLI flags or configuration that make benchmark runs
+fully automated inside the isolated container. The adapter metadata must record
+those flags and why they are safe in the benchmark context. The shared
+runtime layer must not hard-code a provider-specific bypass flag.
+
+The agent process receives a sanitized environment assembled from the adapter's
+runtime requirements. Benchmark control variables such as mode, result paths,
+record paths, retry state, and skill-exposure bookkeeping remain harness-internal
+state and are not exposed as task instructions. If a scenario intentionally
+exposes a benchmark variable to the agent, that exposure is part of the
+experimental condition and must be recorded in prompt or run metadata.
+
+The run plan selects whether the measured run is `with_skills` or
+`without_skills`. The container runtime applies that already-selected
+visibility mode before the measured agent process starts. The adapter owns the
+mechanics for the selected agent: where skills live, how they are installed or
+hidden, how availability is probed, and where skill metadata is recorded.
+`container/skills.py` applies the adapter-provided spec and records the
+outcome; adapters must not directly remove, overwrite, or publish benchmark
+skill files as a side effect of constructing the spec.
 
 Adapters may expose observations such as model name, CLI version, raw usage,
-raw activity, and agent-reported skill identity. They must not decide benchmark
-meaning. Timing boundaries, workspace artifacts, process records, report
-filters, source immutability policy, pass/fail normalization, and failure-root
-classification belong to the coordinator, record layer, and report layer.
+raw activity, tool-call summaries, and agent-reported skill identity. They must
+not decide benchmark meaning. Timing boundaries, workspace artifacts, process
+records, report filters, source immutability policy, pass/fail normalization,
+metric validity, skill-identity trust decisions, and failure-root
+classification belong to the harness runtime, record layer, and report layer.
 
-Event normalization is agent-specific but emits an agent-neutral event schema:
+Shared host and container modules use generic benchmark names:
 
-```python
-normalize_agent_event(agent: str, raw_line: str) -> dict | None
+```text
+BENCHMARK_AGENT
+BENCHMARK_AGENT_MODEL
+BENCHMARK_AGENT_HOME
+BENCHMARK_AGENT_CONFIG_DIR
 ```
 
+Agent-specific variables such as `CODEX_MODEL`, `CODEX_HOME`, `CLAUDE_MODEL`,
+or `CLAUDE_CONFIG_DIR` are translated by the adapter at the host boundary. They
+must not become required inputs for shared records, reports, modes, or quality
+checks. Shared host, container, record, and report code must not branch on
+provider-specific names except through the adapter registry.
+
+Event normalization is agent-specific but emits an agent-neutral event schema.
+The container runtime calls the selected adapter directly:
+
+```python
+adapter.normalize_event(raw_line: str) -> dict | None
+```
+
+If a module-level helper exists, it is only a thin registry wrapper around the
+selected adapter method, not a second dispatch model.
+
 `harness/events.py` owns neutral event helpers and common counters.
-`harness/agents/<agent>.py` owns raw event normalization, usage parsing,
-activity parsing, final-message discovery, and CLI metadata for that agent.
+`harness/agents/config.py`, `harness/agents/parsers.py`, and
+`harness/agents/classifiers.py` own raw event normalization, usage parsing,
+activity parsing, final-message discovery, exit classification, and CLI
+metadata selected by each agent config.
 
-### Codex Adapter
+If an agent exposes lower-fidelity output than Codex, the adapter still writes
+the neutral artifacts and records parser warnings. Missing token usage, missing
+structured tool-call events, or an approximate final-message source are
+recorded as limitations; they do not change the benchmark schema.
 
-The Codex adapter defines:
+### Neutral Event And Usage Contracts
+
+Adapters normalize raw agent output into the shared `agent_events.jsonl`,
+`agent_usage.json`, `agent_activity.json`, `agent_last_message.txt`, and
+`agent_stderr.txt` artifacts.
+
+Normalized shell and tool events use agent-neutral fields:
+
+```text
+schema_version
+event_type
+agent
+timestamp
+tool_kind
+command_text
+command_argv
+cwd
+status
+exit_code
+started_at
+ended_at
+output_ref
+truncated
+redacted
+parser_warnings
+```
+
+The adapter may omit fields that the agent CLI does not expose, but omitted or
+approximated fields must be declared in `parser_warnings`. Reports consume this
+neutral event schema rather than provider-specific envelopes such as Codex item
+types.
+
+Usage artifacts declare their semantics:
+
+```text
+schema_version
+source
+usage_fidelity
+is_cumulative
+input_tokens
+output_tokens
+reasoning_tokens
+cache_tokens
+tool_tokens
+total_tokens
+cost
+parser_warnings
+```
+
+The shared harness may aggregate normalized usage fields. It must not scrape
+arbitrary provider raw JSON as the primary usage contract.
+
+Allowed `usage_fidelity` values are:
+
+| Fidelity | Meaning |
+| --- | --- |
+| `exact` | Reported directly by the agent CLI or provider metadata with documented semantics. |
+| `parsed` | Derived from structured agent events with stable parser logic. |
+| `approximate` | Estimated from partial, lossy, or text-derived evidence. |
+| `unavailable` | The adapter could not provide the field. |
+
+Reports may compare elapsed time across all completed runs because timing
+boundaries are harness-defined. Token and cost comparisons require comparable usage sources:
+`exact` may be compared with `exact`, and `parsed` may be compared with
+`parsed` from the same adapter parser version. Mixed-fidelity comparisons remain
+visible in tables but cannot be used as winner-policy tiebreakers unless the
+scenario explicitly opts into approximate cost comparison.
+
+### Failure Classification Contract
+
+Adapters normalize provider-specific failures into shared categories:
+
+```text
+agent_cli_missing
+agent_auth_failure
+agent_model_unsupported
+agent_rate_limited
+agent_context_limit
+agent_sandbox_or_approval_failure
+agent_internal_error
+agent_unknown_failure
+harness_preflight_failure
+harness_execution_skipped
+harness_execution_error
+```
+
+The report layer renders these categories and combines them with shared
+benchmark evidence. It must not hard-code provider-specific diagnoses such as
+Codex model-selection failures outside the adapter layer.
+The harness runtime, not the adapter, writes `harness_preflight_failure`,
+`harness_execution_skipped`, and `harness_execution_error` when the failure is
+clearly caused by run-plan validation, skipped execution policy, Docker/runtime
+or artifact/report pipeline failure rather than the agent CLI.
+
+### Retry Policy
+
+Benchmark run-plan entries execute once by default. The default is no automatic
+retry because retries change elapsed time, token use, and failure-rate
+interpretation.
+
+A scenario may opt into an explicit retry policy:
+
+```text
+retry_policy.max_attempts
+retry_policy.retryable_categories
+retry_policy.initial_backoff_seconds
+retry_policy.max_backoff_seconds
+```
+
+Only categories declared in `retryable_categories` may retry, typically
+`agent_rate_limited` or transient `harness_execution_error`. Auth failures,
+unsupported models, quality-gate failures, and source-mutation failures are not
+retryable by default. Every attempt is recorded. Reports show attempt count and
+retry reasons; winner-policy calculations use the terminal successful attempt
+only when the scenario explicitly declares that retry cost is excluded. Otherwise
+retry time and token usage remain part of the run cost.
+
+### Shared Benchmark Core
+
+The shared benchmark core is agent-neutral. It owns:
+
+- prompt staging;
+- job-folder mounting;
+- skill-exposure modes;
+- workspace baseline and delta capture;
+- source-input immutability checks;
+- lifecycle timing;
+- normalized record synthesis;
+- metric extraction and quality signals;
+- failure analysis;
+- report rendering;
+- scenario expansion and comparison grouping.
+
+The shared core must not know how an agent authenticates, where its home
+directory is located, which CLI flags select a model, how its raw events are
+shaped, or how it writes a final assistant response. Those are adapter
+responsibilities.
+
+Adding a new supported agent should be localized to:
+
+- `harness/agents/<agent>.yaml`;
+- one Docker install stage or install descriptor for that agent;
+- adapter registry configuration;
+- auth/config README entries;
+- sample event fixtures and adapter contract tests.
+
+If the new agent requires a parser or classifier that does not exist, add that
+implementation to the shared parser/classifier registry and reference its ID
+from the YAML config. Do not add a per-agent adapter subclass.
+
+If adding an agent requires editing reports, records, modes, metric extraction,
+or failure-analysis logic, the adapter boundary is too weak.
+
+### Codex Agent Config
+
+The Codex agent config defines:
 
 - CLI command: `codex exec --json ...`;
 - model environment variable: `CODEX_MODEL`;
@@ -268,9 +765,9 @@ The Codex adapter defines:
 - cumulative token usage parsing;
 - final message path for `--output-last-message`.
 
-### Non-Codex Adapters
+### Non-Codex Agent Configs
 
-A non-Codex adapter is supported only when these contracts are known:
+A non-Codex agent config is supported only when these contracts are known:
 
 - installation and version pinning;
 - auth and config mount locations;
@@ -285,6 +782,316 @@ If an agent does not expose Codex-like structured events, its adapter still
 emits the neutral event contract with lower-fidelity activity fields and parser
 warnings in `agent_usage.json` or `agent_activity.json`.
 
+Non-Codex adapters must not introduce new benchmark modes or report sections.
+For example, Claude, Hermes, or OpenClaw compare against Codex through the same
+`without_skills` and `with_skills` modes, the same result schema, the same
+quality gates, and the same reports. Agent-specific sections are allowed only
+for raw metadata that does not change benchmark interpretation.
+
+### Agent Adapter Examples
+
+Most adapter behavior is data: CLI argv templates, auth paths,
+skill-exposure mechanism, event parser ID, usage parser ID, final-message
+source, and exit-classifier ID. `ConfigurableAgentAdapter` is the concrete
+adapter class. It reads an agent config file and implements `AgentAdapter`
+methods from that config. Adding an agent is config-only when existing
+mechanism and parser registry entries cover that agent.
+
+Module ownership:
+
+- `harness/agents/base.py` owns the `AgentAdapter` abstract base class and typed
+  specs such as `AgentLaunchSpec`, `SkillExposureSpec`,
+  `SkillExposureResult`, and `FinalMessageSource`.
+- `harness/agents/config.py` owns `AgentConfig`, YAML validation, template
+  rendering, config-driven image/auth/runtime helpers, and
+  `ConfigurableAgentAdapter`.
+- `harness/agents/registry.py` owns supported/known-pending/unknown agent
+  registration and maps an agent name to a loaded `ConfigurableAgentAdapter`.
+- `harness/agents/parsers.py` owns parser registries and helpers such as
+  `parse_usage_from_events`, `parse_activity_from_events`, and
+  `normalize_event_with_parser`.
+- `harness/agents/classifiers.py` owns exit-code and failure-classifier
+  registries, including `classify_exit`.
+
+Neutral event schema utilities remain in `harness/events.py`.
+If a new agent exposes a raw event format that no existing parser supports, the
+new code belongs in the shared parser registry under a named parser ID, not in a
+per-agent adapter subclass.
+
+#### Generic Configurable Adapter
+
+```python
+class ConfigurableAgentAdapter(AgentAdapter):
+    """Implements adapter methods that can be safely driven by YAML config.
+
+    Agents are registered by loading YAML configs. Provider-specific parsers and
+    classifiers are selected by ID from registries.
+    """
+
+    def __init__(self, config_path: Path) -> None:
+        self._cfg = AgentConfig.load(config_path)
+
+    @property
+    def name(self) -> str: return self._cfg.name
+    @property
+    def display_name(self) -> str: return self._cfg.display_name
+    @property
+    def default_model(self) -> str: return self._cfg.default_model
+    @property
+    def agent_home_env(self) -> str: return self._cfg.agent_home_env
+    @property
+    def container_home(self) -> str: return self._cfg.container_home
+
+    def launch_spec(self, config) -> AgentLaunchSpec:
+        argv = self._cfg.launch.render_argv(config)
+        return AgentLaunchSpec(
+            argv=argv,
+            cwd=config.workspace_dir,
+            prompt_file=config.prompt_file,
+            prompt_input_mode=self._cfg.launch.prompt_input_mode,
+            stdout_events_dest=config.events_dest,
+            stderr_dest=config.stderr_dest,
+            launch_timeout=config.timeout_seconds,
+            bypass_reason=self._cfg.launch.bypass_reason,
+        )
+
+    def skill_exposure(self, config) -> SkillExposureSpec:
+        return self._cfg.skill_exposure.render(config)
+
+    def final_message_source(self, result_dir: Path) -> FinalMessageSource:
+        return self._cfg.final_message.render(result_dir)
+
+    def parse_usage(self, events_path: Path) -> dict:
+        return parse_usage_from_events(events_path, self._cfg.usage)
+
+    def parse_activity(self, events_path: Path) -> dict:
+        return parse_activity_from_events(events_path, self._cfg.activity)
+
+    def normalize_event(self, raw_line: str) -> dict | None:
+        return normalize_event_with_parser(raw_line, self._cfg.events.parser)
+
+    def exit_summary(self, exit_code: int, stderr_path: Path) -> dict:
+        return classify_exit(exit_code, stderr_path, self._cfg.exit.classifier)
+
+    def metadata(self) -> dict:
+        return {"agent": self.name, "config": str(self._cfg.source_path)}
+```
+
+This sketch omits straightforward accessors such as `model_from_env`,
+`auth_mounts`, `runtime_env`, image target resolution, and availability probes;
+those are still part of the formal `AgentAdapter` contract.
+
+#### Agent Config Files
+
+Each agent ships one YAML config file. Mechanical differences between agents
+live here. Provider-specific event, usage, activity, final-message, and
+exit-code behavior is selected through named parser or classifier IDs in the
+config.
+
+```yaml
+# harness/agents/codex.yaml
+name: codex
+display_name: OpenAI Codex CLI
+default_model: o3
+agent_home_env: CODEX_HOME
+container_home: /workspace/.codex
+
+launch:
+  prompt_input_mode: stdin
+  argv: ["codex", "exec", "--json",
+         "--output-last-message", "{final_message_dest}",
+         "--dangerously-bypass-approvals-and-sandbox",
+         "--model", "{model}"]
+  bypass_reason: "isolated container; no persistent side effects outside workspace"
+
+skill_exposure:
+  mechanism_type: cli_install
+  setup_action: ["codex", "skills", "install", "--path", "{skills_dir}"]
+  probe_action:  ["codex", "skills", "list"]
+  # Scoped to the benchmark-owned agent home, never the host user's skill state.
+  disable_action: ["codex", "skills", "uninstall", "--root", "{container_home}", "--all"]
+  metadata_files: ["~/.codex/skills.json"]
+
+final_message:
+  source_type: file
+  path: "{result_dir}/agent_last_message.txt"
+
+events:
+  parser: codex_jsonl
+  format: jsonl
+
+usage:
+  parser: codex_cumulative_usage
+  fidelity: parsed
+  is_cumulative: true
+
+activity:
+  parser: codex_jsonl_activity
+
+exit:
+  classifier: codex_cli
+```
+
+```yaml
+# harness/agents/claude.yaml
+name: claude
+display_name: Anthropic Claude Code CLI
+default_model: claude-opus-4-8
+agent_home_env: CLAUDE_CONFIG_DIR
+container_home: /workspace/.claude
+
+launch:
+  prompt_input_mode: stdin
+  argv: ["claude", "--dangerously-skip-permissions",
+         "--model", "{model}",
+         "--output-format", "stream-json",
+         "--print"]
+  bypass_reason: "--dangerously-skip-permissions required for non-interactive runs"
+
+skill_exposure:
+  mechanism_type: launch_flag
+  # skills_dir injected as a launch flag; no separate install or uninstall step
+  launch_args: ["--add-dir", "{skills_dir}"]
+  metadata_files: ["{skills_dir}/CLAUDE.md"]
+
+final_message:
+  source_type: structured_event
+  event_selector: {type: result, subtype: success}
+  parser_warnings:
+    - "final message from last result event; may be truncated at context limit"
+
+events:
+  parser: claude_stream_json
+  format: stream-json
+
+usage:
+  parser: claude_stream_usage
+  fidelity: parsed
+  is_cumulative: false
+
+activity:
+  parser: claude_stream_activity
+
+exit:
+  classifier: claude_cli
+```
+
+```yaml
+# harness/agents/hermes.yaml  (illustrative)
+name: hermes
+display_name: Hermes Agent CLI
+default_model: hermes-3
+agent_home_env: HERMES_HOME
+container_home: /workspace/.hermes
+
+launch:
+  prompt_input_mode: file_arg
+  argv: ["hermes", "run", "--no-confirm",
+         "--model", "{model}", "--prompt-file", "{prompt_file}"]
+  bypass_reason: "--no-confirm disables interactive approval in headless runs"
+
+skill_exposure:
+  mechanism_type: config_file
+  setup_action:   ["hermes", "skills", "write-config",
+                   "--skills-dir", "{skills_dir}", "--output", "{config_path}"]
+  disable_action: ["hermes", "skills", "clear-config", "--config", "{config_path}"]
+  probe_action:   ["hermes", "skills", "verify",       "--config", "{config_path}"]
+  config_path: "{workspace_dir}/.hermes/hermes.yaml"
+  metadata_files: ["{config_path}"]
+
+final_message:
+  source_type: stdout_tail
+  tail_bytes: 8192
+  parser_warnings:
+    - "Hermes does not emit a structured final-message event; stdout tail used"
+
+events:
+  parser: generic_partial_json
+  format: partial-json
+
+usage:
+  parser: unavailable
+  fidelity: unavailable
+  parser_warnings:
+    - "Hermes CLI does not report token usage"
+
+activity:
+  parser: generic_command_activity
+
+exit:
+  classifier: generic_cli
+```
+
+```yaml
+# harness/agents/openclaw.yaml  (illustrative)
+name: openclaw
+display_name: OpenClaw Agent
+default_model: claw-2
+agent_home_env: OPENCLAW_HOME
+container_home: /workspace/.openclaw
+
+launch:
+  prompt_input_mode: file_arg
+  argv: ["openclaw", "exec", "--batch",
+         "--model", "{model}", "--input", "{prompt_file}"]
+  bypass_reason: "--batch enables non-interactive execution"
+
+skill_exposure:
+  # skills baked into the image; mode difference is entirely in image selection
+  mechanism_type: preinstalled_home
+  skill_root: /workspace/.openclaw/skills
+  probe_action: ["openclaw", "skills", "list"]
+  metadata_files: ["/workspace/.openclaw/skills/manifest.json"]
+
+final_message:
+  source_type: file
+  path: "{result_dir}/openclaw_response.txt"
+
+events:
+  parser: generic_jsonl
+  format: jsonl
+
+usage:
+  parser: openclaw_exact_usage
+  fidelity: exact
+  is_cumulative: true
+
+activity:
+  parser: generic_jsonl_activity
+
+exit:
+  classifier: generic_cli
+```
+
+#### Parser And Classifier Registries
+
+Agent configs select parser and classifier behavior by ID. The registry maps
+IDs such as `codex_jsonl`, `claude_stream_json`, `generic_jsonl`, or
+`generic_cli` to shared parser functions. Adding a new agent should not create a
+new adapter subclass. If the agent needs a new raw event parser, usage parser,
+activity parser, final-message extractor, or exit classifier, that code is
+added to the shared registry under a named ID and then referenced from the YAML
+config.
+Event, usage, activity, and final-message parser IDs are registered in
+`harness/agents/parsers.py`. Exit and failure classifier IDs are registered in
+`harness/agents/classifiers.py`. `harness/agents/registry.py` validates at
+preflight that every parser or classifier ID referenced by an agent YAML exists.
+
+#### Key Differences Across Agent Configs
+
+| Adapter | `mechanism_type` | bypass flag | events format | `usage_fidelity` | final message |
+| --- | --- | --- | --- | --- | --- |
+| Codex | `cli_install` | `--dangerously-bypass-approvals-and-sandbox` | `jsonl` | `parsed` | `file` |
+| Claude | `launch_flag` | `--dangerously-skip-permissions` | `stream-json` | `parsed` | `structured_event` |
+| Hermes | `config_file` | `--no-confirm` | `partial-json` | `unavailable` | `stdout_tail` |
+| OpenClaw | `preinstalled_home` | `--batch` | `jsonl` | `exact` | `file` |
+
+For `preinstalled_home` agents such as OpenClaw, the `with_skills` vs
+`without_skills` difference is entirely in the Docker image layer. The
+container runtime still calls `skill_exposure()` to record the spec;
+`setup_action` and `disable_action` are absent and the container runtime skips
+execution.
+
 ### Artifact Layer
 
 `harness/artifacts.py` owns bounded artifact capture:
@@ -297,6 +1104,28 @@ warnings in `agent_usage.json` or `agent_activity.json`.
 
 The artifact layer records what changed. It does not decide whether a change is
 scientifically correct or whether the agent chose the right workflow.
+
+The protected input surface is the original job folder mounted into the
+container. It is mounted read-only. The agent works in a container-local
+workspace copy. Before the agent starts, the artifact layer captures hash
+manifests for both the read-only input mount and the workspace copy. After the
+agent exits, it captures the same manifests again and computes:
+
+```text
+input_delta_manifest.json
+workspace_delta_manifest.json
+```
+
+The manifest comparison is content based: stable relative path, file type, size,
+and SHA-256 for regular files. Symlinks are recorded but not followed. Large
+files may be represented by bounded metadata plus an explicit truncation flag
+when hashing would exceed configured artifact limits.
+
+`source_input_modified` is true only when the original input mount's manifest
+changes or the harness detects an attempted write against the protected input
+surface. Generated files in the workspace copy are expected and are reported in
+`workspace_delta_manifest.json`; they do not by themselves mean the original
+source input was modified.
 
 ### Record Layer
 
@@ -338,6 +1167,9 @@ Reports show:
 Metric sections should be named by metric family, for example
 `Metrics (AUROC)` or `Metrics (valid_loss)`. Plot legends should identify the
 compared run leg rather than repeating the metric name in every bar label.
+If structure-tree analysis is unavailable for a run, reports and summaries
+should include `structure_quality_signal` with an explicit unavailable/null
+state rather than omitting the field.
 
 ## Mode Model
 
@@ -368,6 +1200,17 @@ claude / with_skills
 The architecture has no `with_skills_eval_on`, `with_skills_eval_off`,
 `PROCESS_EVAL`, `NVFLARE_SKILL_EVAL`, or skill-evaluator mode.
 
+`with_skills` means packaged NVFLARE agent skills are made available through the
+selected agent's supported skill or instruction mechanism. `without_skills`
+means those packaged NVFLARE skills are absent. The mode meaning is shared
+across agents; the adapter only supplies the mechanics needed to expose or hide
+the same NVFLARE skill content for that agent.
+
+Skill installation, agent CLI installation, authentication setup, and agent
+configuration setup are environment preparation. They happen before the measured
+agent process starts and are recorded as runtime metadata, not as agent task
+work.
+
 ## Scenario Model
 
 A scenario defines a matrix across these axes:
@@ -387,10 +1230,31 @@ Important boundaries:
 - `agent` and `agent_model` are separate axes.
 - `workflow` is separate from the job folder.
 - `workflow` does not imply framework or skill package.
+- `workflow` is scenario metadata and comparison identity; it is not a hidden
+  instruction. If the agent should perform a specific workflow, that request
+  must appear in the explicit benchmark prompt.
 - `job` remains an unstructured folder.
 - `job_scale` controls timeout and resource policy; it is not inferred by
   default.
 - `comparison` is explicit and must not be overloaded by shorthand names.
+
+Scenario validation rejects job entries without an explicit `job_scale`. Direct
+CLI runs must also produce a run-plan entry with an explicit `job_scale`, either
+from a CLI argument or a named direct-run default recorded in the run plan. The
+harness must not infer scale from file count, data size, README text, or runtime
+duration.
+
+Default resource policy:
+
+| `job_scale` | `agent_elapsed_seconds` timeout | Container timeout | Result-size budget |
+| --- | ---: | ---: | ---: |
+| `small` | 30 minutes | 40 minutes | 1 GB |
+| `medium` | 90 minutes | 120 minutes | 5 GB |
+| `large` | 240 minutes | 300 minutes | 20 GB |
+
+Scenarios may override these values explicitly. CPU, memory, and GPU limits are
+scenario fields, not inferred from `job_scale`, because agent CLIs and training
+dependencies have different resource profiles.
 
 Comparison examples:
 
@@ -430,31 +1294,45 @@ Expansion rules:
 - `model_comparison` varies the model axis for one explicit agent.
 - Workflows, jobs, and repeats expand outside the compared axis.
 
+For `agent_comparison`, each compared agent must resolve to exactly one model
+through one of these sources, in order: an explicit `models_by_agent` entry in
+the comparison object, a single model in that agent's top-level scenario entry,
+or the adapter's declared default model. If more than one model remains
+possible, preflight fails. If an adapter default is used, the run plan records
+`model_source: adapter_default`.
+
 ## Prompt Model
 
-The prompt is an explicit benchmark input. A direct run may pass a prompt file.
-A scenario may render a prompt from templates, workflow instructions, and job
-metadata. Either way, the rendered prompt is copied into each record directory as
+The prompt is an explicit benchmark input and is the only task instruction the
+harness gives the agent. A direct run passes a prompt file. A scenario may
+select a prompt file or a declared prompt template, but every rendered byte is
+part of the benchmark prompt and is copied into each record directory as
 `prompt.txt` with hash metadata.
 
-The runtime prompt is rendered from:
+The harness must not append hidden text to the prompt. It must not add mode
+names, workflow instructions, skill hints, record paths, metric expectations,
+output-format requirements, or evaluator/reporting instructions unless those
+words are already present in the explicit prompt source selected by the
+scenario. This is the benchmark bias boundary: skill availability is the
+experimental variable, not extra harness guidance.
 
-- base task instructions;
-- job metadata summary;
-- workflow instruction;
-- mode instruction;
-- agent-neutral output expectations.
+Prompt templates use a strict variable renderer: every placeholder must have a
+value, unknown placeholders fail preflight, and rendered prompts are plain text.
+Template variables are substitutions only. They do not authorize the harness to
+auto-inject job metadata, workflow text, mode names, or output expectations.
+Direct prompt files are treated as already rendered prompts.
 
-Example render variables:
-
-```text
-JOB_INPUT_DIR=/workspace/input
-WORKFLOW_NAME=SCAFFOLD
-EXPECTED_MODE=with_skills
-```
+For skill-ablation comparisons such as `without_skills` versus `with_skills`,
+compared mode legs must receive identical prompt bytes unless the scenario is
+explicitly labeled as a prompt-ablation experiment. The prompt hash is the
+audit mechanism for this rule.
 
 The harness must not rely on prompt text for mode names, record paths, report
-filters, or evaluator behavior. Those are harness-supplied configuration values.
+filters, or evaluator behavior. Those are harness-supplied configuration values
+kept outside the agent prompt.
+The prompt hash is computed over the rendered prompt bytes and recorded as a
+top-level record-summary field so prompt variation is visible in every
+comparison.
 
 ## Skill Identity
 
@@ -499,27 +1377,47 @@ results/
                         `-- repeat=<NN>/
                             |-- repeat_summary.json
                             `-- mode=<mode>/
-                                |-- record_summary.json
-                                |-- agent_events.jsonl
-                                |-- agent_usage.json
-                                |-- agent_activity.json
-                                |-- agent_last_message.txt
-                                |-- agent_stderr.txt
-                                |-- agent_record.json
-                                |-- benchmark_record.json
-                                `-- workspace_delta_manifest.json
+                                `-- attempt=<NN>/
+                                    |-- record_summary.json
+                                    |-- agent_events.jsonl
+                                    |-- agent_usage.json
+                                    |-- agent_activity.json
+                                    |-- agent_last_message.txt
+                                    |-- agent_stderr.txt
+                                    |-- agent_record.json
+                                    |-- benchmark_record.json
+                                    |-- input_delta_manifest.json
+                                    `-- workspace_delta_manifest.json
 ```
 
 Slugs are filesystem-safe and stable: lowercase, replace every non-alphanumeric
 sequence with `_`, trim leading/trailing `_`, truncate the visible part to 48
 characters, and append an 8-character stable hash when truncation or collision
-handling is needed. Empty slugs become `item_<hash>`.
+handling is needed. The hash input is the full untruncated source string after
+normalization, not only the visible prefix. Empty slugs become `item_<hash>`.
+Collision detection runs while expanding the run plan. If two normalized names
+would produce the same slug within the same axis and parent path, both slugs get
+hash suffixes derived from their full normalized source strings.
+
+Preflight checks the maximum expanded artifact path length before execution.
+The default path budget is 240 characters for host-visible paths. Scenarios may
+set a shorter result root or an explicit path budget, but they must fail
+preflight rather than produce paths that are likely to break on the host or
+Docker volume mount.
 
 `scenario.json` stores the resolved scenario, including job paths, prompt
 hashes, wheel metadata, image tags, and agent versions. `run_plan.json` stores
 expanded record entries in execution order. Reports aggregate by reading
 scenario metadata and normalized records, not by guessing from directory names
 alone.
+
+The normalized `agent_*` artifacts are the source of truth. Provider-specific
+files such as `codex_*`, `claude_*`, `hermes_*`, or `openclaw_*` may exist only
+as debug or compatibility artifacts; reports must not require them.
+
+Every run has at least `attempt=01`. When retry policy creates additional
+attempts, each attempt gets its own complete artifact directory. Repeat and mode
+summaries point at the terminal attempt and include all attempt metadata.
 
 ## Summary Schema
 
@@ -530,6 +1428,8 @@ scenario_name
 comparison_type
 agent
 agent_model
+prompt_hash
+prompt_source
 workflow
 observed_skill_name
 skill_name_source
@@ -537,11 +1437,15 @@ job_slug
 job_path
 job_scale
 repeat_index
+attempt_index
+attempt_count
 mode
 skills_enabled
 runtime_image
 wheel_variant
 elapsed_seconds
+agent_elapsed_seconds
+phase_seconds
 token_count
 command_count
 agent_exit_code
@@ -552,6 +1456,21 @@ validation_metric
 validation_metric_status
 structure_quality_signal
 artifact_paths
+```
+
+`elapsed_seconds`, when present for compatibility, is an alias for
+`agent_elapsed_seconds`. Full setup, post-processing, and report timings live in
+`phase_seconds`.
+
+`phase_seconds` uses the same keys as the timing boundary contract:
+
+```text
+container_elapsed_seconds
+setup_elapsed_seconds
+skill_exposure_elapsed_seconds
+agent_elapsed_seconds
+post_process_elapsed_seconds
+report_elapsed_seconds
 ```
 
 Every comparison summary includes:
@@ -567,12 +1486,49 @@ quality_gate
 ```
 
 `winner_policy` describes how the report selected or refused to select a winner,
-for example `median_elapsed_seconds_then_tokens_with_quality_gate` or
+for example `median_agent_elapsed_seconds_then_tokens_with_quality_gate` or
 `no_single_cost_winner`.
 
 `quality_gate` describes the minimum correctness criteria applied before a cost
 winner is considered meaningful. The harness must not invent correctness from
 cost metrics.
+
+The default quality gate is:
+
+```text
+agent_process_passed == true
+final_container_exit_code == 0
+source_input_modified == false
+required_validation_metric_status in {present, not_required}
+critical_quality_checks_failed == false
+```
+
+Scenarios may override the gate by naming required checks and required metric
+families, but every override is recorded in `quality_gate`. A run that does not
+meet the gate can still appear in reports, but it is not eligible to win a
+cost/performance comparison.
+
+The default winner policy is
+`median_agent_elapsed_seconds_then_tokens_with_quality_gate`:
+
+1. Exclude compared records that do not satisfy the quality gate.
+2. If no compared record satisfies the gate, set winner policy to
+   `no_quality_qualified_winner`.
+3. Compare median `agent_elapsed_seconds` across repeats.
+4. Break ties with median `token_count`.
+5. If both medians tie or required values are missing, report
+   `no_single_cost_winner`.
+
+Reports may also show mean, min, max, and standard deviation, but headline
+winner selection uses medians.
+
+Scenario execution continues after individual run failures unless the scenario
+sets `fail_fast: true`. Scenario summaries report partial results and mark the
+scenario as `degraded` when at least one run failed, was skipped, or lacked a
+quality-qualified record. A scenario is `failed` when preflight fails before a
+run plan is executable, all run-plan entries fail, or a required report cannot
+be generated. A fully executed scenario with all required records satisfying
+the quality gate is `passed`.
 
 ## Repeat Aggregation
 
@@ -590,6 +1546,10 @@ model
 workflow
 job
 repeat_index
+attempt_count
+terminal_attempt
+attempts[]
+retry_reasons[]
 ```
 
 Scenario-level summaries aggregate across repeats:
@@ -634,8 +1594,37 @@ Unit tests cover pure behavior:
 - report rendering helpers.
 
 Adapter contract tests validate that sample agent outputs map into the neutral
-event and usage contracts. Integration smoke tests run a tiny synthetic job and
-verify normalized records and reports. Long agent runs are opt-in.
+event, usage, final-message, skill-exposure, and failure-classification
+contracts. A new agent config is not `supported` until it has:
+
+- sample raw event fixtures;
+- usage fixtures with declared token semantics;
+- final-message fixtures;
+- launch dry-run or preflight coverage;
+- skill-exposure probe coverage;
+- Docker build metadata coverage;
+- a static check that provider-specific names appear only in agent config,
+  parser/classifier registry, Docker install, auth README, or declared
+  debug/compatibility artifacts.
+
+Integration smoke tests run a tiny synthetic job and verify normalized records
+and reports. Long agent runs are opt-in.
+
+## Replay Mode
+
+The harness supports analysis development without live agent credentials through
+a replay mode. Replay mode consumes captured neutral artifacts, such as
+`agent_events.jsonl`, `agent_usage.json`, `agent_activity.json`,
+`agent_last_message.txt`, workspace-delta manifests, and benchmark records, then
+runs record synthesis, quality-signal extraction, aggregation, and report
+generation without invoking an agent CLI.
+
+Replay mode is for parser, record, and report development. It must not claim to
+measure fresh agent performance, mutate the original job input, or refresh
+token/cost data. Replay reports must identify their source run and mark
+`agent_invocation` as `replayed`.
+Until the host runner exposes a replay command, captured replay fixtures are
+test inputs for record and report code, not runnable benchmark scenarios.
 
 ## Reporting Language
 
