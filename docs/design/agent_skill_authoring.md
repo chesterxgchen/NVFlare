@@ -7,7 +7,7 @@
 | Created date | 2026-05-26 |
 | Status | Ready for Implementation |
 | Parent design | [Agent Integration](agent_integration.md) |
-| Related designs | [Agent Skill Evaluation](agent_skill_evaluation.md) |
+| Related designs | [Agent Skill Evaluation](agent_skill_evaluation.md), [Agent Skill Publication Handoff Checklist](agent_publication_handoff_checklist.md) |
 | Current owner | NVFLARE product/docs maintainers |
 | Review scope | Skill-writing rules, guide-compatible file structure, minimal metadata, helper scripts, examples, eval input files, and maintenance policy |
 
@@ -215,6 +215,14 @@ Do not add a broad `references/contract.yaml` requirement for the initial implem
 metadata such as allowed tools, allowed commands, compatibility shims, budgets,
 agent profiles, `obsoletes`, lifecycle states, and durable handoff keys is
 deferred to the roadmap.
+
+Shared skill references under `skills/_shared/` are versioned content, not
+untracked include files. Install manifests should record the shared-reference
+hash or version used by an installed skill whenever shared files are copied into
+the target agent skill directory. Updating shared reference content should be
+treated as a behavior-affecting skill change for every public skill that
+consumes it, with release notes or benchmark evidence when the shared guidance
+changes observable agent behavior.
 
 ## Trigger and Handoff Contract
 

@@ -352,16 +352,18 @@ Installer authority rules:
   skips it with a structured conflict finding. It does not overwrite catalog,
   `npx`, or hand-edited installs by default.
 - If a managed skill's content hash differs from the manifest, reinstall skips
-  by default and reports `local_modifications_detected`; the user must pass an
-  explicit flag such as `--overwrite-managed` to replace it after backup.
+  by default and reports `local_modifications_detected`; the user must pass
+  `--overwrite-managed` to replace it after backup.
 - Adopting an external install into NVFLARE management should require an
-  explicit flag such as `--adopt-external`; the default is to skip external
+  explicit `--adopt-external` flag; the default is to skip external
   directories.
 - For wheel-bundled initial skills, `min_flare_version` is primarily lint and
   documentation metadata because the skills ship with the NVFLARE version that
   installed them. Local or editable overrides may warn when their declared
-  bounds do not match the running NVFLARE package, but the initial installer does
-  not need a separate compatibility resolver.
+  bounds do not match the running NVFLARE package. `skills install` and
+  `skills list` should surface non-blocking compatibility warnings for local,
+  editable, or externally managed skill content whose declared bounds do not
+  match the running NVFLARE package.
 - Deprecated-skill lifecycle behavior is deferred with the broader lifecycle
   command set.
 
@@ -750,7 +752,9 @@ deferred roadmap items.
 
 Publication integration with `github.com/NVIDIA/skills` is separate work. This
 design owns the FLARE side of the handoff: skill source, wheel packaging,
-install behavior, command contracts, and evaluation evidence.
+install behavior, command contracts, and evaluation evidence. The concrete
+handoff checklist lives in
+[Agent Skill Publication Handoff Checklist](agent_publication_handoff_checklist.md).
 Catalog registration, sync, public installer metadata, and public scoreboard
 mechanics belong to the NVIDIA skills publication process.
 

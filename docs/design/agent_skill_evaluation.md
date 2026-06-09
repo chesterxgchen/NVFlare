@@ -8,7 +8,7 @@
 | Updated date | 2026-06-08 |
 | Status | Proposed design |
 | Parent design | [Agent Integration](agent_integration.md) |
-| Related designs | [Agent Skill Authoring](agent_skill_authoring.md) |
+| Related designs | [Agent Skill Authoring](agent_skill_authoring.md), [Agent Skill Publication Handoff Checklist](agent_publication_handoff_checklist.md) |
 | Current owner | NVFLARE product/docs maintainers |
 | Review scope | Skill evaluation gate, guide-compatible eval shape, engineering/runtime test split, runtime evidence without a separate evaluator, Auto-FL research evaluation, and publication handoff artifacts |
 
@@ -18,6 +18,7 @@
 - [Scope](#scope)
 - [Evaluation Principles](#evaluation-principles)
 - [Guide-Compatible Eval Structure](#guide-compatible-eval-structure)
+- [Eval Schema Versioning and Negative Triggers](#eval-schema-versioning-and-negative-triggers)
 - [Skill Admission Gate](#skill-admission-gate)
 - [Engineering Lints](#engineering-lints)
 - [Engineering Correctness Checks](#engineering-correctness-checks)
@@ -101,11 +102,18 @@ skills/<skill>/
 `evals/evals.json` should use guide-compatible fields such as `prompt`,
 `expected_output`, `files`, and `assertions`. FLARE-specific behavior IDs live
 inside an `nvflare` extension object rather than in a parallel eval format.
+For FLARE scoring and runtime evidence, `nvflare.mandatory_behavior`,
+`nvflare.prohibited_behavior`, `nvflare.optional_behavior`, and
+`nvflare.process_metrics` are the canonical contract. Free-text `assertions`
+are human-readable guidance and may be generated from, or kept consistent with,
+the structured behavior IDs; reports must not treat free-text assertions as a
+second independent source of truth.
 
 Example:
 
 ```json
 {
+  "schema_version": "1",
   "skill_name": "nvflare-convert-pytorch",
   "evals": [
     {
@@ -145,7 +153,9 @@ Example:
           {"id": "layout_violations", "description": "count of generated layout or artifact-location mistakes found before final acceptance"}
         ]
       }
-    },
+    }
+  ],
+  "negative_trigger_cases": [
     {
       "id": "negative-k8s-deploy",
       "prompt": "Deploy an existing FLARE startup kit to Kubernetes.",
@@ -231,6 +241,38 @@ Runtime process records are generated artifacts, not packaged skill source.
 Only concise summaries, known gaps, and corrective skill changes should be
 committed to `BENCHMARK.md`.
 
+## Eval Schema Versioning and Negative Triggers
+
+`evals/evals.json` must include a top-level `schema_version`. Version `"1"` uses
+the guide-compatible shape in this document:
+
+```text
+schema_version
+skill_name
+evals[]
+negative_trigger_cases[]
+```
+
+`evals[]` contains positive or task-completion cases where the skill is expected
+to be useful. `negative_trigger_cases[]` contains adjacent or unrelated prompts
+where the skill must not be selected. Negative trigger cases use the same fields
+as normal eval cases, but the `nvflare` extension must include `negative_for`
+and may include `expected_skill` or `expected_no_skill`.
+
+Schema readers and lints must reject unsupported `schema_version` values instead
+of silently interpreting them as the current schema. Backward-compatible
+additive fields may be accepted when the reader preserves unknown fields or
+reports them as ignored. Breaking changes require a new schema version and a
+short migration note in this section.
+
+Schema version `"1"` changelog:
+
+- top-level `schema_version`;
+- guide-compatible `evals[]`;
+- top-level `negative_trigger_cases[]`;
+- FLARE-specific behavior IDs under each case's `nvflare` object;
+- `nvflare.process_metrics` for runtime process-quality contracts.
+
 <a id="initial-evaluation-gate"></a>
 
 ## Skill Admission Gate
@@ -242,7 +284,7 @@ includes:
   "use / do not use" boundaries.
 - `min_flare_version` and `blast_radius` in frontmatter.
 - at least one positive trigger eval in `evals/evals.json`;
-- at least one adjacent negative trigger eval for the nearest competing skill;
+- at least one adjacent negative trigger case for the nearest competing skill;
 - global negative coverage for prompts that should trigger no FLARE skill;
 - `nvflare.mandatory_behavior` and `nvflare.prohibited_behavior` IDs for every
   normative workflow rule in the skill;
@@ -267,8 +309,8 @@ deterministic checks run before a public skill is accepted.
 | --- | --- | --- | --- |
 | `skill-frontmatter-lint` | missing required frontmatter, invalid `blast_radius`, name mismatch, or non-`nvflare-` public skill name | `skills/<skill>/SKILL.md` frontmatter, directory name, and the frontmatter schema in [Agent Skill Authoring](agent_skill_authoring.md#frontmatter-and-product-metadata) | Parse frontmatter as YAML, require the authoring-guide required fields, require public skill names to match their directory and start with `nvflare-`, and require `blast_radius` to be an allowed value. |
 | `skill-md-size-lint` | `SKILL.md` exceeds the 200-line hard gate without an approved exception | `skills/<skill>/SKILL.md` | Fail when `SKILL.md` exceeds 200 lines unless an explicit approved exception marker exists. Report the roughly 2,000-token guidance as advisory using a simple whitespace estimate until a tokenizer is standardized. |
-| `skill-trigger-lint` | missing trigger/use-boundary text, missing positive trigger eval, or missing adjacent negative trigger eval | `SKILL.md` trigger text and `evals/evals.json` | Require a non-empty trigger/use-boundary description, at least one positive trigger eval, and at least one adjacent negative trigger eval for the nearest competing same-category skill. |
-| `skill-trigger-overlap-lint` | same-category public skills have overlapping descriptions or trigger examples without negative evals or documented boundaries | product catalog category, conversion-family table, `SKILL.md` descriptions, and trigger eval prompts | For same-category public skills, flag overlapping descriptions or trigger examples unless the skills include documented use/do-not-use boundaries and adjacent negative evals covering the overlap. The lint uses deterministic text/category checks, not a runtime LLM recommender. |
+| `skill-trigger-lint` | missing trigger/use-boundary text, missing positive trigger eval, or missing adjacent negative trigger case | `SKILL.md` trigger text and `evals/evals.json` | Require a non-empty trigger/use-boundary description, at least one positive trigger eval, and at least one adjacent negative trigger case in `negative_trigger_cases` for the nearest competing same-category skill. |
+| `skill-trigger-overlap-lint` | same-category public skills have overlapping descriptions or trigger examples without negative trigger cases or documented boundaries | product catalog category, conversion-family table, `SKILL.md` descriptions, and trigger eval prompts | For same-category public skills, flag overlapping descriptions or trigger examples unless the skills include documented use/do-not-use boundaries and adjacent negative trigger cases covering the overlap. The lint uses deterministic text/category checks, not a runtime LLM recommender. |
 | `skill-catalog-category-lint` | category values used for overlap lint drift from the product catalog table or conversion-family table | product catalog table, conversion-family table, and any generated lint category map | Verify every public skill has one canonical category source for overlap checks, and fail if the category map disagrees with the catalog or conversion-family table. |
 | `skill-global-negative-lint` | unrelated global negative prompt coverage is missing or malformed | repo-root `skills/_shared/global_negative_prompts.json` and per-skill `evals/evals.json` | Require coverage for prompts that should trigger no FLARE skill, such as unrelated web, Kubernetes-only, or generic coding tasks. The shared bank should use `schema_version: "1"` and `prompts` entries with `id`, `prompt`, and `description`. The deterministic lint validates that public skills include or reference required global-negative cases. |
 | `skill-policy-coverage-lint` | normative words appear without a nearby measurable behavior ID, deterministic helper test, or checklist item | `SKILL.md`, `references/`, helper tests, and `evals/evals.json` | Flag normative words such as `must`, `must not`, `required`, `prohibited`, and `approval` unless the rule maps to `nvflare.mandatory_behavior`, `nvflare.prohibited_behavior`, a deterministic helper test, or a release checklist item. |
@@ -287,7 +329,7 @@ For `skill-trigger-overlap-lint`, the deterministic algorithm compares only
 skills in the same catalog category, normalizes trigger and
 use/do-not-use text to lowercase tokens, remove stop words, and flag exact or
 substring overlap of skill names, framework names, recipe names, command names,
-or three-token phrases unless both skills have adjacent negative eval coverage
+or three-token phrases unless both skills have adjacent negative trigger-case coverage
 for the overlap. The lint does not use an LLM or infer semantic similarity
 beyond those deterministic text checks.
 
@@ -298,7 +340,7 @@ environment for this lint must run from the same NVFLARE checkout or installed
 wheel whose CLI is being validated.
 
 Global negative coverage is per public skill: every public skill must either
-include eval cases marked `negative_for: <skill-name>` for each prompt ID in
+include `negative_trigger_cases` entries marked `negative_for: <skill-name>` for each prompt ID in
 `skills/_shared/global_negative_prompts.json`, or reference a shared coverage
 set that expands to those IDs. Deterministic lint only validates coverage
 declarations; benchmark or research runs may execute selected prompts later.
@@ -507,7 +549,8 @@ The feedback loop is:
    skill version.
 4. Add only the missing guardrails to `SKILL.md`, `references/`, helper scripts,
    or deterministic lints.
-5. Add or update eval assertions and process metrics.
+5. Add or update structured behavior IDs, human-readable assertions, and
+   process metrics together so they do not drift.
 6. Re-run and verify correction count, failure rate, or evidence gaps improve.
 
 <a id="runtime-evaluator-and-records"></a>
@@ -623,6 +666,29 @@ If no runtime records match, `nvflare agent skills performance` should exit
 successfully, report the packaged metric contracts, and return empty `summaries`
 and `records` arrays.
 
+### Runtime Evidence Retention
+
+Runtime evidence records are user- and workspace-owned artifacts. NVFLARE does
+not delete them automatically because they may be release evidence, publication
+handoff evidence, or regression history. Tools that scan records must bound
+their work with file-count and file-size limits and report when records were
+skipped or unavailable.
+
+The default retention policy is:
+
+- benchmark and reviewer workflows write records under an explicit run or
+  records root;
+- reporting commands read bounded records and never mutate them;
+- users or CI jobs own archival and deletion;
+- publication handoff bundles should copy or reference only the records needed
+  for the release decision;
+- future cleanup commands may provide `archive`, `prune`, or `export` behavior,
+  but those commands must be explicit and must not run as part of read-only
+  reporting.
+
+Reports should show the records root, record count scanned, records skipped by
+limits, and the newest/oldest record timestamp when available.
+
 The explicit benchmark-rendering command is:
 
 ```bash
@@ -727,6 +793,9 @@ This evaluation spec owns the FLARE side of the handoff:
 - lint and engineering-test evidence;
 - runtime skill-performance summary in `BENCHMARK.md` when available;
 - FLARE release and skill source/version information.
+
+The concrete artifact checklist lives in
+[Agent Skill Publication Handoff Checklist](agent_publication_handoff_checklist.md).
 
 The public NVIDIA skill scoreboard, catalog sync, public installer metadata,
 signing, and publication UI are outside this NVFLARE design. FLARE should
