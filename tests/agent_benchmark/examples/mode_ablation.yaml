@@ -1,0 +1,43 @@
+# Example scenario: skills vs no-skills ablation on a single job.
+#
+# This is the YAML form of `./bin/run.sh pair`. Compile + run it with:
+#
+#   ./bin/run.sh scenario examples/mode_ablation.yaml --output-dir /path/to/result-root
+#
+# Edit `prompt` and `jobs[].path` to point at real files before running.
+# Relative paths are resolved against this file's directory.
+
+name: ames mode ablation
+
+# Prompt file copied verbatim into the container (also accepts prompt_path / prompt_file).
+prompt: ./prompt.txt
+
+# Run each case this many times to get medians/stddev in the aggregate report.
+repeat_count: 1
+
+# Stop the scenario on the first nonzero container exit instead of running every case.
+fail_fast: false
+
+agents:
+  - name: codex
+    # Omit `models` to use the adapter default (model_source=adapter_default).
+    # models: [gpt-5-codex]
+
+workflows:
+  - name: fedavg
+
+jobs:
+  - name: ames
+    path: /path/to/job-folder        # folder with training code, data, docs, requirements
+    scale: small                     # small | medium | large -> default timeout/size budgets
+
+# mode_ablation compares skill exposure with the same agent/model/job.
+comparison:
+  type: mode_ablation
+  modes: [without_skills, with_skills]
+
+# Optional: override the per-scale resource policy. Values must be integers.
+# resource_policy:
+#   small:
+#     agent_timeout_seconds: 1800
+#     container_timeout_seconds: 2400

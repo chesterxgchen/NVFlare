@@ -26,9 +26,17 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterable
 
-from ..common import write_json
-from ..modes import PAIR_RUNS, ModeSpec, mode_spec
-from ..reports.summaries import write_pair_summary
+from ..agents.registry import load_agent_adapter
+from ..common import load_json, write_json
+from ..modes import PAIR_RUNS, mode_spec
+from ..scenarios import (
+    ScenarioCompilation,
+    compile_scenario,
+    compile_scenario_file,
+    slugify,
+    validate_path_budget,
+    write_scenario_summaries,
+)
 from .common import (
     CONTAINER_PROMPT_PATH,
     CaseConfig,
@@ -54,15 +62,26 @@ STALE_RESULT_FILES = (
     "metrics_plots.png",
     "metrics_plots.svg",
     "metrics_summary.json",
+    "metrics_report.html",
+    "metrics_report.json",
+    "metrics_report.md",
+    "benchmark_insights.md",
+    "pair_summary.json",
     "process_eval_ablation_summary.json",
+    "report_generator_status.json",
     "skill_benchmark.json",
     "skill_benchmark.md",
     "skill_performance.json",
     "skill_performance.txt",
     "skill_report_status.json",
+    "scenario.json",
+    "run_plan.json",
+    "scenario_summary.json",
 )
 STALE_RESULT_DIRS = (
     "process_eval_runs",
+    "records",
+    "reports",
     "with_skills_eval_off",
     "with_skills_eval_on",
 )
@@ -75,6 +94,18 @@ class InteractiveRuntimeConfig:
     model_was_explicit: bool
 
 
+@dataclass(frozen=True)
+class ScenarioCliOptions:
+    scenario_path: Path
+    results_root: Path | None = None
+    result_root: Path | None = None
+
+
+@dataclass(frozen=True)
+class ReplayCliOptions:
+    result_root: Path
+
+
 def run_one_case(config: CaseConfig, *, logs: Iterable[Path] = (), prefix: str | None = None) -> int:
     config.result_dir.mkdir(parents=True, exist_ok=True)
     emit(f"Running mode={config.mode} with runtime image: {config.run_image}", logs=logs, prefix=prefix)
@@ -82,9 +113,52 @@ def run_one_case(config: CaseConfig, *, logs: Iterable[Path] = (), prefix: str |
     emit(f"Job folder: {config.job_input_dir} -> /workspace/input", logs=logs, prefix=prefix)
     emit(f"Prompt file: {config.prompt_path} -> {CONTAINER_PROMPT_PATH}", logs=logs, prefix=prefix)
     write_runtime_image(config)
-    status = stream_command(docker_args_for_case(config, logs=logs, prefix=prefix), logs=logs, prefix=prefix)
+    status = stream_command(
+        docker_args_for_case(config, logs=logs, prefix=prefix),
+        logs=logs,
+        prefix=prefix,
+        timeout_seconds=config.container_timeout_seconds,
+    )
     write_json(config.result_dir / "container_exit_code.json", {"exit_code": status})
+    if enforce_result_size_budget(config, logs=logs, prefix=prefix):
+        return 1
     return combined_exit_status({config.mode: status})
+
+
+def directory_size_bytes(path: Path) -> int:
+    total = 0
+    for item in path.rglob("*"):
+        try:
+            if item.is_symlink() or not item.is_file():
+                continue
+            total += item.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def enforce_result_size_budget(config: CaseConfig, *, logs: Iterable[Path] = (), prefix: str | None = None) -> bool:
+    budget = config.result_size_budget_bytes
+    if budget is None:
+        return False
+    used = directory_size_bytes(config.result_dir)
+    failed = used > budget
+    write_json(
+        config.result_dir / "result_size_budget.json",
+        {
+            "status": "fail" if failed else "pass",
+            "result_size_bytes": used,
+            "budget_bytes": budget,
+        },
+    )
+    if failed:
+        emit(
+            f"Result size budget exceeded: {used} bytes > {budget} bytes.",
+            logs=logs,
+            prefix=prefix,
+            stderr=True,
+        )
+    return failed
 
 
 def write_host_error(path: Path, exc: BaseException) -> None:
@@ -158,6 +232,98 @@ def comparison_result_root(options, *, default_prefix: str | None = None) -> Pat
     return absolute_path(os.environ.get("RESULT_ROOT", str(default_results_root() / default_name)))
 
 
+def scenario_result_root(options: ScenarioCliOptions, compilation: ScenarioCompilation) -> Path:
+    if options.result_root is not None:
+        return options.result_root
+    slug = compilation.scenario.get("scenario_slug") or slugify(str(compilation.scenario.get("name") or "scenario"))
+    default_name = f"{slug}_{timestamp_slug()}"
+    if options.results_root is not None:
+        return options.results_root / default_name
+    return absolute_path(os.environ.get("RESULT_ROOT", str(default_results_root() / default_name)))
+
+
+def parse_scenario_cli_options(argv: list[str]) -> ScenarioCliOptions:
+    scenario_path: Path | None = None
+    results_root: Path | None = None
+    result_root: Path | None = None
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg == "--results-root" or arg.startswith("--results-root="):
+            value, index = _scenario_option_value(argv, index, "--results-root")
+            if results_root is not None:
+                raise SystemExit("Expected only one --results-root")
+            results_root = absolute_path(value)
+        elif (
+            arg in {"--output-dir", "--result-root"}
+            or arg.startswith("--output-dir=")
+            or arg.startswith("--result-root=")
+        ):
+            option = "--output-dir" if arg.startswith("--output-dir") else "--result-root"
+            value, index = _scenario_option_value(argv, index, option)
+            if result_root is not None:
+                raise SystemExit("Expected only one exact output directory")
+            result_root = absolute_path(value)
+        elif arg in {"-h", "--help"}:
+            print("Usage: run.sh scenario SCENARIO.yaml [--results-root PATH|--output-dir PATH]")
+            raise SystemExit(0)
+        elif arg.startswith("-"):
+            raise SystemExit(f"Unknown scenario option: {arg}")
+        else:
+            if scenario_path is not None:
+                raise SystemExit("Expected only one scenario YAML file")
+            scenario_path = absolute_path(arg)
+            index += 1
+    if scenario_path is None:
+        raise SystemExit("Scenario YAML file is required.")
+    if not scenario_path.is_file():
+        raise SystemExit(f"Scenario YAML file must exist: {scenario_path}")
+    if results_root is not None and result_root is not None:
+        raise SystemExit("Use --results-root or --output-dir, not both.")
+    return ScenarioCliOptions(scenario_path=scenario_path, results_root=results_root, result_root=result_root)
+
+
+def parse_replay_cli_options(argv: list[str]) -> ReplayCliOptions:
+    result_root: Path | None = None
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if (
+            arg in {"--result-root", "--output-dir"}
+            or arg.startswith("--result-root=")
+            or arg.startswith("--output-dir=")
+        ):
+            option = "--result-root" if arg.startswith("--result-root") else "--output-dir"
+            value, index = _scenario_option_value(argv, index, option)
+            if result_root is not None:
+                raise SystemExit("Expected only one replay result root")
+            result_root = absolute_path(value)
+        elif arg in {"-h", "--help"}:
+            print("Usage: run.sh replay RESULT_ROOT")
+            raise SystemExit(0)
+        elif arg.startswith("-"):
+            raise SystemExit(f"Unknown replay option: {arg}")
+        else:
+            if result_root is not None:
+                raise SystemExit("Expected only one replay result root")
+            result_root = absolute_path(arg)
+            index += 1
+    if result_root is None:
+        raise SystemExit("Replay result root is required.")
+    if not (result_root / "run_plan.json").is_file():
+        raise SystemExit(f"Replay result root must contain run_plan.json: {result_root}")
+    return ReplayCliOptions(result_root=result_root)
+
+
+def _scenario_option_value(argv: list[str], index: int, option: str) -> tuple[str, int]:
+    arg = argv[index]
+    if arg.startswith(f"{option}="):
+        return arg.split("=", 1)[1], index + 1
+    if index + 1 >= len(argv):
+        raise SystemExit(f"{option} requires a path")
+    return argv[index + 1], index + 2
+
+
 def checked_bool_override(name: str, expected: bool, mode: str) -> bool:
     value = os.environ.get(name)
     if value is None:
@@ -179,60 +345,6 @@ def reject_parallel_comparison_runs(command: str) -> None:
         )
 
 
-def run_case_spec(
-    spec: ModeSpec,
-    *,
-    job_input: Path,
-    prompt_path: Path,
-    result_root: Path,
-    images: ImageConfig,
-    logs: Iterable[Path] = (),
-    write_status_file: bool = False,
-    use_case_log: bool = False,
-) -> tuple[str, int]:
-    case_log = result_root / f"{spec.mode}.console.log"
-    case_logs = logs
-    if use_case_log:
-        case_log.write_text("", encoding="utf-8")
-        case_logs = (*logs, case_log)
-    emit(
-        "Starting case={} use_preinstalled_skills={}{}".format(
-            spec.mode,
-            str(spec.skills_enabled).lower(),
-            f" log={case_log}" if use_case_log else "",
-        ),
-        logs=case_logs,
-        prefix=spec.mode,
-    )
-    config = case_config(
-        mode=spec.mode,
-        use_preinstalled_skills=spec.skills_enabled,
-        job_input_dir=job_input,
-        result_dir=result_root / spec.mode,
-        prompt_path=prompt_path,
-        images=images,
-    )
-    status = run_case_safely(config, logs=case_logs, prefix=spec.mode)
-    if write_status_file:
-        (result_root / f"{spec.mode}.status").write_text(f"{status}\n", encoding="utf-8")
-    emit(
-        f"Finished case={spec.mode} status={status}" + (f" log={case_log}" if use_case_log else ""),
-        logs=case_logs,
-        prefix=spec.mode,
-    )
-    return spec.mode, status
-
-
-def copy_combined_records(result_root: Path, case_modes: Iterable[str]) -> Path:
-    combined = result_root / "records"
-    combined.mkdir(parents=True, exist_ok=True)
-    for mode in case_modes:
-        record = result_root / mode / "records" / f"{mode}_record.json"
-        if record.is_file():
-            shutil.copy2(record, combined / f"{mode}_record.json")
-    return combined
-
-
 def clean_pair_result_root(result_root: Path) -> None:
     """Remove generated artifacts from older harness layouts before a fresh pair run."""
 
@@ -250,38 +362,190 @@ def clean_pair_result_root(result_root: Path) -> None:
             path.unlink()
 
 
-def run_report_generator(module: str, args: list[str], *, logs: Iterable[Path] = ()) -> int:
-    status = stream_command([sys.executable, "-m", f"harness.reports.{module}", *args], logs=logs)
-    if status != 0:
-        emit(f"Report generator failed: {module} exit_code={status}", logs=logs, stderr=True)
-    return status
+def pair_compilation_from_options(options) -> ScenarioCompilation:
+    adapter = benchmark_agent_adapter_from_env()
+    agent_model = agent_model_from_env(adapter)
+    model_was_explicit = adapter.model_was_explicit(os.environ)
+    agent_entry: dict[str, object] = {"name": adapter.name}
+    if model_was_explicit:
+        agent_entry["models"] = [agent_model]
+    raw = {
+        "name": f"pair {adapter.name} {options.job_input.name}",
+        "prompt": str(options.prompt_path),
+        "agents": [agent_entry],
+        "comparison": {"type": "mode_ablation", "modes": [spec.mode for spec in PAIR_RUNS]},
+        "workflows": [{"name": os.environ.get("BENCHMARK_WORKFLOW", "default")}],
+        "jobs": [
+            {
+                "name": options.job_input.name,
+                "path": str(options.job_input),
+                "scale": os.environ.get("BENCHMARK_JOB_SCALE", os.environ.get("JOB_SCALE", "small")),
+            }
+        ],
+        "repeat_count": 1,
+    }
+    return compile_scenario(raw, base_dir=Path.cwd(), allow_external_prompt=True)
 
 
-def write_report_generator_status(result_root: Path, statuses: dict[str, int]) -> None:
-    write_json(
-        result_root / "report_generator_status.json",
-        {
-            "status": "ok" if all(status == 0 for status in statuses.values()) else "failed",
-            "exit_codes": statuses,
-        },
+def image_config_for_agent(agent: str) -> ImageConfig:
+    return ImageConfig.for_adapter(load_agent_adapter(agent), os.environ)
+
+
+def model_was_explicit_for_entry(entry: dict[str, object]) -> bool:
+    return str(entry.get("model_source") or "") != "adapter_default"
+
+
+def positive_numeric_timeout(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    return int(value)
+
+
+def case_config_for_entry(entry: dict[str, object], result_root: Path) -> CaseConfig:
+    adapter = load_agent_adapter(str(entry["agent"]))
+    resource_policy = entry.get("resource_policy") if isinstance(entry.get("resource_policy"), dict) else {}
+    return CaseConfig(
+        mode=str(entry["mode"]),
+        use_preinstalled_skills=bool(entry["skills_enabled"]),
+        job_input_dir=Path(str(entry["job_path"])),
+        result_dir=result_root / str(entry["record_dir"]),
+        prompt_path=Path(str(entry["prompt_source"])),
+        images=image_config_for_agent(adapter.name),
+        progress_interval_seconds=os.environ.get("PROGRESS_INTERVAL_SECONDS", "60"),
+        agent=adapter.name,
+        agent_model=str(entry["agent_model"]),
+        model_was_explicit=model_was_explicit_for_entry(entry),
+        adapter=adapter,
+        host_agent_home=absolute_path(str(adapter.host_home_from_env(os.environ))),
+        mount_host_agent_auth=adapter.mount_auth_from_env(os.environ),
+        agent_timeout_seconds=positive_numeric_timeout(resource_policy.get("agent_timeout_seconds")),
+        container_timeout_seconds=positive_numeric_timeout(resource_policy.get("container_timeout_seconds")),
+        result_size_budget_bytes=positive_numeric_timeout(resource_policy.get("result_size_budget_bytes")),
     )
 
 
-def write_host_report_status(
-    result_root: Path,
+def copy_file_if_present(source: Path, target: Path) -> bool:
+    if not source.is_file():
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if source.resolve() != target.resolve():
+        shutil.copy2(source, target)
+    return True
+
+
+def canonicalize_entry_artifacts(result_root: Path, entry: dict[str, object], status: int | None) -> None:
+    record_dir = result_root / str(entry["record_dir"])
+    mode = str(entry["mode"])
+    record_dir.mkdir(parents=True, exist_ok=True)
+    write_json(record_dir / "run_plan_entry.json", entry)
+    copy_file_if_present(record_dir / "records" / f"{mode}_agent_record.json", record_dir / "agent_record.json")
+    copy_file_if_present(record_dir / "records" / f"{mode}_record.json", record_dir / "benchmark_record.json")
+    copy_file_if_present(record_dir / "run_summary.json", record_dir / "record_summary.json")
+    summary = load_json(record_dir / "record_summary.json", {}) or {}
+    if not isinstance(summary, dict):
+        summary = {}
+    summary.update(
+        {
+            key: entry.get(key)
+            for key in (
+                "run_id",
+                "scenario_name",
+                "comparison_type",
+                "comparison_group_id",
+                "agent",
+                "agent_model",
+                "workflow",
+                "job_name",
+                "job_slug",
+                "job_path",
+                "job_scale",
+                "repeat_index",
+                "mode",
+                "skills_enabled",
+                "prompt_hash",
+                "prompt_source",
+            )
+        }
+    )
+    summary["host_status"] = status
+    summary["artifact_paths"] = entry.get("artifact_paths") or {}
+    write_json(record_dir / "record_summary.json", summary)
+
+
+def execute_run_plan(
+    compilation: ScenarioCompilation,
     *,
-    report_generator_statuses: dict[str, int] | None = None,
-) -> None:
-    report_generator_statuses = report_generator_statuses or {}
+    result_root: Path,
+    logs: Iterable[Path] = (),
+) -> tuple[dict[str, int], dict[str, object]]:
+    run_plan = compilation.run_plan
+    entries = run_plan.get("entries") if isinstance(run_plan.get("entries"), list) else []
+    path_budget = compilation.scenario.get("path_budget")
+    if isinstance(path_budget, int):
+        validate_path_budget(
+            str(compilation.scenario.get("name") or run_plan.get("scenario_name")), entries, path_budget, result_root
+        )
+    compilation.write(result_root)
+    statuses: dict[str, int] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        prefix = str(entry["run_id"])
+        emit(
+            "Starting run_id={} agent={} model={} mode={} repeat={} record_dir={}".format(
+                entry["run_id"],
+                entry["agent"],
+                entry["agent_model"],
+                entry["mode"],
+                entry["repeat_index"],
+                entry["record_dir"],
+            ),
+            logs=logs,
+            prefix=prefix,
+        )
+        config = case_config_for_entry(entry, result_root)
+        status = run_case_safely(config, logs=logs, prefix=prefix)
+        statuses[str(entry["run_id"])] = status
+        canonicalize_entry_artifacts(result_root, entry, status)
+        emit(f"Finished run_id={entry['run_id']} status={status}", logs=logs, prefix=prefix)
+        if status != 0 and run_plan.get("fail_fast"):
+            emit("Stopping scenario early because fail_fast=true.", logs=logs, stderr=True)
+            break
+    summary = write_scenario_summaries(result_root, statuses)
+    return statuses, summary
+
+
+def replay_result_root(result_root: Path, *, logs: Iterable[Path] = ()) -> dict[str, object]:
+    run_plan = load_json(result_root / "run_plan.json", {}) or {}
+    entries = run_plan.get("entries") if isinstance(run_plan.get("entries"), list) else []
+    statuses: dict[str, int] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        record_dir = result_root / str(entry["record_dir"])
+        events_path = record_dir / "agent_events.jsonl"
+        if events_path.is_file():
+            adapter = load_agent_adapter(str(entry["agent"]))
+            write_json(record_dir / "agent_usage.json", adapter.parse_usage(events_path))
+            write_json(record_dir / "agent_activity.json", adapter.parse_activity(events_path))
+            emit(f"Replayed parsers for {entry['run_id']}: {events_path}", logs=logs)
+        container_exit = load_json(record_dir / "container_exit_code.json", {}) or {}
+        if isinstance(container_exit, dict) and isinstance(container_exit.get("exit_code"), int):
+            statuses[str(entry["run_id"])] = int(container_exit["exit_code"])
+        canonicalize_entry_artifacts(result_root, entry, statuses.get(str(entry["run_id"])))
+    return write_scenario_summaries(result_root, statuses)
+
+
+def write_host_report_status(result_root: Path) -> None:
+    scenario_report = result_root / "reports" / "scenario_report.md"
     payload = {
-        "status": "ok" if all(status == 0 for status in report_generator_statuses.values()) else "failed",
-        "report_generators": report_generator_statuses,
+        "status": "ok" if scenario_report.is_file() else "missing_report",
+        "scenario_report": str(scenario_report),
     }
     write_json(
         result_root / "host_report_status.json",
         payload,
     )
-    write_report_generator_status(result_root, report_generator_statuses)
 
 
 def combined_exit_status(case_statuses: dict[str, int], report_statuses: dict[str, int] | None = None) -> int:
@@ -292,13 +556,14 @@ def combined_exit_status(case_statuses: dict[str, int], report_statuses: dict[st
 def run_pair(argv: list[str]) -> int:
     reject_parallel_comparison_runs("pair")
     options = parse_host_cli_options(argv, "pair")
-    images = ImageConfig.from_env()
     result_root = comparison_result_root(options)
     result_root.mkdir(parents=True, exist_ok=True)
     clean_pair_result_root(result_root)
     console_log = result_root / "console_output.log"
     console_log.write_text("", encoding="utf-8")
     logs = (console_log,)
+    compilation = pair_compilation_from_options(options)
+    images = ImageConfig.from_env()
 
     emit(f"Result root: {result_root}", logs=logs)
     emit(f"Console log: {console_log}", logs=logs)
@@ -308,35 +573,51 @@ def run_pair(argv: list[str]) -> int:
     emit(f"Job folder: {options.job_input}", logs=logs)
     emit(f"Prompt file: {options.prompt_path} -> {CONTAINER_PROMPT_PATH}", logs=logs)
 
-    statuses: dict[str, int] = {}
-    for spec in PAIR_RUNS:
-        mode, status = run_case_spec(
-            spec,
-            job_input=options.job_input,
-            prompt_path=options.prompt_path,
-            result_root=result_root,
-            images=images,
-            logs=logs,
-        )
-        statuses[mode] = status
+    run_statuses, scenario_summary = execute_run_plan(compilation, result_root=result_root, logs=logs)
 
-    write_pair_summary(result_root, statuses)
-    combined = copy_combined_records(result_root, [spec.mode for spec in PAIR_RUNS])
-    emit(f"Pair summary: {result_root / 'pair_summary.json'}", logs=logs)
-    emit(f"Combined records: {combined}", logs=logs)
-    report_generator_statuses = {
-        "metrics_report": run_report_generator(
-            "metrics_report",
-            [str(result_root), "--title", "NVFLARE Agent Skills Benchmark Metrics"],
-            logs=logs,
-        ),
-        "benchmark_insights": run_report_generator("benchmark_insights", [str(result_root)], logs=logs),
-    }
-    write_host_report_status(
-        result_root,
-        report_generator_statuses=report_generator_statuses,
+    emit(f"Scenario summary: {result_root / 'scenario_summary.json'}", logs=logs)
+    emit(f"Scenario report: {result_root / 'reports' / 'scenario_report.md'}", logs=logs)
+    write_host_report_status(result_root)
+    return (
+        1 if any(status != 0 for status in run_statuses.values()) or scenario_summary.get("status") == "degraded" else 0
     )
-    return combined_exit_status(statuses, report_generator_statuses)
+
+
+def run_scenario(argv: list[str]) -> int:
+    reject_parallel_comparison_runs("scenario")
+    options = parse_scenario_cli_options(argv)
+    compilation = compile_scenario_file(options.scenario_path)
+    result_root = scenario_result_root(options, compilation)
+    result_root.mkdir(parents=True, exist_ok=True)
+    console_log = result_root / "console_output.log"
+    console_log.write_text("", encoding="utf-8")
+    logs = (console_log,)
+
+    emit(f"Result root: {result_root}", logs=logs)
+    emit(f"Console log: {console_log}", logs=logs)
+    emit(f"Scenario file: {options.scenario_path}", logs=logs)
+    emit(f"Run count: {compilation.run_plan.get('run_count')}", logs=logs)
+
+    statuses, summary = execute_run_plan(compilation, result_root=result_root, logs=logs)
+    emit(f"Scenario summary: {result_root / 'scenario_summary.json'}", logs=logs)
+    emit(f"Scenario report: {result_root / 'reports' / 'scenario_report.md'}", logs=logs)
+    write_host_report_status(result_root)
+    return 1 if any(status != 0 for status in statuses.values()) or summary.get("status") == "degraded" else 0
+
+
+def run_replay(argv: list[str]) -> int:
+    options = parse_replay_cli_options(argv)
+    console_log = options.result_root / "replay_console_output.log"
+    console_log.write_text("", encoding="utf-8")
+    logs = (console_log,)
+    emit(f"Replay result root: {options.result_root}", logs=logs)
+    summary = replay_result_root(options.result_root, logs=logs)
+    emit(f"Scenario summary: {options.result_root / 'scenario_summary.json'}", logs=logs)
+    emit(f"Scenario report: {options.result_root / 'reports' / 'scenario_report.md'}", logs=logs)
+    write_host_report_status(options.result_root)
+    # Replay regenerates artifacts from an existing result tree; it preserves
+    # degraded benchmark status instead of re-asserting pass/fail.
+    return 0 if summary.get("status") in {"ok", "degraded"} else 1
 
 
 def run_interactive(argv: list[str]) -> int:
@@ -392,7 +673,7 @@ def agent_model_from_env(adapter) -> str:
 def main() -> None:
     if len(sys.argv) < 2 or sys.argv[1] in {"-h", "--help"}:
         print(
-            "Usage: python -m harness.host.runner {run-one,pair,interactive} "
+            "Usage: python -m harness.host.runner {run-one,pair,scenario,replay,interactive} "
             "--prompt PATH [--training-code PATH] [--results-root PATH] [PATH]"
         )
         raise SystemExit(0 if len(sys.argv) >= 2 else 2)
@@ -401,6 +682,10 @@ def main() -> None:
         status = run_one(argv)
     elif command == "pair":
         status = run_pair(argv)
+    elif command == "scenario":
+        status = run_scenario(argv)
+    elif command == "replay":
+        status = run_replay(argv)
     elif command == "interactive":
         status = run_interactive(argv)
     else:

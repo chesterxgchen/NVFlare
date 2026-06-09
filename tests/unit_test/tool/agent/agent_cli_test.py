@@ -972,6 +972,7 @@ def test_agent_skills_schema_subcommand_does_not_scan_option_values():
     _parse_for_agent_parser()
 
     assert _schema_agent_skills_sub_cmd(["agent", "skills", "benchmark", "--schema"]) == "benchmark"
+    assert _schema_agent_skills_sub_cmd(["agent", "--target", "skills", "skills", "install", "--schema"]) == "install"
     assert _schema_agent_skills_sub_cmd(["agent", "skills", "--skill", "benchmark", "--schema"]) is None
 
 

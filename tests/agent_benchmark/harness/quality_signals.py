@@ -20,7 +20,7 @@ import argparse
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 FLOAT_PATTERN = r"(?<![A-Za-z0-9_])([0-9]+\.[0-9]+)(?![A-Za-z0-9_])"
 GENERIC_VALIDATION_METRIC_PATTERN = (
@@ -79,6 +79,14 @@ def parse_float(value: str) -> float | None:
 
 def is_numeric_metric_value(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def format_metric_value(value: Any) -> str:
+    if isinstance(value, float):
+        return f" {value:.4f}."
+    if isinstance(value, int) and not isinstance(value, bool):
+        return f" {value}."
+    return "."
 
 
 def line_value_after_metric(line: str, match: re.Match[str]) -> float | None:
@@ -416,6 +424,39 @@ def reported_validation_metric(last_message: str, expected_metric: str | None) -
     }
 
 
+def required_validation_metric_status(signal: Mapping[str, Any] | None) -> str:
+    if not isinstance(signal, dict) or not signal.get("expected_primary_metric"):
+        return "not_required"
+    if signal.get("metric_value_available"):
+        return "present"
+    metric = signal.get("reported_validation_metric")
+    if isinstance(metric, dict):
+        value = metric.get("value")
+        values = metric.get("reported_values")
+        if is_numeric_metric_value(value):
+            return "present"
+        if isinstance(values, list) and any(is_numeric_metric_value(item) for item in values):
+            return "present"
+    return "missing"
+
+
+def critical_quality_checks_failed(*sources: Mapping[str, Any] | None) -> bool:
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        checks = source.get("quality_checks")
+        if not isinstance(checks, list):
+            continue
+        for check in checks:
+            if not isinstance(check, dict):
+                continue
+            severity = str(check.get("severity") or "").lower()
+            status = str(check.get("status") or "").lower()
+            if severity == "critical" and (check.get("passed") is False or status in {"fail", "failed", "error"}):
+                return True
+    return False
+
+
 def metric_signal(guidance_source: Any, guidance_text: str, final_message: str) -> dict[str, Any]:
     guidance_entries = guidance_source_entries(guidance_source, guidance_text)
     expected, matched_source = primary_metric_from_guidance_sources(guidance_entries, guidance_text)
@@ -477,7 +518,7 @@ def metric_signal(guidance_source: Any, guidance_text: str, final_message: str) 
         if has_value:
             evidence = (
                 f"Job guidance declares {expected} as the primary metric, but the final response reported "
-                f"{reported.get('name')}" + (f" {value:.4f}." if isinstance(value, float) else ".")
+                f"{reported.get('name')}" + format_metric_value(value)
             )
         else:
             evidence = (

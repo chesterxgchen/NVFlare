@@ -582,7 +582,7 @@ infrastructure, complete these catch-up items:
 - implement `reports/structure_tree.py` or keep `structure_quality_signal`
   explicitly unavailable until it exists;
 - make flat harness modules explicit re-export shims or remove them;
-- surface `prompt_hash`, stable failure categories, attempt/retry metadata, and
+- surface `prompt_hash`, stable failure categories, and
   unavailable `structure_quality_signal` in run summaries;
 - add `KNOWN_PENDING_BENCHMARK_AGENTS` behavior for planned but unsupported
   adapters;

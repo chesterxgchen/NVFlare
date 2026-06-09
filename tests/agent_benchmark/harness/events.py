@@ -23,15 +23,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
+MAX_ACTIVITY_COMMANDS = 200
 
-def walk(obj: Any) -> Iterable[dict[str, Any]]:
+
+def walk(obj: Any, depth: int = 20) -> Iterable[dict[str, Any]]:
+    if depth < 0:
+        return
     if isinstance(obj, dict):
         yield obj
         for value in obj.values():
-            yield from walk(value)
+            yield from walk(value, depth - 1)
     elif isinstance(obj, list):
         for value in obj:
-            yield from walk(value)
+            yield from walk(value, depth - 1)
 
 
 def parse_timestamp(value: Any) -> datetime | None:
@@ -68,6 +72,9 @@ def parse_usage_and_activity_data(events_path: Path) -> tuple[dict[str, Any], di
     event_types: Counter[str] = Counter()
     command_prefixes: Counter[str] = Counter()
     commands: list[str] = []
+    unique_commands_seen: set[str] = set()
+    command_count = 0
+    commands_truncated = False
     hint_counts: Counter[str] = Counter()
     first_event_dt = None
     first_event_timestamp = None
@@ -92,6 +99,7 @@ def parse_usage_and_activity_data(events_path: Path) -> tuple[dict[str, Any], di
     }
 
     def maybe_add_command(key: str, value: Any) -> None:
+        nonlocal command_count, commands_truncated
         if str(key).lower() not in {"cmd", "command", "shell_command"}:
             return
         command = normalize_command(value)
@@ -100,7 +108,12 @@ def parse_usage_and_activity_data(events_path: Path) -> tuple[dict[str, Any], di
         command = command.strip()
         if not command:
             return
-        commands.append(command)
+        command_count += 1
+        unique_commands_seen.add(command)
+        if len(commands) < MAX_ACTIVITY_COMMANDS:
+            commands.append(command)
+        else:
+            commands_truncated = True
         command_prefixes[command.split()[0]] += 1
 
     def add_text_hints(text: str) -> None:
@@ -115,6 +128,7 @@ def parse_usage_and_activity_data(events_path: Path) -> tuple[dict[str, Any], di
                 line = line.rstrip("\n")
                 if not line.strip():
                     continue
+                add_text_hints(line)
                 try:
                     event = json.loads(line)
                 except json.JSONDecodeError:
@@ -145,7 +159,6 @@ def parse_usage_and_activity_data(events_path: Path) -> tuple[dict[str, Any], di
                             value = container.get("type") or container.get("name")
                             if isinstance(value, str):
                                 event_types[value] += 1
-                add_text_hints(json.dumps(event, sort_keys=True, default=str))
                 for item in walk(event):
                     lowered = {str(k).lower(): v for k, v in item.items()}
                     if any(k in lowered for k in ("usage", "token_usage")):
@@ -206,11 +219,12 @@ def parse_usage_and_activity_data(events_path: Path) -> tuple[dict[str, Any], di
             round(max_inter_event_gap_seconds, 3) if max_inter_event_gap_seconds is not None else None
         ),
         "event_types": dict(event_types.most_common()),
-        "command_count": len(commands),
-        "unique_command_count": len(set(commands)),
+        "command_count": command_count,
+        "unique_command_count": len(unique_commands_seen),
         "command_prefix_counts": dict(command_prefixes.most_common()),
         "hint_counts": dict(hint_counts.most_common()),
         "commands": commands,
+        "commands_truncated": commands_truncated,
     }
     return usage, activity
 

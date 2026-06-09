@@ -19,12 +19,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
 import threading
 import time
 from collections import deque
+from contextlib import nullcontext, suppress
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -87,6 +89,7 @@ class AgentRunConfig:
     agent_model: str
     agent_home: Path
     agent_model_was_explicit: bool
+    agent_timeout_seconds: int | None = None
 
     @property
     def skill_run_mode(self) -> str:
@@ -161,6 +164,10 @@ class AgentRunConfig:
         adapter = load_agent_adapter(agent_name)
         agent_model = adapter.model_from_env(env)
         agent_home = Path(env.get("BENCHMARK_AGENT_HOME") or env.get(adapter.agent_home_env, adapter.container_home))
+        agent_timeout_seconds = optional_positive_int_env("AGENT_TIMEOUT_SECONDS", env.get("AGENT_TIMEOUT_SECONDS"))
+        progress_interval_seconds = (
+            optional_positive_int_env("PROGRESS_INTERVAL_SECONDS", env.get("PROGRESS_INTERVAL_SECONDS")) or 60
+        )
         return cls(
             mode=mode,
             use_preinstalled_skills=use_preinstalled_skills,
@@ -169,12 +176,13 @@ class AgentRunConfig:
             records_dir=Path(env.get("RECORDS_DIR", str(Path(result_dir) / "records"))),
             run_root=Path(env.get("RUN_ROOT", f"/workspace/run/{mode}")),
             prompt_source=Path(env.get("PROMPT_SOURCE", "/workspace/prompts/benchmark_prompt.txt")),
-            progress_interval_seconds=int(env.get("PROGRESS_INTERVAL_SECONDS", "60") or "60"),
+            progress_interval_seconds=progress_interval_seconds,
             nvflare_image_kind=env.get("NVFLARE_IMAGE_KIND", "unknown"),
             agent=adapter.name,
             agent_model=agent_model,
             agent_home=agent_home,
             agent_model_was_explicit=adapter.model_was_explicit(env),
+            agent_timeout_seconds=agent_timeout_seconds,
         )
 
 
@@ -183,6 +191,18 @@ def command_output(command: list[str]) -> str | None:
         return subprocess.check_output(command, text=True, stderr=subprocess.STDOUT).strip()
     except Exception:
         return None
+
+
+def optional_positive_int_env(name: str, value: str | None) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise SystemExit(f"{name} must be an integer; got {value}") from exc
+    if parsed <= 0:
+        raise SystemExit(f"{name} must be positive; got {value}")
+    return parsed
 
 
 def login_shell_runtime_probe() -> dict[str, Any]:
@@ -250,7 +270,32 @@ def login_shell_runtime_probe() -> dict[str, Any]:
     }
 
 
-def persist_container_runtime_metadata(config: AgentRunConfig) -> None:
+def agent_launch_context(config: AgentRunConfig) -> AgentLaunchContext:
+    return AgentLaunchContext(
+        workspace_dir=config.run_workspace_dir,
+        prompt_file=config.prompt_file_path,
+        result_dir=config.result_dir,
+        events_dest=config.agent_events_path,
+        stderr_dest=config.agent_stderr_path,
+        final_message_dest=config.agent_last_message_path,
+        model=config.agent_model,
+        model_was_explicit=config.agent_model_was_explicit,
+        timeout_seconds=config.agent_timeout_seconds,
+    )
+
+
+def build_agent_launch(config: AgentRunConfig) -> AgentLaunchSpec:
+    adapter = load_agent_adapter(config.agent)
+    return adapter.launch_spec(agent_launch_context(config))
+
+
+def launch_subprocess_argv(argv: list[str], *, login_shell: bool) -> list[str]:
+    if not login_shell:
+        return list(argv)
+    return ["/bin/bash", "--login", "-c", "exec " + shlex.join(argv)]
+
+
+def persist_container_runtime_metadata(config: AgentRunConfig, launch: AgentLaunchSpec | None = None) -> None:
     build_metadata = load_json(config.agent_home / "build_metadata.json", {}) or {}
     wheel_metadata = load_json(config.agent_home / "nvflare_wheel_metadata.json", {}) or {}
     if build_metadata:
@@ -260,7 +305,16 @@ def persist_container_runtime_metadata(config: AgentRunConfig) -> None:
 
     runtime_path = config.result_dir / "runtime_image.json"
     runtime_metadata = load_json(runtime_path, {}) or {}
-    probe = login_shell_runtime_probe()
+    launch = launch or build_agent_launch(config)
+    probe = (
+        login_shell_runtime_probe()
+        if launch.login_shell
+        else {
+            "ok": True,
+            "reason": "skipped_adapter_does_not_use_login_shell",
+            "required": False,
+        }
+    )
     runtime_metadata.update(
         {
             "container_python_executable": sys.executable,
@@ -269,13 +323,14 @@ def persist_container_runtime_metadata(config: AgentRunConfig) -> None:
             "container_path_prefix": os.environ.get("PATH", "").split(":")[:3],
             "container_pip_version": command_output([sys.executable, "-m", "pip", "--version"]),
             "container_uv_version": command_output(["uv", "--version"]),
+            "login_shell_required": launch.login_shell,
             "login_shell_runtime_probe": probe,
             "image_build_metadata": build_metadata,
             "nvflare_wheel_metadata": wheel_metadata,
         }
     )
     write_json(runtime_path, runtime_metadata)
-    if not probe.get("ok"):
+    if launch.login_shell and not probe.get("ok"):
         raise RuntimeError(f"Login-shell runtime probe failed: {probe.get('reason')}")
 
 
@@ -349,11 +404,24 @@ def copy_optional_metadata_files(source_dir: Path, result_dir: Path, names: tupl
     return _copy_optional_metadata_files(source_dir, result_dir, names)
 
 
+def validate_input_symlinks(input_dir: Path) -> None:
+    root = input_dir.resolve()
+    for path in input_dir.rglob("*"):
+        if not path.is_symlink():
+            continue
+        target = path.readlink()
+        resolved_target = (target if target.is_absolute() else path.parent / target).resolve(strict=False)
+        if not resolved_target.is_relative_to(root):
+            rel = path.relative_to(input_dir)
+            raise RuntimeError(f"Job input symlink escapes input directory: {rel} -> {target}")
+
+
 def prepare_input_workspace(config: AgentRunConfig) -> tuple[int, int]:
     start = epoch_seconds()
     config.run_root.mkdir(parents=True, exist_ok=True)
     for name in ("input", "generated", "job_config", "workspace"):
         shutil.rmtree(config.run_root / name, ignore_errors=True)
+    validate_input_symlinks(config.job_input_dir)
     shutil.copytree(config.job_input_dir, config.run_input_dir, symlinks=True)
     shutil.copytree(config.run_input_dir, config.run_workspace_dir, symlinks=True)
     for name in ("generated", "job_config"):
@@ -364,18 +432,17 @@ def prepare_input_workspace(config: AgentRunConfig) -> tuple[int, int]:
 def prepare_prompt(config: AgentRunConfig) -> tuple[int, int]:
     start = epoch_seconds()
     shutil.copy2(config.prompt_source, config.prompt_file_path)
-    template_bytes = config.prompt_source.read_bytes()
     prompt_bytes = config.prompt_file_path.read_bytes()
     write_json(
         config.result_dir / "prompt_metadata.json",
         {
             "template_path": str(config.prompt_source),
             "prompt_path": str(config.prompt_file_path),
-            "template_sha256": hashlib.sha256(template_bytes).hexdigest(),
+            "template_sha256": hashlib.sha256(prompt_bytes).hexdigest(),
             "prompt_sha256": hashlib.sha256(prompt_bytes).hexdigest(),
-            "template_bytes": len(template_bytes),
+            "template_bytes": len(prompt_bytes),
             "prompt_bytes": len(prompt_bytes),
-            "verbatim_copy": template_bytes == prompt_bytes,
+            "verbatim_copy": True,
             "harness_prompt_injection": False,
             "note": "The harness copies the mounted prompt file verbatim and does not append mode, path, or skill instructions.",
         },
@@ -419,6 +486,7 @@ AGENT_ENV_DENYLIST = {
     "BENCHMARK_AGENT",
     "BENCHMARK_AGENT_MODEL",
     "BENCHMARK_AGENT_HOME",
+    "AGENT_TIMEOUT_SECONDS",
 }
 
 
@@ -456,7 +524,9 @@ def event_message_text(event: dict[str, Any]) -> str:
     return json.dumps(event, sort_keys=True)
 
 
-def final_message_metadata(source: FinalMessageSource, status: str, *, message: str = "") -> dict[str, Any]:
+def final_message_metadata(
+    source: FinalMessageSource, status: str, *, message: str = "", stdout_tail_truncated: bool = False
+) -> dict[str, Any]:
     return {
         "status": status,
         "source_type": source.source_type,
@@ -465,6 +535,7 @@ def final_message_metadata(source: FinalMessageSource, status: str, *, message: 
         "tail_bytes": source.tail_bytes,
         "parser": source.parser,
         "parser_warnings": source.parser_warnings,
+        "stdout_tail_truncated": stdout_tail_truncated,
         "message": message,
     }
 
@@ -489,6 +560,8 @@ def materialize_final_message(
     config: AgentRunConfig,
     adapter: AgentAdapter,
     stdout_tail_lines: deque[str],
+    *,
+    stdout_tail_truncated: bool = False,
 ) -> None:
     source = adapter.final_message_source(config.result_dir)
     destination = config.agent_last_message_path
@@ -496,19 +569,42 @@ def materialize_final_message(
         if source.path and source.path.is_file():
             if source.path.resolve(strict=False) != destination.resolve(strict=False):
                 shutil.copy2(source.path, destination)
-            write_json(config.result_dir / "final_message_source.json", final_message_metadata(source, "materialized"))
+            write_json(
+                config.result_dir / "final_message_source.json",
+                final_message_metadata(source, "materialized", stdout_tail_truncated=stdout_tail_truncated),
+            )
             return
         destination.write_text("", encoding="utf-8")
         write_json(
             config.result_dir / "final_message_source.json",
-            final_message_metadata(source, "missing", message="configured final message file was not written"),
+            final_message_metadata(
+                source,
+                "missing",
+                message="configured final message file was not written",
+                stdout_tail_truncated=stdout_tail_truncated,
+            ),
         )
         return
     if source.source_type == "stdout_tail":
         destination.write_text(raw_tail_text(stdout_tail_lines, source.tail_bytes), encoding="utf-8")
-        write_json(config.result_dir / "final_message_source.json", final_message_metadata(source, "materialized"))
+        write_json(
+            config.result_dir / "final_message_source.json",
+            final_message_metadata(source, "materialized", stdout_tail_truncated=stdout_tail_truncated),
+        )
         return
     if source.source_type == "structured_event":
+        if stdout_tail_truncated:
+            destination.write_text("", encoding="utf-8")
+            write_json(
+                config.result_dir / "final_message_source.json",
+                final_message_metadata(
+                    source,
+                    "missing",
+                    message="stdout reader was still active; structured event final message was not read",
+                    stdout_tail_truncated=stdout_tail_truncated,
+                ),
+            )
+            return
         text = materialize_structured_event_message(config, source)
         destination.write_text(text or "", encoding="utf-8")
         write_json(
@@ -517,12 +613,16 @@ def materialize_final_message(
                 source,
                 "materialized" if text is not None else "missing",
                 message="" if text is not None else "no matching structured event found",
+                stdout_tail_truncated=stdout_tail_truncated,
             ),
         )
         return
     if source.source_type == "not_available":
         destination.write_text("", encoding="utf-8")
-        write_json(config.result_dir / "final_message_source.json", final_message_metadata(source, "skipped"))
+        write_json(
+            config.result_dir / "final_message_source.json",
+            final_message_metadata(source, "skipped", stdout_tail_truncated=stdout_tail_truncated),
+        )
         return
     raise ValueError(f"Unsupported final message source_type: {source.source_type}")
 
@@ -573,7 +673,10 @@ def terminate_timed_out_process(process: subprocess.Popen, stderr, timeout: int 
 
 
 def run_agent(
-    config: AgentRunConfig, progress: ProgressWriter, skill_exposure: SkillExposureResult | None = None
+    config: AgentRunConfig,
+    progress: ProgressWriter,
+    skill_exposure: SkillExposureResult | None = None,
+    launch: AgentLaunchSpec | None = None,
 ) -> tuple[int, int, int]:
     start = epoch_seconds()
     config.progress_log_path.write_text("", encoding="utf-8")
@@ -582,37 +685,31 @@ def run_agent(
     agent_exit = 127
     launch_error: OSError | None = None
     stdout_tail_lines: deque[str] = deque(maxlen=1000)
+    stdout_tail_lock = threading.Lock()
     adapter = load_agent_adapter(config.agent)
-    launch = adapter.launch_spec(
-        AgentLaunchContext(
-            workspace_dir=config.run_workspace_dir,
-            prompt_file=config.prompt_file_path,
-            result_dir=config.result_dir,
-            events_dest=config.agent_events_path,
-            stderr_dest=config.agent_stderr_path,
-            final_message_dest=config.agent_last_message_path,
-            model=config.agent_model,
-            model_was_explicit=config.agent_model_was_explicit,
-        )
-    )
+    launch = launch or build_agent_launch(config)
     launch_argv = list(launch.argv)
     launch_env = dict(launch.environment)
     if config.use_preinstalled_skills and skill_exposure is not None:
         launch_argv.extend(skill_exposure.launch_args)
         launch_env.update(skill_exposure.environment)
-    write_launch_spec_metadata(config, launch_argv, launch_env, launch, skill_exposure)
+    process_argv = launch_subprocess_argv(launch_argv, login_shell=launch.login_shell)
+    write_launch_spec_metadata(config, process_argv, launch_env, launch, skill_exposure)
 
     try:
         try:
+            prompt_stdin_context = (
+                launch.prompt_file.open("rb") if launch.prompt_input_mode == "stdin" else nullcontext(None)
+            )
             with (
-                launch.prompt_file.open("rb") as prompt_stdin,
+                prompt_stdin_context as prompt_stdin,
                 launch.stdout_events_dest.open("w", encoding="utf-8") as events_out,
                 launch.stderr_dest.open("wb") as stderr,
             ):
                 stdin = prompt_stdin if launch.prompt_input_mode == "stdin" else subprocess.DEVNULL
                 try:
                     process = subprocess.Popen(
-                        launch_argv,
+                        process_argv,
                         cwd=launch.cwd,
                         stdin=stdin,
                         stdout=subprocess.PIPE,
@@ -631,11 +728,16 @@ def run_agent(
                     if process.stdout is None:
                         raise RuntimeError("Agent stdout pipe was not created")
                     reader_error: list[BaseException] = []
+                    reader_stop = threading.Event()
+                    events_write_lock = threading.Lock()
 
                     def stream_stdout() -> None:
                         try:
                             for line in process.stdout:
-                                stdout_tail_lines.append(line)
+                                if reader_stop.is_set():
+                                    break
+                                with stdout_tail_lock:
+                                    stdout_tail_lines.append(line)
                                 event = adapter.normalize_event(line)
                                 normalized = (
                                     json.dumps(event, sort_keys=True, separators=(",", ":"))
@@ -643,10 +745,14 @@ def run_agent(
                                     else None
                                 )
                                 if normalized:
-                                    events_out.write(normalized + "\n")
-                                    events_out.flush()
+                                    with events_write_lock:
+                                        if reader_stop.is_set():
+                                            break
+                                        events_out.write(normalized + "\n")
+                                        events_out.flush()
                         except BaseException as exc:
-                            reader_error.append(exc)
+                            if not reader_stop.is_set():
+                                reader_error.append(exc)
 
                     reader = threading.Thread(target=stream_stdout, daemon=True)
                     reader.start()
@@ -656,9 +762,28 @@ def run_agent(
                         terminate_timed_out_process(process, stderr, launch.launch_timeout)
                         agent_exit = AGENT_TIMEOUT_EXIT_CODE
                     reader.join(timeout=AGENT_TERMINATE_GRACE_SECONDS)
+                    stdout_tail_truncated = reader.is_alive()
+                    if stdout_tail_truncated:
+                        reader_stop.set()
+                        with suppress(OSError, ValueError):
+                            process.stdout.close()
+                        reader.join(timeout=AGENT_TERMINATE_GRACE_SECONDS)
+                        with events_write_lock:
+                            pass
+                        stderr.write(
+                            "Agent stdout reader did not finish within "
+                            f"{AGENT_TERMINATE_GRACE_SECONDS} seconds after process exit.\n".encode("utf-8")
+                        )
+                    with stdout_tail_lock:
+                        stdout_tail_snapshot = deque(stdout_tail_lines, maxlen=stdout_tail_lines.maxlen)
+                    materialize_final_message(
+                        config,
+                        adapter,
+                        stdout_tail_snapshot,
+                        stdout_tail_truncated=stdout_tail_truncated,
+                    )
                     if reader_error:
                         raise RuntimeError(f"Failed to read agent stdout: {reader_error[0]}")
-                    materialize_final_message(config, adapter, stdout_tail_lines)
         except OSError as exc:
             launch_error = exc
             print(f"Failed to prepare agent command streams: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -992,7 +1117,8 @@ def run_agent_benchmark() -> int:
         config.records_dir.mkdir(parents=True, exist_ok=True)
         config.run_root.mkdir(parents=True, exist_ok=True)
         phase = "runtime_metadata_probe"
-        persist_container_runtime_metadata(config)
+        agent_launch = build_agent_launch(config)
+        persist_container_runtime_metadata(config, agent_launch)
         phase = "agent_availability_probe"
         run_agent_availability_probe(config)
 
@@ -1009,7 +1135,7 @@ def run_agent_benchmark() -> int:
 
         phase = "agent_exec"
         progress = ProgressWriter(config.mode, script_start, config.progress_log_path)
-        agent_start, agent_end, agent_exit = run_agent(config, progress, skill_exposure)
+        agent_start, agent_end, agent_exit = run_agent(config, progress, skill_exposure, agent_launch)
         elapsed_seconds = agent_end - agent_start
         phase = "post_process"
         post_start, post_end = post_process(config, elapsed_seconds, agent_exit, script_start_ns)

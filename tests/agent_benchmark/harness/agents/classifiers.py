@@ -39,12 +39,12 @@ def codex_cli_exit(exit_code: int, stderr_path: Path) -> dict[str, Any]:
     summary = generic_cli_exit(exit_code, stderr_path)
     summary["classifier"] = "codex_cli"
     stderr_lower = str(summary.get("stderr_excerpt") or "").lower()
-    if "model" in stderr_lower and ("not supported" in stderr_lower or "unsupported" in stderr_lower):
+    if exit_code == 127:
+        summary["failure_category"] = "agent_cli_missing"
+    elif "model" in stderr_lower and ("not supported" in stderr_lower or "unsupported" in stderr_lower):
         summary["failure_category"] = "agent_model_unsupported"
     elif "auth" in stderr_lower or "api key" in stderr_lower or "login" in stderr_lower:
         summary["failure_category"] = "agent_auth_failure"
-    elif exit_code == 127:
-        summary["failure_category"] = "agent_cli_missing"
     return summary
 
 

@@ -735,7 +735,17 @@ def _schema_agent_skills_sub_cmd(argv: list[str]) -> Optional[str]:
     # option values can legitimately equal a subcommand name.
     if "--schema" not in argv or CMD_AGENT_SKILLS not in argv:
         return None
-    index = argv.index(CMD_AGENT_SKILLS) + 1
+    skills_index = None
+    for token_index, token in enumerate(argv):
+        if token != CMD_AGENT_SKILLS:
+            continue
+        if token_index > 0 and argv[token_index - 1].startswith("-"):
+            continue
+        skills_index = token_index
+        break
+    if skills_index is None:
+        return None
+    index = skills_index + 1
     while index < len(argv):
         token = argv[index]
         if token == "--schema":
@@ -744,5 +754,4 @@ def _schema_agent_skills_sub_cmd(argv: list[str]) -> Optional[str]:
         if token.startswith("-"):
             return None
         return token if token in _agent_skills_sub_cmd_parsers else None
-        index += 1
     return None

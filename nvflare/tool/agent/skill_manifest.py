@@ -126,6 +126,7 @@ def _copy_shared_references_to_bundle(source_root: Path, target_root: Path) -> N
     shared_root = source_root / SHARED_SKILL_REFERENCE_DIR
     if not shared_root.is_dir():
         return
+    skill_tree_hash(shared_root)
     shutil.copytree(
         shared_root,
         target_root / SHARED_SKILL_REFERENCE_DIR,

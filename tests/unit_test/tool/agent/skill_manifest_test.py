@@ -196,6 +196,23 @@ def test_copy_released_skills_to_bundle_unlinks_stale_bundle_symlink(tmp_path):
     assert bundle_root.joinpath("nvflare-test-skill", "SKILL.md").is_file()
 
 
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks are not supported on this platform")
+def test_copy_released_skills_to_bundle_rejects_shared_reference_symlink(tmp_path):
+    source_root = tmp_path / "skills"
+    bundle_root = tmp_path / "bundle"
+    _write_skill(source_root, "nvflare-test-skill")
+    shared_dir = source_root / "_shared"
+    shared_dir.mkdir()
+    outside_file = tmp_path / "outside.md"
+    outside_file.write_text("external shared content\n", encoding="utf-8")
+    shared_dir.joinpath("outside-link.md").symlink_to(outside_file)
+
+    with pytest.raises(ValueError, match="skill directory contains symlink"):
+        copy_released_skills_to_bundle(source_root, bundle_root, nvflare_version="2.8.0")
+
+    assert not bundle_root.joinpath("_shared", "outside-link.md").exists()
+
+
 def test_write_empty_skill_bundle_writes_empty_manifest_and_cleans_existing_content(tmp_path):
     bundle_root = tmp_path / "bundle"
     bundle_root.mkdir()
