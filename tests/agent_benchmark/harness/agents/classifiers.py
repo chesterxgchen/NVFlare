@@ -30,7 +30,7 @@ def generic_cli_exit(exit_code: int, stderr_path: Path) -> dict[str, Any]:
         "classifier": "generic_cli",
         "exit_code": exit_code,
         "passed": exit_code == 0,
-        "failure_category": "agent_cli_failure" if exit_code else None,
+        "failure_category": "agent_unknown_failure" if exit_code else None,
         "stderr_excerpt": stderr_text,
     }
 
@@ -59,7 +59,7 @@ def claude_cli_exit(exit_code: int, stderr_path: Path) -> dict[str, Any]:
     elif "auth" in stderr_lower or "api key" in stderr_lower or "login" in stderr_lower:
         summary["failure_category"] = "agent_auth_failure"
     elif "permission" in stderr_lower or "approval" in stderr_lower:
-        summary["failure_category"] = "agent_permission_failure"
+        summary["failure_category"] = "agent_sandbox_or_approval_failure"
     return summary
 
 

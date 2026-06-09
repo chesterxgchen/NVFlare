@@ -66,6 +66,7 @@ class AgentConfig:
     display_name: str
     default_model: str
     model_env: str | None
+    requires_explicit_model: bool
     agent_home_env: str
     container_home: str
     legacy_artifact_prefixes: tuple[str, ...]
@@ -133,6 +134,7 @@ class AgentConfig:
             display_name=str(data["display_name"]),
             default_model=str(data.get("default_model") or UNSPECIFIED_MODEL),
             model_env=str(data["model_env"]) if data.get("model_env") else None,
+            requires_explicit_model=bool(data.get("requires_explicit_model", False)),
             agent_home_env=str(data["agent_home_env"]),
             container_home=str(data["container_home"]),
             legacy_artifact_prefixes=tuple(str(item) for item in data.get("legacy_artifact_prefixes") or ()),
@@ -241,12 +243,19 @@ class ConfigurableAgentAdapter(AgentAdapter):
         return self._cfg.container_home
 
     def model_from_env(self, env: Mapping[str, str]) -> str:
-        return (
-            env.get("BENCHMARK_AGENT_MODEL")
-            or (env.get(self._cfg.model_env) if self._cfg.model_env else None)
-            or self.default_model
-            or UNSPECIFIED_MODEL
+        explicit_model = env.get("BENCHMARK_AGENT_MODEL") or (
+            env.get(self._cfg.model_env) if self._cfg.model_env else None
         )
+        if explicit_model:
+            return explicit_model
+        if self._cfg.requires_explicit_model:
+            accepted = ["BENCHMARK_AGENT_MODEL"]
+            if self._cfg.model_env:
+                accepted.append(self._cfg.model_env)
+            raise ValueError(
+                f"{self.display_name} requires an explicit benchmark model. " f"Set one of: {', '.join(accepted)}."
+            )
+        return self.default_model or UNSPECIFIED_MODEL
 
     def model_was_explicit(self, env: Mapping[str, str]) -> bool:
         return bool(env.get("BENCHMARK_AGENT_MODEL") or (env.get(self._cfg.model_env) if self._cfg.model_env else None))

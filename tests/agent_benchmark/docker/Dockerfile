@@ -37,8 +37,6 @@ RUN if [ "${BENCHMARK_DOCKER_AGENT}" = "codex" ]; then \
 COPY --from=uv_source /uv /uvx /usr/local/bin/
 RUN uv --version
 
-ENV CODEX_HOME=/workspace/.codex
-ENV CLAUDE_CONFIG_DIR=/workspace/.claude
 ENV BENCHMARK_DOCKER_AGENT=${BENCHMARK_DOCKER_AGENT}
 ENV BENCHMARK_AGENT_HOME=${BENCHMARK_AGENT_HOME}
 ENV JOB_INPUT_DIR=/workspace/input

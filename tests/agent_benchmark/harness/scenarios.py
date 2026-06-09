@@ -242,13 +242,17 @@ def resolve_agents(raw: Mapping[str, Any]) -> tuple[dict[str, AgentSpec], list[d
             adapter = load_agent_adapter(name)
         except ValueError as exc:
             raise ScenarioValidationError(str(exc)) from exc
-        spec = AgentSpec(name=name, models=models, default_model=adapter.default_model)
+        try:
+            default_model = adapter.default_model if models else adapter.model_from_env({})
+        except ValueError as exc:
+            raise ScenarioValidationError(str(exc)) from exc
+        spec = AgentSpec(name=name, models=models, default_model=default_model)
         agents[name] = spec
         resolved.append(
             {
                 "name": name,
                 "models": list(models),
-                "default_model": adapter.default_model,
+                "default_model": default_model,
                 "model_source_when_unspecified": "adapter_default",
             }
         )

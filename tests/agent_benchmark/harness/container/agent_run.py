@@ -33,6 +33,7 @@ from typing import Any
 from ..agents.base import (
     AgentAdapter,
     AgentLaunchContext,
+    AgentLaunchSpec,
     FinalMessageSource,
     SkillExposureContext,
     SkillExposureResult,
@@ -526,6 +527,37 @@ def materialize_final_message(
     raise ValueError(f"Unsupported final message source_type: {source.source_type}")
 
 
+def write_launch_spec_metadata(
+    config: AgentRunConfig,
+    launch_argv: list[str],
+    launch_env: dict[str, str],
+    launch: AgentLaunchSpec,
+    skill_exposure: SkillExposureResult | None,
+) -> None:
+    write_json(
+        config.result_dir / "launch_spec_metadata.json",
+        {
+            "agent": config.agent,
+            "agent_model": config.agent_model,
+            "agent_model_explicit": config.agent_model_was_explicit,
+            "argv": launch_argv,
+            "cwd": str(launch.cwd),
+            "prompt_input_mode": launch.prompt_input_mode,
+            "stdout_events_dest": str(launch.stdout_events_dest),
+            "stderr_dest": str(launch.stderr_dest),
+            "final_message_dest": str(launch.final_message_dest) if launch.final_message_dest else None,
+            "login_shell": launch.login_shell,
+            "approval_flags": launch.approval_flags,
+            "sandbox_flags": launch.sandbox_flags,
+            "bypass_reason": launch.bypass_reason,
+            "launch_timeout": launch.launch_timeout,
+            "environment_keys": sorted(launch_env),
+            "skill_launch_args": skill_exposure.launch_args if skill_exposure else [],
+            "skill_environment_keys": sorted(skill_exposure.environment) if skill_exposure else [],
+        },
+    )
+
+
 def terminate_timed_out_process(process: subprocess.Popen, stderr, timeout: int | None) -> None:
     message = f"Agent command timed out after {timeout} seconds; terminating process.\n"
     stderr.write(message.encode("utf-8", errors="replace"))
@@ -568,6 +600,7 @@ def run_agent(
     if config.use_preinstalled_skills and skill_exposure is not None:
         launch_argv.extend(skill_exposure.launch_args)
         launch_env.update(skill_exposure.environment)
+    write_launch_spec_metadata(config, launch_argv, launch_env, launch, skill_exposure)
 
     try:
         try:

@@ -97,13 +97,16 @@ def apply_record_runtime_fields(
             "elapsed_seconds": elapsed_seconds,
             "agent_elapsed_seconds": elapsed_seconds,
             "token_count": usage.get("total_tokens"),
+            "cache_tokens": usage.get("cache_tokens"),
+            "cost": usage.get("cost"),
             "agent_exit_code": agent_exit,
             "agent_process_passed": 1 if agent_exit == 0 else 0,
             "token_parser": usage.get("token_parser"),
         }
     )
-    if usage.get("token_parser_warnings"):
-        metrics["token_parser_warning_count"] = len(usage["token_parser_warnings"])
+    parser_warnings = usage.get("parser_warnings") or usage.get("token_parser_warnings")
+    if parser_warnings:
+        metrics["token_parser_warning_count"] = len(parser_warnings)
     if agent_record_present is not None:
         metrics["agent_record_present"] = 1 if agent_record_present else 0
     if agent_record_valid is not None:
@@ -821,6 +824,8 @@ def write_run_summary(final_record_path: Path, summary_path: Path, *, print_summ
         "prompt_hash": prompt_metadata.get("prompt_sha256"),
         "prompt_source": prompt_metadata.get("template_path"),
         "token_count": metrics.get("token_count"),
+        "cache_tokens": metrics.get("cache_tokens"),
+        "cost": metrics.get("cost"),
         "conversion_quality": metrics.get("conversion_quality"),
         "correction_count": metrics.get("correction_count"),
         "command_failures": metrics.get("command_failures"),

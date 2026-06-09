@@ -2,6 +2,7 @@ name: claude
 display_name: Claude Code
 default_model: unspecified_default
 model_env: CLAUDE_MODEL
+requires_explicit_model: true
 agent_home_env: CLAUDE_CONFIG_DIR
 container_home: /workspace/.claude
 
@@ -47,10 +48,9 @@ launch:
     - --output-format
     - stream-json
     - --verbose
-    - --print
-  model_argv:
     - --model
     - "{model}"
+    - --print
   sandbox_flags:
     - --dangerously-skip-permissions
   bypass_reason: "isolated benchmark container; writable state is limited to mounted result/workspace paths"
@@ -60,9 +60,6 @@ launch:
 skill_exposure:
   mechanism_type: launch_flag
   skill_root: "{container_home}/skills"
-  metadata_files:
-    - "{container_home}/nvflare_skills_build_install.json"
-    - "{container_home}/nvflare_skills_list.json"
   launch_args:
     - --add-dir
     - "{skills_dir}"
