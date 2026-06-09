@@ -64,6 +64,12 @@ ACTIVITY_PARSERS = {
     "generic_jsonl_activity": lambda path: parse_usage_and_activity_data(path)[1],
 }
 
+FINAL_MESSAGE_SOURCE_TYPES = {"file", "structured_event", "stdout_tail", "not_available"}
+FINAL_MESSAGE_PARSERS = {
+    "generic_stdout_last_message",
+    "generic_structured_event_message",
+}
+
 
 def validate_event_parser(parser_id: str) -> None:
     if parser_id not in EVENT_PARSERS:
@@ -78,6 +84,16 @@ def validate_usage_parser(parser_id: str) -> None:
 def validate_activity_parser(parser_id: str) -> None:
     if parser_id not in ACTIVITY_PARSERS:
         raise ValueError(f"Unknown agent activity parser: {parser_id}")
+
+
+def validate_final_message_config(source_type: str, parser_id: str | None = None) -> None:
+    if source_type not in FINAL_MESSAGE_SOURCE_TYPES:
+        raise ValueError(
+            f"Unknown final message source_type: {source_type}. "
+            f"Valid source types: {', '.join(sorted(FINAL_MESSAGE_SOURCE_TYPES))}"
+        )
+    if parser_id and parser_id not in FINAL_MESSAGE_PARSERS:
+        raise ValueError(f"Unknown final message parser: {parser_id}")
 
 
 def normalize_event_with_parser(raw_line: str, parser_id: str) -> dict[str, Any] | None:

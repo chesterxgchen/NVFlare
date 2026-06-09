@@ -54,6 +54,17 @@ def test_codex_agent_config_loads_parser_and_classifier_ids():
     assert "{prompt_text}" not in json.dumps(config.raw)
 
 
+def test_claude_agent_config_uses_config_dir_and_valid_final_message_source():
+    from harness.agents.config import AgentConfig
+
+    config_path = Path(__file__).resolve().parents[2] / "agent_benchmark" / "harness" / "agents" / "claude.yaml"
+
+    config = AgentConfig.load(config_path)
+
+    assert config.agent_home_env == "CLAUDE_CONFIG_DIR"
+    assert config.final_message["source_type"] == "stdout_tail"
+
+
 def test_agent_config_rejects_unknown_parser_id(tmp_path):
     from harness.agents.config import AgentConfig
 
@@ -82,6 +93,40 @@ def test_agent_config_rejects_unknown_exit_classifier(tmp_path):
         assert "Unknown agent exit classifier: bad" in str(exc)
     else:
         raise AssertionError("unknown adapter exit classifier should fail during config load")
+
+
+def test_agent_config_rejects_unknown_final_message_source_type(tmp_path):
+    from harness.agents.config import AgentConfig
+
+    source_path = Path(__file__).resolve().parents[2] / "agent_benchmark" / "harness" / "agents" / "codex.yaml"
+    config_path = tmp_path / "bad_final_source.yaml"
+    config_path.write_text(source_path.read_text(encoding="utf-8").replace("source_type: file", "source_type: bad"))
+
+    try:
+        AgentConfig.load(config_path)
+    except ValueError as exc:
+        assert "Unknown final message source_type: bad" in str(exc)
+    else:
+        raise AssertionError("unknown final message source type should fail during config load")
+
+
+def test_agent_config_rejects_unknown_final_message_parser(tmp_path):
+    from harness.agents.config import AgentConfig
+
+    source_path = Path(__file__).resolve().parents[2] / "agent_benchmark" / "harness" / "agents" / "claude.yaml"
+    config_path = tmp_path / "bad_final_parser.yaml"
+    config_path.write_text(
+        source_path.read_text(encoding="utf-8").replace(
+            "parser: generic_stdout_last_message", "parser: missing_final_parser"
+        )
+    )
+
+    try:
+        AgentConfig.load(config_path)
+    except ValueError as exc:
+        assert "Unknown final message parser: missing_final_parser" in str(exc)
+    else:
+        raise AssertionError("unknown final message parser should fail during config load")
 
 
 def test_agent_adapter_cache_can_be_cleared_for_tests():
@@ -198,6 +243,19 @@ def test_container_config_uses_generic_agent_model_and_home(monkeypatch):
     assert not hasattr(config, "codex_home")
 
 
+def test_container_config_requires_benchmark_agent(monkeypatch):
+    from harness.container.agent_run import AgentRunConfig
+
+    monkeypatch.delenv("BENCHMARK_AGENT", raising=False)
+
+    try:
+        AgentRunConfig.from_env()
+    except SystemExit as exc:
+        assert "BENCHMARK_AGENT is required" in str(exc)
+    else:
+        raise AssertionError("in-container config should require explicit BENCHMARK_AGENT")
+
+
 def test_agent_subprocess_env_hides_harness_controls_and_adapter_model_env(monkeypatch):
     from harness.agents.registry import load_agent_adapter
     from harness.container.agent_run import agent_subprocess_env
@@ -219,6 +277,144 @@ def test_agent_subprocess_env_hides_harness_controls_and_adapter_model_env(monke
     assert "CODEX_MODEL" not in env
     assert env["OPENAI_API_KEY"] == "kept-for-agent-auth"
     assert env["CODEX_HOME"] == "/workspace/.codex"
+
+
+def test_run_agent_enforces_launch_timeout(tmp_path, monkeypatch):
+    from harness.agents.base import AgentLaunchSpec, FinalMessageSource
+    from harness.container import agent_run
+    from harness.container.agent_run import AGENT_TIMEOUT_EXIT_CODE, AgentRunConfig, ProgressWriter, run_agent
+
+    class TimeoutAdapter:
+        def launch_spec(self, config):
+            return AgentLaunchSpec(
+                argv=[sys.executable, "-c", "import time; time.sleep(5)"],
+                cwd=config.workspace_dir,
+                prompt_file=config.prompt_file,
+                prompt_input_mode="stdin",
+                stdout_events_dest=config.events_dest,
+                stderr_dest=config.stderr_dest,
+                final_message_dest=config.final_message_dest,
+                launch_timeout=1,
+            )
+
+        def normalize_event(self, raw_line):
+            return None
+
+        def final_message_source(self, result_dir):
+            return FinalMessageSource(source_type="not_available")
+
+        def model_env_names(self):
+            return ()
+
+    result_dir = tmp_path / "results"
+    run_root = tmp_path / "run"
+    workspace = run_root / "workspace"
+    result_dir.mkdir()
+    workspace.mkdir(parents=True)
+    prompt = result_dir / "prompt.txt"
+    prompt.write_text("prompt\n", encoding="utf-8")
+    config = AgentRunConfig(
+        mode="with_skills",
+        use_preinstalled_skills=True,
+        job_input_dir=tmp_path / "job",
+        result_dir=result_dir,
+        records_dir=result_dir / "records",
+        run_root=run_root,
+        prompt_source=prompt,
+        progress_interval_seconds=0,
+        nvflare_image_kind="test-skills",
+        agent="test",
+        agent_model="test-model",
+        agent_home=tmp_path / ".agent",
+        agent_model_was_explicit=False,
+    )
+    monkeypatch.setattr(agent_run, "load_agent_adapter", lambda _agent: TimeoutAdapter())
+
+    _start, _end, exit_code = run_agent(config, ProgressWriter(config.mode, 0, config.progress_log_path))
+
+    assert exit_code == AGENT_TIMEOUT_EXIT_CODE
+    assert "timed out after 1 seconds" in config.agent_stderr_path.read_text(encoding="utf-8")
+
+
+def test_materialize_final_message_from_stdout_tail(tmp_path):
+    from collections import deque
+
+    from harness.agents.base import FinalMessageSource
+    from harness.container.agent_run import AgentRunConfig, materialize_final_message
+
+    class StdoutAdapter:
+        def final_message_source(self, result_dir):
+            return FinalMessageSource(source_type="stdout_tail", tail_bytes=12, parser="generic_stdout_last_message")
+
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+    config = AgentRunConfig(
+        mode="with_skills",
+        use_preinstalled_skills=True,
+        job_input_dir=tmp_path / "job",
+        result_dir=result_dir,
+        records_dir=result_dir / "records",
+        run_root=tmp_path / "run",
+        prompt_source=tmp_path / "prompt.txt",
+        progress_interval_seconds=0,
+        nvflare_image_kind="test-skills",
+        agent="test",
+        agent_model="test-model",
+        agent_home=tmp_path / ".agent",
+        agent_model_was_explicit=False,
+    )
+
+    materialize_final_message(config, StdoutAdapter(), deque(["first line\n", "final message\n"]))
+
+    assert config.agent_last_message_path.read_text(encoding="utf-8") == "nal message\n"
+    metadata = json.loads((result_dir / "final_message_source.json").read_text(encoding="utf-8"))
+    assert metadata["source_type"] == "stdout_tail"
+    assert metadata["status"] == "materialized"
+
+
+def test_agent_availability_probe_records_missing_cli(tmp_path, monkeypatch):
+    from harness.container import agent_run
+    from harness.container.agent_run import AgentRunConfig, run_agent_availability_probe
+
+    class MissingProbeAdapter:
+        def availability_probe(self):
+            return ["/definitely/missing/agent-cli"]
+
+        def runtime_env(self, config):
+            return {}
+
+        def model_env_names(self):
+            return ()
+
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+    config = AgentRunConfig(
+        mode="with_skills",
+        use_preinstalled_skills=True,
+        job_input_dir=tmp_path / "job",
+        result_dir=result_dir,
+        records_dir=result_dir / "records",
+        run_root=tmp_path / "run",
+        prompt_source=tmp_path / "prompt.txt",
+        progress_interval_seconds=0,
+        nvflare_image_kind="test-skills",
+        agent="test",
+        agent_model="test-model",
+        agent_home=tmp_path / ".agent",
+        agent_model_was_explicit=False,
+    )
+    monkeypatch.setattr(agent_run, "load_agent_adapter", lambda _agent: MissingProbeAdapter())
+
+    try:
+        run_agent_availability_probe(config)
+    except RuntimeError as exc:
+        assert "Agent availability probe failed to start" in str(exc)
+    else:
+        raise AssertionError("missing agent CLI should fail availability probe")
+
+    probe = json.loads((result_dir / "agent_availability_probe.json").read_text(encoding="utf-8"))
+    assert probe["status"] == "failed"
+    assert probe["exit_code"] == 127
 
 
 def test_host_image_config_rejects_unsupported_agent(monkeypatch):
@@ -433,6 +629,35 @@ def test_skill_exposure_carries_launch_args_and_environment(tmp_path):
     assert result.environment == {"AGENT_SKILLS_DIR": str(skill_root)}
 
 
+def test_skill_exposure_rejects_skill_root_outside_container_home(tmp_path):
+    from harness.agents.base import SkillExposureSpec
+    from harness.container.skills import apply_skill_exposure
+
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+    outside = tmp_path / "outside"
+
+    try:
+        apply_skill_exposure(
+            spec=SkillExposureSpec(
+                mechanism_type="preinstalled_home",
+                container_home=tmp_path / "agent_home",
+                skill_root=outside,
+            ),
+            skills_enabled=False,
+            result_dir=result_dir,
+            nvflare_image_kind="test-baseline",
+        )
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("out-of-scope skill_root should fail before removal")
+
+    state = json.loads((result_dir / "skills_state.json").read_text(encoding="utf-8"))
+    assert state["reason"] == "skill_root_outside_container_home"
+    assert state["skill_root"] == str(outside)
+
+
 def test_copy_optional_metadata_files_strips_nvflare_prefix(tmp_path):
     from harness.container.agent_run import copy_optional_metadata_files
 
@@ -522,18 +747,18 @@ def test_finalize_timing_uses_named_lifecycle_epochs(tmp_path):
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     record = json.loads(record_path.read_text(encoding="utf-8"))
     assert timing["phase_seconds"] == {
-        "total_container": 30,
-        "skill_availability_setup": 2,
-        "input_copy": 4,
-        "prompt_prepare": 2,
-        "agent_runtime": 10,
-        "post_process": 4,
-        "report_outcome": 1,
-        "setup_before_agent": 11,
+        "container_elapsed_seconds": 30,
+        "setup_elapsed_seconds": 11,
+        "skill_exposure_elapsed_seconds": 2,
+        "input_copy_elapsed_seconds": 4,
+        "prompt_prepare_elapsed_seconds": 2,
+        "agent_elapsed_seconds": 10,
+        "post_process_elapsed_seconds": 4,
+        "report_elapsed_seconds": 1,
     }
     assert summary["activity"]["event_count"] == 3
     assert summary["activity"]["command_count"] == 2
-    assert record["process_metrics"]["phase_seconds"]["agent_runtime"] == 10
+    assert record["process_metrics"]["phase_seconds"]["agent_elapsed_seconds"] == 10
 
 
 def test_write_failure_record_outputs_early_failure_artifacts(tmp_path):
@@ -746,17 +971,30 @@ def test_failure_analysis_extracts_unsupported_model_message():
         "available": True,
         "agent_events_text": "The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account.",
         "container_exit": {"exit_code": 1},
-        "run": {"codex_exit_code": 1},
+        "run": {"agent_exit_code": 1},
         "status": "missing",
         "validation_metric": {},
     }
 
     assert failure_root_cause(run) == (
-        "Codex model selection failed: The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account."
+        "Agent model selection failed: The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account."
     )
     assert failure_evidence(run) == (
         "The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account."
     )
+
+
+def test_failure_root_cause_prefers_agent_exit_classifier():
+    from harness.reports.benchmark_insights import failure_root_cause
+
+    run = {
+        "available": True,
+        "agent_events_text": "unstructured error text",
+        "record": {"agent_exit_summary": {"failure_category": "agent_auth_failure"}},
+        "run": {"agent_exit_code": 1},
+    }
+
+    assert failure_root_cause(run) == "Agent failure category: agent_auth_failure"
 
 
 def test_failure_analysis_identifies_agent_generated_requirements_file():
@@ -1155,7 +1393,7 @@ def test_metrics_chart_names_metric_once_in_panel_title():
             "label": label,
             "available": True,
             "status": "0",
-            "run": {"elapsed_seconds": 1, "token_count": 1, "codex_exit_code": 0, "final_container_exit_code": 0},
+            "run": {"elapsed_seconds": 1, "token_count": 1, "agent_exit_code": 0, "final_container_exit_code": 0},
             "activity": {"command_count": 1},
             "record": {},
             "workspace_delta": {},
@@ -1375,7 +1613,7 @@ def test_report_generators_write_two_mode_outputs(tmp_path, monkeypatch):
                     "mode": mode,
                     "elapsed_seconds": 10,
                     "token_count": 100,
-                    "codex_exit_code": 0,
+                    "agent_exit_code": 0,
                     "final_container_exit_code": 0,
                 }
             )

@@ -177,7 +177,6 @@ def exit_code(run: dict[str, Any]) -> int | None:
         summary.get("final_container_exit_code"),
         summary.get("report_inclusive_exit_code"),
         summary.get("agent_exit_code"),
-        summary.get("codex_exit_code"),
         container_exit.get("exit_code"),
     ):
         if isinstance(value, bool) or value is None:
@@ -469,14 +468,18 @@ def failure_evidence(run: dict[str, Any]) -> str:
 
 
 def failure_root_cause(run: dict[str, Any]) -> str:
+    record = run.get("record") if isinstance(run.get("record"), dict) else {}
+    exit_summary = record.get("agent_exit_summary") if isinstance(record.get("agent_exit_summary"), dict) else {}
+    failure_category = record.get("failure_category") or exit_summary.get("failure_category")
+    if failure_category:
+        return f"Agent failure category: {failure_category}"
     text = combined_text(run)
     model_error = unsupported_model_message(text)
     if model_error:
-        return f"Codex model selection failed: {model_error}"
+        return f"Agent model selection failed: {model_error}"
     lowered = text.lower()
     if "pull access denied" in lowered or "unable to find image" in lowered:
         return "Docker image unavailable: build the benchmark Docker images before running."
-    record = run.get("record") if isinstance(run.get("record"), dict) else {}
     error = record.get("harness_error") if isinstance(record.get("harness_error"), dict) else {}
     if error.get("message"):
         return f"Harness failure: {error['message']}"

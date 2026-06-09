@@ -53,15 +53,17 @@ def finalize_timing(
     activity_path: Path,
     epochs: LifecycleEpochs,
 ) -> None:
+    setup_elapsed = epochs.agent_start - epochs.script_start
+    agent_elapsed = epochs.agent_end - epochs.agent_start
     phase_seconds = {
-        "total_container": epochs.script_end - epochs.script_start,
-        "skill_availability_setup": epochs.skill_availability_end - epochs.skill_availability_start,
-        "input_copy": epochs.input_copy_end - epochs.input_copy_start,
-        "prompt_prepare": epochs.prompt_prep_end - epochs.prompt_prep_start,
-        "agent_runtime": epochs.agent_end - epochs.agent_start,
-        "post_process": epochs.post_process_end - epochs.post_process_start,
-        "report_outcome": epochs.report_outcome_end - epochs.report_outcome_start,
-        "setup_before_agent": epochs.agent_start - epochs.script_start,
+        "container_elapsed_seconds": epochs.script_end - epochs.script_start,
+        "setup_elapsed_seconds": setup_elapsed,
+        "skill_exposure_elapsed_seconds": epochs.skill_availability_end - epochs.skill_availability_start,
+        "input_copy_elapsed_seconds": epochs.input_copy_end - epochs.input_copy_start,
+        "prompt_prepare_elapsed_seconds": epochs.prompt_prep_end - epochs.prompt_prep_start,
+        "agent_elapsed_seconds": agent_elapsed,
+        "post_process_elapsed_seconds": epochs.post_process_end - epochs.post_process_start,
+        "report_elapsed_seconds": epochs.report_outcome_end - epochs.report_outcome_start,
     }
     timing = {
         "epoch_seconds": {
@@ -78,6 +80,8 @@ def finalize_timing(
     record = load_json(record_path, {}) or {}
     activity = load_json(activity_path, {}) or {}
     summary["phase_seconds"] = phase_seconds
+    if summary.get("agent_elapsed_seconds") is None:
+        summary["agent_elapsed_seconds"] = agent_elapsed
     summary["activity"] = {
         "event_count": activity.get("event_count"),
         "first_event_timestamp": activity.get("first_event_timestamp"),
@@ -93,6 +97,8 @@ def finalize_timing(
     if isinstance(metrics, dict):
         metrics["phase_seconds"] = phase_seconds
         metrics["activity"] = summary["activity"]
+        if metrics.get("agent_elapsed_seconds") is None:
+            metrics["agent_elapsed_seconds"] = agent_elapsed
     summary["process_metrics"] = (
         record.get("process_metrics")
         if isinstance(record.get("process_metrics"), dict)

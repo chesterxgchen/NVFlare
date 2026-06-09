@@ -24,23 +24,33 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..agents.base import AgentLaunchContext, SkillExposureContext, SkillExposureResult
-from ..agents.registry import DEFAULT_BENCHMARK_AGENT, load_agent_adapter
+from ..agents.base import (
+    AgentAdapter,
+    AgentLaunchContext,
+    FinalMessageSource,
+    SkillExposureContext,
+    SkillExposureResult,
+)
+from ..agents.registry import load_agent_adapter
 from ..artifacts import capture_workspace_delta, write_workspace_baseline
 from ..common import bool_from_text, load_json, make_tree_readable, write_json
 from ..modes import mode_spec
 from ..records import AgentRecordSynthesisInputs, merge_record, synthesize_agent_record, write_run_summary
 from ..timing import LifecycleEpochs, finalize_timing
+from .progress import ProgressWriter
 from .skills import apply_skill_exposure
 from .skills import copy_optional_metadata_files as _copy_optional_metadata_files
 
 DEFAULT_CONTAINER_VENV_DIR = "/workspace/venv"
 RUNTIME_ARTIFACT_ROOT = Path("/tmp/nvflare")
+AGENT_TIMEOUT_EXIT_CODE = 124
+AGENT_TERMINATE_GRACE_SECONDS = 10
 
 
 def epoch_seconds() -> int:
@@ -79,7 +89,7 @@ class AgentRunConfig:
 
     @property
     def skill_run_mode(self) -> str:
-        return "with_skill" if self.use_preinstalled_skills else "without_skill"
+        return self.mode
 
     @property
     def run_input_dir(self) -> Path:
@@ -144,7 +154,10 @@ class AgentRunConfig:
             )
         job_input = env.get("JOB_INPUT_DIR") or env.get("TRAINING_CODE") or "/workspace/input"
         result_dir = env.get("RESULT_DIR", "/workspace/results")
-        adapter = load_agent_adapter(env.get("BENCHMARK_AGENT", DEFAULT_BENCHMARK_AGENT))
+        agent_name = env.get("BENCHMARK_AGENT")
+        if not agent_name:
+            raise SystemExit("BENCHMARK_AGENT is required inside the benchmark container.")
+        adapter = load_agent_adapter(agent_name)
         agent_model = adapter.model_from_env(env)
         agent_home = Path(env.get("BENCHMARK_AGENT_HOME") or env.get(adapter.agent_home_env, adapter.container_home))
         return cls(
@@ -162,57 +175,6 @@ class AgentRunConfig:
             agent_home=agent_home,
             agent_model_was_explicit=adapter.model_was_explicit(env),
         )
-
-
-class ProgressWriter:
-    def __init__(self, mode: str, script_start_epoch: int, progress_log: Path):
-        self.mode = mode
-        self.script_start_epoch = script_start_epoch
-        self.progress_log = progress_log
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-
-    def write(self, phase: str, status: str, epoch: int | None = None) -> None:
-        epoch = epoch_seconds() if epoch is None else epoch
-        elapsed = epoch - self.script_start_epoch
-        timestamp = utc_timestamp()
-        print(
-            f"[{timestamp}] benchmark progress: mode={self.mode} phase={phase} "
-            f"status={status} elapsed_seconds={elapsed}",
-            file=sys.stderr,
-            flush=True,
-        )
-        with self.progress_log.open("a", encoding="utf-8") as stream:
-            stream.write(
-                json.dumps(
-                    {
-                        "timestamp": timestamp,
-                        "mode": self.mode,
-                        "phase": phase,
-                        "status": status,
-                        "elapsed_seconds": elapsed,
-                    },
-                    separators=(",", ":"),
-                )
-                + "\n"
-            )
-
-    def start_heartbeat(self, phase: str, interval_seconds: int) -> None:
-        if interval_seconds <= 0:
-            return
-
-        def loop() -> None:
-            while not self._stop.wait(interval_seconds):
-                self.write(phase, "running")
-
-        self._thread = threading.Thread(target=loop, daemon=True)
-        self._thread.start()
-
-    def stop_heartbeat(self) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=2)
-            self._thread = None
 
 
 def command_output(command: list[str]) -> str | None:
@@ -314,6 +276,50 @@ def persist_container_runtime_metadata(config: AgentRunConfig) -> None:
     write_json(runtime_path, runtime_metadata)
     if not probe.get("ok"):
         raise RuntimeError(f"Login-shell runtime probe failed: {probe.get('reason')}")
+
+
+def run_agent_availability_probe(config: AgentRunConfig) -> None:
+    adapter = load_agent_adapter(config.agent)
+    command = adapter.availability_probe()
+    if not command:
+        write_json(
+            config.result_dir / "agent_availability_probe.json",
+            {"status": "skipped", "reason": "adapter did not define an availability probe"},
+        )
+        return
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=agent_subprocess_env(adapter.runtime_env(config), adapter),
+        )
+    except OSError as exc:
+        write_json(
+            config.result_dir / "agent_availability_probe.json",
+            {
+                "status": "failed",
+                "command": command,
+                "exit_code": 127,
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+            },
+        )
+        raise RuntimeError(f"Agent availability probe failed to start: {type(exc).__name__}: {exc}") from exc
+    write_json(
+        config.result_dir / "agent_availability_probe.json",
+        {
+            "status": "passed" if result.returncode == 0 else "failed",
+            "command": command,
+            "exit_code": result.returncode,
+            "output": result.stdout,
+        },
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Agent availability probe failed with exit code {result.returncode}: {command}")
 
 
 def setup_skill_availability(config: AgentRunConfig) -> tuple[int, int, SkillExposureResult]:
@@ -424,6 +430,116 @@ def agent_subprocess_env(launch_env: dict[str, str], adapter=None) -> dict[str, 
     return env
 
 
+def raw_tail_text(lines: deque[str], tail_bytes: int | None) -> str:
+    text = "".join(lines)
+    if not tail_bytes or tail_bytes <= 0:
+        return text
+    encoded = text.encode("utf-8", errors="replace")
+    if len(encoded) <= tail_bytes:
+        return text
+    return encoded[-tail_bytes:].decode("utf-8", errors="replace")
+
+
+def event_matches_selector(event: dict[str, Any], selector: dict[str, Any] | None) -> bool:
+    if not selector:
+        return True
+    return all(event.get(key) == value for key, value in selector.items())
+
+
+def event_message_text(event: dict[str, Any]) -> str:
+    for key in ("final_message", "message", "content", "text", "output", "value"):
+        if key not in event:
+            continue
+        value = event[key]
+        return value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+    return json.dumps(event, sort_keys=True)
+
+
+def final_message_metadata(source: FinalMessageSource, status: str, *, message: str = "") -> dict[str, Any]:
+    return {
+        "status": status,
+        "source_type": source.source_type,
+        "source_path": str(source.path) if source.path else None,
+        "event_selector": source.event_selector,
+        "tail_bytes": source.tail_bytes,
+        "parser": source.parser,
+        "parser_warnings": source.parser_warnings,
+        "message": message,
+    }
+
+
+def materialize_structured_event_message(config: AgentRunConfig, source: FinalMessageSource) -> str | None:
+    selected: dict[str, Any] | None = None
+    try:
+        with config.agent_events_path.open("r", encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict) and event_matches_selector(event, source.event_selector):
+                    selected = event
+    except OSError:
+        return None
+    return event_message_text(selected) if selected else None
+
+
+def materialize_final_message(
+    config: AgentRunConfig,
+    adapter: AgentAdapter,
+    stdout_tail_lines: deque[str],
+) -> None:
+    source = adapter.final_message_source(config.result_dir)
+    destination = config.agent_last_message_path
+    if source.source_type == "file":
+        if source.path and source.path.is_file():
+            if source.path.resolve(strict=False) != destination.resolve(strict=False):
+                shutil.copy2(source.path, destination)
+            write_json(config.result_dir / "final_message_source.json", final_message_metadata(source, "materialized"))
+            return
+        destination.write_text("", encoding="utf-8")
+        write_json(
+            config.result_dir / "final_message_source.json",
+            final_message_metadata(source, "missing", message="configured final message file was not written"),
+        )
+        return
+    if source.source_type == "stdout_tail":
+        destination.write_text(raw_tail_text(stdout_tail_lines, source.tail_bytes), encoding="utf-8")
+        write_json(config.result_dir / "final_message_source.json", final_message_metadata(source, "materialized"))
+        return
+    if source.source_type == "structured_event":
+        text = materialize_structured_event_message(config, source)
+        destination.write_text(text or "", encoding="utf-8")
+        write_json(
+            config.result_dir / "final_message_source.json",
+            final_message_metadata(
+                source,
+                "materialized" if text is not None else "missing",
+                message="" if text is not None else "no matching structured event found",
+            ),
+        )
+        return
+    if source.source_type == "not_available":
+        destination.write_text("", encoding="utf-8")
+        write_json(config.result_dir / "final_message_source.json", final_message_metadata(source, "skipped"))
+        return
+    raise ValueError(f"Unsupported final message source_type: {source.source_type}")
+
+
+def terminate_timed_out_process(process: subprocess.Popen, stderr, timeout: int | None) -> None:
+    message = f"Agent command timed out after {timeout} seconds; terminating process.\n"
+    stderr.write(message.encode("utf-8", errors="replace"))
+    stderr.flush()
+    process.terminate()
+    try:
+        process.wait(timeout=AGENT_TERMINATE_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        stderr.write(b"Agent process did not terminate; killing process.\n")
+        stderr.flush()
+        process.kill()
+        process.wait()
+
+
 def run_agent(
     config: AgentRunConfig, progress: ProgressWriter, skill_exposure: SkillExposureResult | None = None
 ) -> tuple[int, int, int]:
@@ -433,6 +549,7 @@ def run_agent(
     progress.start_heartbeat("agent_exec", config.progress_interval_seconds)
     agent_exit = 127
     launch_error: OSError | None = None
+    stdout_tail_lines: deque[str] = deque(maxlen=1000)
     adapter = load_agent_adapter(config.agent)
     launch = adapter.launch_spec(
         AgentLaunchContext(
@@ -480,15 +597,35 @@ def run_agent(
                 else:
                     if process.stdout is None:
                         raise RuntimeError("Agent stdout pipe was not created")
-                    for line in process.stdout:
-                        event = adapter.normalize_event(line)
-                        normalized = (
-                            json.dumps(event, sort_keys=True, separators=(",", ":")) if event is not None else None
-                        )
-                        if normalized:
-                            events_out.write(normalized + "\n")
-                            events_out.flush()
-                    agent_exit = process.wait()
+                    reader_error: list[BaseException] = []
+
+                    def stream_stdout() -> None:
+                        try:
+                            for line in process.stdout:
+                                stdout_tail_lines.append(line)
+                                event = adapter.normalize_event(line)
+                                normalized = (
+                                    json.dumps(event, sort_keys=True, separators=(",", ":"))
+                                    if event is not None
+                                    else None
+                                )
+                                if normalized:
+                                    events_out.write(normalized + "\n")
+                                    events_out.flush()
+                        except BaseException as exc:
+                            reader_error.append(exc)
+
+                    reader = threading.Thread(target=stream_stdout, daemon=True)
+                    reader.start()
+                    try:
+                        agent_exit = process.wait(timeout=launch.launch_timeout)
+                    except subprocess.TimeoutExpired:
+                        terminate_timed_out_process(process, stderr, launch.launch_timeout)
+                        agent_exit = AGENT_TIMEOUT_EXIT_CODE
+                    reader.join(timeout=AGENT_TERMINATE_GRACE_SECONDS)
+                    if reader_error:
+                        raise RuntimeError(f"Failed to read agent stdout: {reader_error[0]}")
+                    materialize_final_message(config, adapter, stdout_tail_lines)
         except OSError as exc:
             launch_error = exc
             print(f"Failed to prepare agent command streams: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -497,6 +634,8 @@ def run_agent(
 
     end = epoch_seconds()
     progress.write("agent_exec", "failed_to_start" if launch_error is not None else "finished", end)
+    if launch_error is not None and not config.agent_last_message_path.exists():
+        config.agent_last_message_path.write_text("", encoding="utf-8")
     return start, end, agent_exit
 
 
@@ -524,8 +663,10 @@ def post_process(
         delta_scope="agent_workspace",
     )
     adapter = load_agent_adapter(config.agent)
+    exit_summary = adapter.exit_summary(agent_exit, config.agent_stderr_path)
     write_json(config.agent_usage_path, adapter.parse_usage(config.agent_events_path))
     write_json(config.agent_activity_path, adapter.parse_activity(config.agent_events_path))
+    write_json(config.result_dir / "agent_exit_summary.json", exit_summary)
     write_agent_compatibility_copies(config)
     synthesize_agent_record(
         AgentRecordSynthesisInputs(
@@ -550,17 +691,27 @@ def post_process(
         )
     )
     merge_record(
-        config.agent_record_path,
-        config.final_record_path,
-        config.agent_usage_path,
-        config.mode,
-        elapsed_seconds,
-        agent_exit,
-        config.use_preinstalled_skills,
-        config.skill_run_mode,
-        config.agent,
-        config.agent_model,
+        agent_record_path=config.agent_record_path,
+        final_record_path=config.final_record_path,
+        usage_path=config.agent_usage_path,
+        mode=config.mode,
+        elapsed_seconds=elapsed_seconds,
+        agent_exit=agent_exit,
+        skills_enabled=config.use_preinstalled_skills,
+        skill_run_mode=config.skill_run_mode,
+        agent=config.agent,
+        agent_model=config.agent_model,
     )
+    record = load_json(config.final_record_path, {}) or {}
+    if isinstance(record, dict):
+        record["agent_exit_summary"] = exit_summary
+        if exit_summary.get("failure_category"):
+            record["failure_category"] = exit_summary.get("failure_category")
+            record["failure_root_cause"] = exit_summary.get("failure_category")
+        metrics = record.setdefault("process_metrics", {})
+        if isinstance(metrics, dict):
+            metrics["agent_exit_classifier"] = exit_summary.get("classifier")
+        write_json(config.final_record_path, record)
     write_run_summary(config.final_record_path, config.result_dir / "run_summary.json", print_summary=False)
     return start, epoch_seconds()
 
@@ -651,7 +802,7 @@ def write_failure_record(
     record = {
         "schema_version": "1",
         "mode": mode,
-        "run_mode": "unknown" if skills_enabled is None else "with_skill" if skills_enabled else "without_skill",
+        "run_mode": "unknown" if skills_enabled is None else "with_skills" if skills_enabled else "without_skills",
         "agent": agent,
         "source": "agent_benchmark_harness",
         "agent_process_passed": False,
@@ -809,6 +960,8 @@ def run_agent_benchmark() -> int:
         config.run_root.mkdir(parents=True, exist_ok=True)
         phase = "runtime_metadata_probe"
         persist_container_runtime_metadata(config)
+        phase = "agent_availability_probe"
+        run_agent_availability_probe(config)
 
         script_start = epoch_seconds()
         script_start_ns = epoch_nanoseconds()
