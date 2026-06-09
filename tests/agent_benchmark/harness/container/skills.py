@@ -82,6 +82,56 @@ def remove_directory_contents(root: Path) -> list[str]:
     return disabled
 
 
+def resolved(path: Path) -> Path:
+    return path.resolve(strict=False)
+
+
+def is_within_path(path: Path, root: Path) -> bool:
+    try:
+        resolved(path).relative_to(resolved(root))
+    except ValueError:
+        return False
+    return True
+
+
+def validate_skill_root_scope(spec: SkillExposureSpec, result_dir: Path) -> None:
+    if spec.skill_root is None or spec.container_home is None:
+        return
+    if is_within_path(spec.skill_root, spec.container_home):
+        return
+    write_json(
+        result_dir / "skills_state.json",
+        {
+            "status": "error",
+            "reason": "skill_root_outside_container_home",
+            "mechanism_type": spec.mechanism_type,
+            "skill_root": str(spec.skill_root),
+            "container_home": str(spec.container_home),
+        },
+    )
+    raise SystemExit(2)
+
+
+def skill_root_has_installed_skills(spec: SkillExposureSpec, result_dir: Path) -> bool:
+    if spec.skill_root is None:
+        return True
+    try:
+        return spec.skill_root.is_dir() and any(path.is_dir() for path in spec.skill_root.iterdir())
+    except OSError as exc:
+        write_json(
+            result_dir / "skills_state.json",
+            {
+                "status": "error",
+                "reason": "skill_root_unreadable",
+                "mechanism_type": spec.mechanism_type,
+                "skill_root": str(spec.skill_root),
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+            },
+        )
+        raise SystemExit(2) from exc
+
+
 def run_exposure_action(action: list[str], result_dir: Path, name: str, env: dict[str, str]) -> tuple[str, str | None]:
     if not action:
         return "skipped", None
@@ -120,6 +170,7 @@ def apply_skill_exposure(
     nvflare_image_kind: str,
     bundled_skills_root: Callable[[], str | None] = discover_bundled_skills_root,
 ) -> SkillExposureResult:
+    validate_skill_root_scope(spec, result_dir)
     if spec.mechanism_type == "none":
         result = SkillExposureResult(status="skipped", mechanism_type=spec.mechanism_type)
         write_json(
@@ -137,9 +188,7 @@ def apply_skill_exposure(
         setup_status, setup_output_ref = run_exposure_action(
             spec.setup_action, result_dir, "setup_action", spec.environment
         )
-        if spec.skill_root and (
-            not spec.skill_root.is_dir() or not any(path.is_dir() for path in spec.skill_root.iterdir())
-        ):
+        if not skill_root_has_installed_skills(spec, result_dir):
             write_json(
                 result_dir / "skills_state.json",
                 {

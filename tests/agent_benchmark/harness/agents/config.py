@@ -42,6 +42,7 @@ from .parsers import (
     parse_usage_from_events,
     validate_activity_parser,
     validate_event_parser,
+    validate_final_message_config,
     validate_usage_parser,
 )
 
@@ -115,10 +116,14 @@ class AgentConfig:
         usage = parser_config(data, "usage", config_path)
         activity = parser_config(data, "activity", config_path)
         exit_classifier = str(required_mapping(data, "exit", config_path).get("classifier") or "")
+        final_message = required_mapping(data, "final_message", config_path)
+        final_message_source_type = str(final_message.get("source_type") or "file")
+        final_message_parser = str(final_message["parser"]) if final_message.get("parser") else None
         validate_event_parser(events.parser)
         validate_usage_parser(usage.parser)
         validate_activity_parser(activity.parser)
         validate_exit_classifier(exit_classifier)
+        validate_final_message_config(final_message_source_type, final_message_parser)
 
         return cls(
             source_path=config_path,
@@ -135,7 +140,7 @@ class AgentConfig:
             auth=auth_config(data),
             launch=launch,
             skill_exposure=required_mapping(data, "skill_exposure", config_path),
-            final_message=required_mapping(data, "final_message", config_path),
+            final_message=final_message,
             events=events,
             usage=usage,
             activity=activity,
@@ -384,6 +389,7 @@ class ConfigurableAgentAdapter(AgentAdapter):
         raw = self._cfg.skill_exposure
         return SkillExposureSpec(
             mechanism_type=str(raw.get("mechanism_type") or "none"),
+            container_home=config.container_home,
             skill_root=maybe_render_path(raw.get("skill_root"), render_values),
             source_paths=[Path(render_string(str(item), render_values)) for item in raw.get("source_paths") or []],
             setup_action=render_list(list(raw.get("setup_action") or []), render_values),

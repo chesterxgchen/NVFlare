@@ -59,6 +59,7 @@ class AgentLaunchSpec:
 @dataclass(frozen=True)
 class SkillExposureSpec:
     mechanism_type: str
+    container_home: Path | None = None
     skill_root: Path | None = None
     source_paths: list[Path] = field(default_factory=list)
     setup_action: list[str] = field(default_factory=list)
@@ -92,7 +93,7 @@ class FinalMessageSource:
     event_selector: dict[str, Any] | None = None
     tail_bytes: int | None = None
     parser: str | None = None
-    warnings: list[str] = field(default_factory=list)
+    parser_warnings: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

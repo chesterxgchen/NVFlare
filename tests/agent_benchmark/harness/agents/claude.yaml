@@ -2,7 +2,7 @@ name: claude
 display_name: Claude Code
 default_model: unspecified_default
 model_env: CLAUDE_MODEL
-agent_home_env: CLAUDE_HOME
+agent_home_env: CLAUDE_CONFIG_DIR
 container_home: /workspace/.claude
 
 images:
@@ -16,7 +16,7 @@ auth:
   files: []
 
 runtime_env:
-  CLAUDE_HOME: "{container_home}"
+  CLAUDE_CONFIG_DIR: "{container_home}"
 
 launch:
   prompt_input_mode: stdin
@@ -27,7 +27,7 @@ launch:
     - --model
     - "{model}"
   environment:
-    CLAUDE_HOME: "{container_home}"
+    CLAUDE_CONFIG_DIR: "{container_home}"
 
 skill_exposure:
   mechanism_type: launch_flag
@@ -37,7 +37,7 @@ skill_exposure:
     - "{skills_dir}"
 
 final_message:
-  source_type: stdout_end
+  source_type: stdout_tail
   parser: generic_stdout_last_message
 
 events:
