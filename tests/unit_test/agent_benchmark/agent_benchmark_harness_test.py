@@ -117,6 +117,36 @@ def test_claude_adapter_requires_explicit_model():
         raise AssertionError("Claude benchmark runs must require an explicit model")
 
 
+def test_claude_launch_spec_rejects_unexplicit_model_context(tmp_path):
+    from harness.agents.base import AgentLaunchContext
+    from harness.agents.registry import load_agent_adapter
+
+    result_dir = tmp_path / "results"
+    workspace_dir = tmp_path / "workspace"
+    prompt_file = tmp_path / "prompt.txt"
+    result_dir.mkdir()
+    workspace_dir.mkdir()
+    prompt_file.write_text("Convert this job.\n", encoding="utf-8")
+    context = AgentLaunchContext(
+        model="unspecified_default",
+        model_was_explicit=False,
+        result_dir=result_dir,
+        workspace_dir=workspace_dir,
+        prompt_file=prompt_file,
+        events_dest=result_dir / "agent_events.jsonl",
+        stderr_dest=result_dir / "agent_stderr.txt",
+        final_message_dest=result_dir / "agent_last_message.txt",
+    )
+
+    try:
+        load_agent_adapter("claude").launch_spec(context)
+    except ValueError as exc:
+        assert "requires an explicit benchmark model before launch" in str(exc)
+        assert "CLAUDE_MODEL" in str(exc)
+    else:
+        raise AssertionError("Claude launch spec must reject implicit CLI model defaults")
+
+
 def test_claude_stream_parser_normalizes_event_usage_and_activity(tmp_path):
     from harness.agents.registry import load_agent_adapter
 

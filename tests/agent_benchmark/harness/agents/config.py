@@ -112,6 +112,11 @@ class AgentConfig:
         prompt_input_mode = launch.get("prompt_input_mode")
         if prompt_input_mode not in {"stdin", "file_arg"}:
             raise ValueError(f"{config_path}: launch.prompt_input_mode must be stdin or file_arg")
+        if launch.get("model_argv") and prompt_input_mode == "stdin" and launch["argv"][-1:] != ["-"]:
+            raise ValueError(
+                f"{config_path}: launch.model_argv with stdin prompt delivery requires launch.argv to end with '-' "
+                "so model args can be inserted before the stdin sentinel; otherwise put model args directly in argv"
+            )
 
         events = parser_config(data, "events", config_path)
         usage = parser_config(data, "usage", config_path)
@@ -348,6 +353,14 @@ class ConfigurableAgentAdapter(AgentAdapter):
         return tuple(str(item) for item in self._cfg.raw.get("passthrough_env") or ())
 
     def launch_spec(self, config: AgentLaunchContext) -> AgentLaunchSpec:
+        if self._cfg.requires_explicit_model and not config.model_was_explicit:
+            accepted = ["BENCHMARK_AGENT_MODEL"]
+            if self._cfg.model_env:
+                accepted.append(self._cfg.model_env)
+            raise ValueError(
+                f"{self.display_name} requires an explicit benchmark model before launch. "
+                f"Set one of: {', '.join(accepted)}."
+            )
         final_message_dest = config.final_message_dest
         render_values = {
             "agent": self.name,
