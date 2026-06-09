@@ -55,6 +55,7 @@ launch:
   model_argv:
     - -m
     - "{model}"
+  model_argv_position: before_stdin_sentinel
   sandbox_flags:
     - --dangerously-bypass-approvals-and-sandbox
   bypass_reason: "isolated benchmark container; writable state is limited to mounted result/workspace paths"

@@ -48,6 +48,9 @@ from .parsers import (
 
 PROMPT_TEXT_PLACEHOLDER = "prompt_text"
 UNSPECIFIED_MODEL = "unspecified_default"
+MODEL_ARGV_POSITION_BEFORE_STDIN_SENTINEL = "before_stdin_sentinel"
+MODEL_ARGV_POSITION_APPEND = "append"
+MODEL_ARGV_POSITIONS = {MODEL_ARGV_POSITION_BEFORE_STDIN_SENTINEL, MODEL_ARGV_POSITION_APPEND}
 
 
 @dataclass(frozen=True)
@@ -112,11 +115,25 @@ class AgentConfig:
         prompt_input_mode = launch.get("prompt_input_mode")
         if prompt_input_mode not in {"stdin", "file_arg"}:
             raise ValueError(f"{config_path}: launch.prompt_input_mode must be stdin or file_arg")
-        if launch.get("model_argv") and prompt_input_mode == "stdin" and launch["argv"][-1:] != ["-"]:
-            raise ValueError(
-                f"{config_path}: launch.model_argv with stdin prompt delivery requires launch.argv to end with '-' "
-                "so model args can be inserted before the stdin sentinel; otherwise put model args directly in argv"
-            )
+        if launch.get("model_argv"):
+            model_position = str(launch.get("model_argv_position") or "")
+            if model_position not in MODEL_ARGV_POSITIONS:
+                raise ValueError(
+                    f"{config_path}: launch.model_argv_position must be one of: "
+                    f"{', '.join(sorted(MODEL_ARGV_POSITIONS))}"
+                )
+            if model_position == MODEL_ARGV_POSITION_BEFORE_STDIN_SENTINEL and (
+                prompt_input_mode != "stdin" or launch["argv"][-1:] != ["-"]
+            ):
+                raise ValueError(
+                    f"{config_path}: launch.model_argv_position={MODEL_ARGV_POSITION_BEFORE_STDIN_SENTINEL} "
+                    "requires stdin prompt delivery and launch.argv ending with '-'"
+                )
+            if model_position == MODEL_ARGV_POSITION_APPEND and prompt_input_mode == "stdin":
+                raise ValueError(
+                    f"{config_path}: launch.model_argv_position={MODEL_ARGV_POSITION_APPEND} is not valid with "
+                    "stdin prompt delivery; put model args directly in argv or use before_stdin_sentinel"
+                )
 
         events = parser_config(data, "events", config_path)
         usage = parser_config(data, "usage", config_path)
@@ -377,10 +394,13 @@ class ConfigurableAgentAdapter(AgentAdapter):
         argv = render_list(list(self._cfg.launch["argv"]), render_values)
         if config.model_was_explicit and self._cfg.launch.get("model_argv"):
             model_argv = render_list(list(self._cfg.launch["model_argv"]), render_values)
-            if argv and argv[-1] == "-" and self._cfg.launch["prompt_input_mode"] == "stdin":
+            model_position = str(self._cfg.launch["model_argv_position"])
+            if model_position == MODEL_ARGV_POSITION_BEFORE_STDIN_SENTINEL:
                 argv = [*argv[:-1], *model_argv, argv[-1]]
-            else:
+            elif model_position == MODEL_ARGV_POSITION_APPEND:
                 argv.extend(model_argv)
+            else:
+                raise ValueError(f"Unsupported launch.model_argv_position: {model_position}")
         env = {}
         for key, value in (self._cfg.launch.get("environment") or {}).items():
             env[str(key)] = render_string(str(value), render_values)
