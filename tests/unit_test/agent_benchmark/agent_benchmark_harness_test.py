@@ -54,6 +54,46 @@ def test_codex_agent_config_loads_parser_and_classifier_ids():
     assert "{prompt_text}" not in json.dumps(config.raw)
 
 
+def test_agent_config_rejects_unknown_parser_id(tmp_path):
+    from harness.agents.config import AgentConfig
+
+    source_path = Path(__file__).resolve().parents[2] / "agent_benchmark" / "harness" / "agents" / "codex.yaml"
+    config_path = tmp_path / "bad_parser.yaml"
+    config_path.write_text(source_path.read_text(encoding="utf-8").replace("codex_jsonl", "missing_parser", 1))
+
+    try:
+        AgentConfig.load(config_path)
+    except ValueError as exc:
+        assert "Unknown agent event parser: missing_parser" in str(exc)
+    else:
+        raise AssertionError("unknown adapter event parser should fail during config load")
+
+
+def test_agent_config_rejects_unknown_exit_classifier(tmp_path):
+    from harness.agents.config import AgentConfig
+
+    source_path = Path(__file__).resolve().parents[2] / "agent_benchmark" / "harness" / "agents" / "codex.yaml"
+    config_path = tmp_path / "bad_exit.yaml"
+    config_path.write_text(source_path.read_text(encoding="utf-8").replace("classifier: codex_cli", "classifier: bad"))
+
+    try:
+        AgentConfig.load(config_path)
+    except ValueError as exc:
+        assert "Unknown agent exit classifier: bad" in str(exc)
+    else:
+        raise AssertionError("unknown adapter exit classifier should fail during config load")
+
+
+def test_agent_adapter_cache_can_be_cleared_for_tests():
+    from harness.agents.registry import clear_agent_adapter_cache, load_agent_adapter
+
+    first = load_agent_adapter("codex")
+    clear_agent_adapter_cache()
+    second = load_agent_adapter("codex")
+
+    assert first is not second
+
+
 def test_codex_adapter_build_args_use_default_and_env_override(monkeypatch):
     from harness.agents.registry import load_agent_adapter
 
@@ -356,13 +396,41 @@ def test_setup_skill_availability_allows_missing_optional_metadata(tmp_path):
 
     state = json.loads((result_dir / "skills_state.json").read_text(encoding="utf-8"))
     missing = json.loads((result_dir / "skills_metadata_missing.json").read_text(encoding="utf-8"))
-    assert state["status"] == "enabled"
+    assert state["status"] == "prepared"
     assert state["skills_enabled"] is True
     assert sorted(Path(item).name for item in missing["missing"]) == [
         "nvflare_skills_build_install.json",
         "nvflare_skills_list.json",
     ]
     assert not (result_dir / "skills_build_install.json").exists()
+
+
+def test_skill_exposure_carries_launch_args_and_environment(tmp_path):
+    from harness.agents.base import SkillExposureSpec
+    from harness.container.skills import apply_skill_exposure
+
+    skill_root = tmp_path / "skills"
+    (skill_root / "nvflare-convert-pytorch").mkdir(parents=True)
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+
+    result = apply_skill_exposure(
+        spec=SkillExposureSpec(
+            mechanism_type="launch_flag",
+            skill_root=skill_root,
+            launch_args=["--add-dir", str(skill_root)],
+            environment={"AGENT_SKILLS_DIR": str(skill_root)},
+        ),
+        skills_enabled=True,
+        result_dir=result_dir,
+        nvflare_image_kind="test-skills",
+    )
+
+    state = json.loads((result_dir / "skills_state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "prepared"
+    assert result.status == "prepared"
+    assert result.launch_args == ["--add-dir", str(skill_root)]
+    assert result.environment == {"AGENT_SKILLS_DIR": str(skill_root)}
 
 
 def test_copy_optional_metadata_files_strips_nvflare_prefix(tmp_path):
@@ -497,6 +565,27 @@ def test_write_failure_record_outputs_early_failure_artifacts(tmp_path):
     assert early["record_path"] == str(records_dir / "with_skills_record.json")
     assert summary["harness_failure"] is True
     assert summary["final_container_exit_code"] == 2
+
+
+def test_write_failure_record_defaults_to_unknown_agent(tmp_path):
+    from harness.container.agent_run import write_failure_record
+
+    result_dir = tmp_path / "results"
+    records_dir = result_dir / "records"
+
+    write_failure_record(
+        result_dir=result_dir,
+        records_dir=records_dir,
+        mode="with_skills",
+        exit_code=2,
+        error_type="RuntimeError",
+        message="config failed",
+        phase="config",
+    )
+
+    record = json.loads((records_dir / "with_skills_record.json").read_text(encoding="utf-8"))
+    assert record["agent"] == "unknown"
+    assert record["process_metrics"]["agent_elapsed_seconds"] == 0
 
 
 def test_merge_harness_failure_preserves_existing_record(tmp_path):
@@ -1234,6 +1323,40 @@ def test_run_summary_uses_agent_keys_without_codex_aliases(tmp_path):
     assert "codex_exit_code" not in summary
     assert "codex_usage" not in summary
     assert not any(key.startswith("codex_") for key in summary["all_metrics"])
+
+
+def test_run_summary_ignores_codex_usage_fallback_and_reports_prompt_hash(tmp_path):
+    from harness.records import write_json, write_run_summary
+
+    final_record = tmp_path / "record.json"
+    summary_path = tmp_path / "run_summary.json"
+    write_json(
+        final_record,
+        {
+            "mode": "with_skills",
+            "codex_usage": {"total_tokens": 10},
+            "process_metrics": {
+                "elapsed_seconds": 3,
+                "agent_elapsed_seconds": 2,
+            },
+        },
+    )
+    write_json(
+        tmp_path / "prompt_metadata.json",
+        {
+            "prompt_sha256": "abc123",
+            "template_path": "/workspace/prompts/prompt.txt",
+        },
+    )
+
+    write_run_summary(final_record, summary_path, print_summary=False)
+
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["agent_usage"] == {}
+    assert summary["agent_elapsed_seconds"] == 2
+    assert summary["elapsed_seconds"] == 3
+    assert summary["prompt_hash"] == "abc123"
+    assert summary["prompt_source"] == "/workspace/prompts/prompt.txt"
 
 
 def test_report_generators_write_two_mode_outputs(tmp_path, monkeypatch):

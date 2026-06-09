@@ -77,6 +77,8 @@ class SkillExposureResult:
     mechanism_type: str
     installed_paths: list[str] = field(default_factory=list)
     disabled_paths: list[str] = field(default_factory=list)
+    launch_args: list[str] = field(default_factory=list)
+    environment: dict[str, str] = field(default_factory=dict)
     probe_status: str | None = None
     probe_output_ref: str | None = None
     metadata_files: list[dict[str, str]] = field(default_factory=list)
@@ -87,6 +89,8 @@ class SkillExposureResult:
 class FinalMessageSource:
     source_type: str
     path: Path | None = None
+    event_selector: dict[str, Any] | None = None
+    tail_bytes: int | None = None
     parser: str | None = None
     warnings: list[str] = field(default_factory=list)
 

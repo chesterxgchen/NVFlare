@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterable
@@ -65,6 +66,13 @@ STALE_RESULT_DIRS = (
     "with_skills_eval_off",
     "with_skills_eval_on",
 )
+
+
+@dataclass(frozen=True)
+class InteractiveRuntimeConfig:
+    agent: str
+    agent_model: str
+    model_was_explicit: bool
 
 
 def run_one_case(config: CaseConfig, *, logs: Iterable[Path] = (), prefix: str | None = None) -> int:
@@ -353,7 +361,7 @@ def run_interactive(argv: list[str]) -> int:
     ]
     for name, value in sorted(
         adapter.runtime_env(
-            SimpleNamespace(
+            InteractiveRuntimeConfig(
                 agent=adapter.name,
                 agent_model=adapter.model_from_env(os.environ),
                 model_was_explicit=adapter.model_was_explicit(os.environ),

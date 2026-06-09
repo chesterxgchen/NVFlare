@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Iterable
 
 from ..agents.base import AgentAdapter, DockerMount
-from ..agents.registry import load_agent_adapter, validate_benchmark_agent
+from ..agents.registry import DEFAULT_BENCHMARK_AGENT, load_agent_adapter, validate_benchmark_agent
 from ..common import write_json
 
 SCRIPT_DIR = Path(__file__).resolve().parents[2]
@@ -439,13 +439,13 @@ def write_runtime_image(config: CaseConfig) -> None:
 
 def benchmark_agent_from_env() -> str:
     try:
-        return validate_benchmark_agent(os.environ.get("BENCHMARK_AGENT", "codex"))
+        return validate_benchmark_agent(os.environ.get("BENCHMARK_AGENT", DEFAULT_BENCHMARK_AGENT))
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
 
 def benchmark_agent_adapter_from_env() -> AgentAdapter:
     try:
-        return load_agent_adapter(os.environ.get("BENCHMARK_AGENT", "codex"))
+        return load_agent_adapter(os.environ.get("BENCHMARK_AGENT", DEFAULT_BENCHMARK_AGENT))
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc

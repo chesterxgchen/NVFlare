@@ -54,9 +54,12 @@ EXIT_CLASSIFIERS = {
 }
 
 
+def validate_exit_classifier(classifier_id: str) -> None:
+    if classifier_id not in EXIT_CLASSIFIERS:
+        raise ValueError(f"Unknown agent exit classifier: {classifier_id}")
+
+
 def classify_exit(exit_code: int, stderr_path: Path, classifier_id: str) -> dict[str, Any]:
-    try:
-        classifier = EXIT_CLASSIFIERS[classifier_id]
-    except KeyError as exc:
-        raise ValueError(f"Unknown agent exit classifier: {classifier_id}") from exc
+    validate_exit_classifier(classifier_id)
+    classifier = EXIT_CLASSIFIERS[classifier_id]
     return classifier(exit_code, stderr_path)

@@ -24,13 +24,13 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..agents.base import AgentLaunchContext, SkillExposureContext
-from ..agents.registry import load_agent_adapter
+from ..agents.base import AgentLaunchContext, SkillExposureContext, SkillExposureResult
+from ..agents.registry import DEFAULT_BENCHMARK_AGENT, load_agent_adapter
 from ..artifacts import capture_workspace_delta, write_workspace_baseline
 from ..common import bool_from_text, load_json, make_tree_readable, write_json
 from ..modes import mode_spec
@@ -144,7 +144,7 @@ class AgentRunConfig:
             )
         job_input = env.get("JOB_INPUT_DIR") or env.get("TRAINING_CODE") or "/workspace/input"
         result_dir = env.get("RESULT_DIR", "/workspace/results")
-        adapter = load_agent_adapter(env.get("BENCHMARK_AGENT", "codex"))
+        adapter = load_agent_adapter(env.get("BENCHMARK_AGENT", DEFAULT_BENCHMARK_AGENT))
         agent_model = adapter.model_from_env(env)
         agent_home = Path(env.get("BENCHMARK_AGENT_HOME") or env.get(adapter.agent_home_env, adapter.container_home))
         return cls(
@@ -316,7 +316,7 @@ def persist_container_runtime_metadata(config: AgentRunConfig) -> None:
         raise RuntimeError(f"Login-shell runtime probe failed: {probe.get('reason')}")
 
 
-def setup_skill_availability(config: AgentRunConfig) -> tuple[int, int]:
+def setup_skill_availability(config: AgentRunConfig) -> tuple[int, int, SkillExposureResult]:
     start = epoch_seconds()
     adapter = load_agent_adapter(config.agent)
     spec = adapter.skill_exposure(
@@ -334,8 +334,8 @@ def setup_skill_availability(config: AgentRunConfig) -> tuple[int, int]:
         result_dir=config.result_dir,
         nvflare_image_kind=config.nvflare_image_kind,
     )
-    write_json(config.result_dir / "skills_exposure_result.json", result.__dict__)
-    return start, epoch_seconds()
+    write_json(config.result_dir / "skills_exposure_result.json", asdict(result))
+    return start, epoch_seconds(), result
 
 
 def copy_optional_metadata_files(source_dir: Path, result_dir: Path, names: tuple[str, ...]) -> dict[str, Any]:
@@ -424,7 +424,9 @@ def agent_subprocess_env(launch_env: dict[str, str], adapter=None) -> dict[str, 
     return env
 
 
-def run_agent(config: AgentRunConfig, progress: ProgressWriter) -> tuple[int, int, int]:
+def run_agent(
+    config: AgentRunConfig, progress: ProgressWriter, skill_exposure: SkillExposureResult | None = None
+) -> tuple[int, int, int]:
     start = epoch_seconds()
     config.progress_log_path.write_text("", encoding="utf-8")
     progress.write("agent_exec", "start", start)
@@ -444,6 +446,11 @@ def run_agent(config: AgentRunConfig, progress: ProgressWriter) -> tuple[int, in
             model_was_explicit=config.agent_model_was_explicit,
         )
     )
+    launch_argv = list(launch.argv)
+    launch_env = dict(launch.environment)
+    if config.use_preinstalled_skills and skill_exposure is not None:
+        launch_argv.extend(skill_exposure.launch_args)
+        launch_env.update(skill_exposure.environment)
 
     try:
         try:
@@ -455,7 +462,7 @@ def run_agent(config: AgentRunConfig, progress: ProgressWriter) -> tuple[int, in
                 stdin = prompt_stdin if launch.prompt_input_mode == "stdin" else subprocess.DEVNULL
                 try:
                     process = subprocess.Popen(
-                        launch.argv,
+                        launch_argv,
                         cwd=launch.cwd,
                         stdin=stdin,
                         stdout=subprocess.PIPE,
@@ -463,7 +470,7 @@ def run_agent(config: AgentRunConfig, progress: ProgressWriter) -> tuple[int, in
                         text=True,
                         encoding="utf-8",
                         errors="replace",
-                        env=agent_subprocess_env(launch.environment, adapter),
+                        env=agent_subprocess_env(launch_env, adapter),
                     )
                 except OSError as exc:
                     launch_error = exc
@@ -603,12 +610,6 @@ def write_report_outcome(config: AgentRunConfig, agent_exit: int, report_statuse
     return final_exit
 
 
-def configure_process_record_environment(config: AgentRunConfig) -> None:
-    # Record paths are harness-internal. The measured agent process receives a
-    # sanitized environment in run_agent() and does not inherit these values.
-    return None
-
-
 def exit_code_from_exception(exc: BaseException, default: int = 1) -> int:
     if isinstance(exc, SystemExit) and isinstance(exc.code, int):
         return exc.code
@@ -634,7 +635,7 @@ def write_failure_record(
     error_type: str,
     message: str,
     phase: str,
-    agent: str = "codex",
+    agent: str = "unknown",
     agent_model: str = "unspecified_default",
     skills_enabled: bool | None = None,
 ) -> int:
@@ -655,6 +656,8 @@ def write_failure_record(
         "source": "agent_benchmark_harness",
         "agent_process_passed": False,
         "agent_process_exit_code": exit_code,
+        "agent_elapsed_seconds": 0,
+        "elapsed_seconds": 0,
         "agent_model": agent_model,
         "skills_enabled": skills_enabled,
         "timestamp": error["timestamp"],
@@ -670,6 +673,7 @@ def write_failure_record(
         "report_inclusive_exit_code": exit_code,
         "process_metrics": {
             "elapsed_seconds": 0,
+            "agent_elapsed_seconds": 0,
             "token_count": None,
             "agent_exit_code": exit_code,
             "agent_process_passed": 0,
@@ -733,7 +737,7 @@ def write_failure_record_from_env(exc: BaseException, exit_code: int, phase: str
     env = os.environ
     result_dir = Path(env.get("RESULT_DIR", "/workspace/results"))
     records_dir = Path(env.get("RECORDS_DIR", str(result_dir / "records")))
-    agent = env.get("BENCHMARK_AGENT", "codex")
+    agent = env.get("BENCHMARK_AGENT", "unknown")
     try:
         agent_model = load_agent_adapter(agent).model_from_env(env)
     except Exception:
@@ -809,7 +813,7 @@ def run_agent_benchmark() -> int:
         script_start = epoch_seconds()
         script_start_ns = epoch_nanoseconds()
         phase = "skill_availability_setup"
-        skill_start, skill_end = setup_skill_availability(config)
+        skill_start, skill_end, skill_exposure = setup_skill_availability(config)
         phase = "input_copy"
         input_start, input_end = prepare_input_workspace(config)
         write_workspace_baseline(config.run_input_dir, config.result_dir / "input_baseline_manifest.json")
@@ -819,7 +823,7 @@ def run_agent_benchmark() -> int:
 
         phase = "agent_exec"
         progress = ProgressWriter(config.mode, script_start, config.progress_log_path)
-        agent_start, agent_end, agent_exit = run_agent(config, progress)
+        agent_start, agent_end, agent_exit = run_agent(config, progress, skill_exposure)
         elapsed_seconds = agent_end - agent_start
         phase = "post_process"
         post_start, post_end = post_process(config, elapsed_seconds, agent_exit, script_start_ns)
