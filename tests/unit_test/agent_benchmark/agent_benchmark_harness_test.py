@@ -18,9 +18,9 @@ from pathlib import Path
 
 
 def test_codex_event_normalizer_returns_agent_event():
-    from harness.agents.base import normalize_agent_event
+    from harness.agents.registry import load_agent_adapter
 
-    event = normalize_agent_event("codex", '{"type": "turn", "message": "ok"}')
+    event = load_agent_adapter("codex").normalize_event('{"type": "turn", "message": "ok"}')
 
     assert event["type"] == "turn"
     assert event["message"] == "ok"
@@ -28,14 +28,157 @@ def test_codex_event_normalizer_returns_agent_event():
 
 
 def test_unsupported_agent_event_normalizer_fails_fast():
-    from harness.agents.base import normalize_agent_event
+    from harness.agents.registry import load_agent_adapter
 
     try:
-        normalize_agent_event("claude", "{}")
+        load_agent_adapter("claude")
     except ValueError as exc:
-        assert "Unsupported BENCHMARK_AGENT" in str(exc)
+        assert "BENCHMARK_AGENT='claude'" in str(exc)
+        assert "known but not implemented" in str(exc)
     else:
         raise AssertionError("unsupported benchmark agent should fail before event parsing")
+
+
+def test_codex_agent_config_loads_parser_and_classifier_ids():
+    from harness.agents.config import AgentConfig
+
+    config_path = Path(__file__).resolve().parents[2] / "agent_benchmark" / "harness" / "agents" / "codex.yaml"
+
+    config = AgentConfig.load(config_path)
+
+    assert config.name == "codex"
+    assert config.events.parser == "codex_jsonl"
+    assert config.usage.parser == "codex_cumulative_usage"
+    assert config.activity.parser == "codex_jsonl_activity"
+    assert config.exit_classifier == "codex_cli"
+    assert "{prompt_text}" not in json.dumps(config.raw)
+
+
+def test_codex_adapter_build_args_use_default_and_env_override(monkeypatch):
+    from harness.agents.registry import load_agent_adapter
+
+    adapter = load_agent_adapter("codex")
+    monkeypatch.delenv("CODEX_CLI_VERSION", raising=False)
+    assert adapter.build_args_from_env({})["CODEX_CLI_VERSION"] == "0.137.0"
+    assert adapter.build_args_from_env({"CODEX_CLI_VERSION": "0.200.0"})["CODEX_CLI_VERSION"] == "0.200.0"
+
+
+def test_agent_config_rejects_prompt_text_placeholder(tmp_path):
+    from harness.agents.config import AgentConfig
+
+    config_path = tmp_path / "unsafe.yaml"
+    config_path.write_text(
+        json.dumps(
+            {
+                "name": "unsafe",
+                "display_name": "Unsafe Agent",
+                "default_model": "default",
+                "agent_home_env": "UNSAFE_HOME",
+                "container_home": "/workspace/.unsafe",
+                "launch": {"argv": ["unsafe", "run", "{prompt_text}"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        AgentConfig.load(config_path)
+    except ValueError as exc:
+        assert "must not use {prompt_text}" in str(exc)
+    else:
+        raise AssertionError("agent adapter config must reject prompt_text injection paths")
+
+
+def test_codex_adapter_launch_spec_uses_prompt_file_without_prompt_text(tmp_path):
+    from harness.agents.base import AgentLaunchContext
+    from harness.agents.registry import load_agent_adapter
+
+    result_dir = tmp_path / "results"
+    workspace_dir = tmp_path / "workspace"
+    prompt_file = tmp_path / "prompt.txt"
+    result_dir.mkdir()
+    workspace_dir.mkdir()
+    prompt_file.write_text("Convert this job. Do not leak prompt text into argv.\n", encoding="utf-8")
+    config = AgentLaunchContext(
+        model="test-model",
+        model_was_explicit=True,
+        result_dir=result_dir,
+        workspace_dir=workspace_dir,
+        prompt_file=prompt_file,
+        events_dest=result_dir / "agent_events.jsonl",
+        stderr_dest=result_dir / "agent_stderr.txt",
+        final_message_dest=result_dir / "agent_last_message.txt",
+    )
+
+    spec = load_agent_adapter("codex").launch_spec(config)
+
+    rendered_argv = " ".join(spec.argv)
+    assert spec.prompt_file == prompt_file
+    assert spec.prompt_input_mode == "stdin"
+    assert spec.final_message_dest == result_dir / "agent_last_message.txt"
+    assert "{prompt_text}" not in rendered_argv
+    assert "Convert this job" not in rendered_argv
+    assert spec.argv[-1] == "-"
+    assert "--dangerously-bypass-approvals-and-sandbox" in spec.sandbox_flags
+    assert spec.bypass_reason
+
+
+def test_codex_adapter_runtime_env_sets_generic_agent_model_and_home(tmp_path):
+    from types import SimpleNamespace
+
+    from harness.agents.registry import load_agent_adapter
+
+    agent_home = tmp_path / ".codex"
+    env = load_agent_adapter("codex").runtime_env(
+        SimpleNamespace(
+            agent_model="test-model",
+            agent_home=agent_home,
+            model_was_explicit=True,
+        )
+    )
+
+    assert env["BENCHMARK_AGENT"] == "codex"
+    assert env["BENCHMARK_AGENT_MODEL"] == "test-model"
+    assert env["CODEX_HOME"] == "/workspace/.codex"
+
+
+def test_container_config_uses_generic_agent_model_and_home(monkeypatch):
+    from harness.container.agent_run import AgentRunConfig
+
+    monkeypatch.delenv("CODEX_MODEL", raising=False)
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.setenv("BENCHMARK_AGENT", "codex")
+    monkeypatch.setenv("BENCHMARK_AGENT_MODEL", "generic-model")
+    monkeypatch.setenv("BENCHMARK_AGENT_HOME", "/workspace/agent-home")
+
+    config = AgentRunConfig.from_env()
+
+    assert config.agent_model == "generic-model"
+    assert config.agent_home == Path("/workspace/agent-home")
+    assert not hasattr(config, "codex_home")
+
+
+def test_agent_subprocess_env_hides_harness_controls_and_adapter_model_env(monkeypatch):
+    from harness.agents.registry import load_agent_adapter
+    from harness.container.agent_run import agent_subprocess_env
+
+    adapter = load_agent_adapter("codex")
+    monkeypatch.setenv("MODE", "with_skills")
+    monkeypatch.setenv("JOB_INPUT_DIR", "/workspace/input")
+    monkeypatch.setenv("BENCHMARK_AGENT", "codex")
+    monkeypatch.setenv("BENCHMARK_AGENT_MODEL", "generic-model")
+    monkeypatch.setenv("CODEX_MODEL", "legacy-model")
+    monkeypatch.setenv("OPENAI_API_KEY", "kept-for-agent-auth")
+
+    env = agent_subprocess_env({"CODEX_HOME": "/workspace/.codex"}, adapter)
+
+    assert "MODE" not in env
+    assert "JOB_INPUT_DIR" not in env
+    assert "BENCHMARK_AGENT" not in env
+    assert "BENCHMARK_AGENT_MODEL" not in env
+    assert "CODEX_MODEL" not in env
+    assert env["OPENAI_API_KEY"] == "kept-for-agent-auth"
+    assert env["CODEX_HOME"] == "/workspace/.codex"
 
 
 def test_host_image_config_rejects_unsupported_agent(monkeypatch):
@@ -46,18 +189,20 @@ def test_host_image_config_rejects_unsupported_agent(monkeypatch):
     try:
         ImageConfig.from_env()
     except SystemExit as exc:
-        assert "Unsupported BENCHMARK_AGENT" in str(exc)
+        assert "BENCHMARK_AGENT='claude'" in str(exc)
+        assert "known but not implemented" in str(exc)
     else:
         raise AssertionError("unsupported benchmark agent should fail before image selection")
 
 
 def test_host_docker_args_use_migrated_container_entrypoint(tmp_path):
+    from harness.agents.registry import load_agent_adapter
     from harness.host.common import CONTAINER_PROMPT_PATH, CaseConfig, ImageConfig, docker_args_for_case
 
     job_input = tmp_path / "job"
     prompt_dir = tmp_path / "prompts"
     result_dir = tmp_path / "results"
-    codex_home = tmp_path / ".codex"
+    agent_home = tmp_path / ".codex"
     job_input.mkdir()
     prompt_dir.mkdir()
     prompt_path = prompt_dir / "benchmark_prompt.txt"
@@ -75,8 +220,12 @@ def test_host_docker_args_use_migrated_container_entrypoint(tmp_path):
             report_image_name="nvflare-agent-benchmark:codex-skills",
         ),
         progress_interval_seconds="0",
-        host_codex_home=codex_home,
-        mount_host_codex_auth=False,
+        agent="codex",
+        agent_model="unspecified_default",
+        model_was_explicit=False,
+        adapter=load_agent_adapter("codex"),
+        host_agent_home=agent_home,
+        mount_host_agent_auth=False,
     )
 
     args = docker_args_for_case(config)
@@ -199,7 +348,8 @@ def test_setup_skill_availability_allows_missing_optional_metadata(tmp_path):
         nvflare_image_kind="test-skills",
         agent="codex",
         agent_model="test-model",
-        codex_home=codex_home,
+        agent_home=codex_home,
+        agent_model_was_explicit=True,
     )
 
     setup_skill_availability(config)
@@ -378,7 +528,8 @@ def test_merge_harness_failure_preserves_existing_record(tmp_path):
         nvflare_image_kind="test-skills",
         agent="codex",
         agent_model="test-model",
-        codex_home=tmp_path / ".codex",
+        agent_home=tmp_path / ".codex",
+        agent_model_was_explicit=True,
     )
 
     exit_code = merge_harness_failure(config, RuntimeError("post process failed"), 1, "post_process")

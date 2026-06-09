@@ -25,7 +25,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
-from ..agents.base import validate_benchmark_agent
+from ..agents.base import AgentAdapter, DockerMount
+from ..agents.registry import load_agent_adapter, validate_benchmark_agent
 from ..common import write_json
 
 SCRIPT_DIR = Path(__file__).resolve().parents[2]
@@ -63,7 +64,7 @@ def default_results_root() -> Path:
     return Path(
         os.environ.get(
             "AGENT_BENCHMARK_RESULTS_ROOT",
-            os.environ.get("CODEX_DOCKER_RESULTS_ROOT", str(SCRIPT_DIR / "results")),
+            str(SCRIPT_DIR / "results"),
         )
     )
 
@@ -271,13 +272,10 @@ def command_stdout_to_file(
         return 127
 
 
-def add_openai_passthrough_env(args: list[str]) -> None:
-    if os.environ.get("OPENAI_API_KEY"):
-        args.extend(["-e", "OPENAI_API_KEY"])
-    if os.environ.get("BENCHMARK_AGENT"):
-        args.extend(["-e", f"BENCHMARK_AGENT={benchmark_agent_from_env()}"])
-    if os.environ.get("CODEX_MODEL"):
-        args.extend(["-e", f"CODEX_MODEL={os.environ['CODEX_MODEL']}"])
+def add_agent_passthrough_env(args: list[str], adapter: AgentAdapter) -> None:
+    for name in adapter.passthrough_env_names():
+        if os.environ.get(name):
+            args.extend(["-e", name])
 
 
 def docker_env(name: str, value: str | int | bool | None = None) -> list[str]:
@@ -290,26 +288,24 @@ def docker_env(name: str, value: str | int | bool | None = None) -> list[str]:
     return ["-e", f"{name}={rendered}"]
 
 
-def add_codex_auth_mounts(
+def add_agent_auth_mounts(
     args: list[str],
     *,
-    host_codex_home: Path,
-    container_codex_home: str,
+    mounts: list[DockerMount],
     logs: Iterable[Path] = (),
     prefix: str | None = None,
 ) -> None:
-    auth = host_codex_home / "auth.json"
-    codex_config = host_codex_home / "config.toml"
-    if auth.is_file():
-        args.extend(["-v", f"{auth}:{container_codex_home}/auth.json:ro"])
-        emit(f"Mounting Codex auth: {auth} -> {container_codex_home}/auth.json", logs=logs, prefix=prefix)
-    else:
-        emit(f"Codex auth not mounted; missing {auth}", logs=logs, prefix=prefix, stderr=True)
-    if codex_config.is_file():
-        args.extend(["-v", f"{codex_config}:{container_codex_home}/config.toml:ro"])
-        emit(f"Mounting Codex config: {codex_config} -> {container_codex_home}/config.toml", logs=logs, prefix=prefix)
-    else:
-        emit(f"Codex config not mounted; missing {codex_config}", logs=logs, prefix=prefix, stderr=True)
+    for mount in mounts:
+        if mount.host_path.is_file():
+            suffix = ":ro" if mount.read_only else ""
+            args.extend(["-v", f"{mount.host_path}:{mount.container_path}{suffix}"])
+            label = mount.description or "agent auth/config"
+            emit(f"Mounting {label}: {mount.host_path} -> {mount.container_path}", logs=logs, prefix=prefix)
+        elif mount.required:
+            raise SystemExit(f"Required agent auth/config file is missing: {mount.host_path}")
+        else:
+            label = mount.description or "agent auth/config"
+            emit(f"{label} not mounted; missing {mount.host_path}", logs=logs, prefix=prefix, stderr=True)
 
 
 @dataclass(frozen=True)
@@ -320,12 +316,13 @@ class ImageConfig:
 
     @classmethod
     def from_env(cls) -> "ImageConfig":
-        agent = benchmark_agent_from_env()
-        image = os.environ.get("IMAGE_NAME", f"nvflare-agent-benchmark:{agent}-skills")
+        adapter = benchmark_agent_adapter_from_env()
+        targets = adapter.image_targets(os.environ)
+        image = targets.skills
         return cls(
             image_name=image,
-            baseline_image_name=os.environ.get("BASELINE_IMAGE_NAME", f"nvflare-agent-benchmark:{agent}-baseline"),
-            report_image_name=os.environ.get("REPORT_IMAGE_NAME", image),
+            baseline_image_name=targets.baseline,
+            report_image_name=targets.report,
         )
 
 
@@ -338,8 +335,12 @@ class CaseConfig:
     prompt_path: Path
     images: ImageConfig
     progress_interval_seconds: str
-    host_codex_home: Path
-    mount_host_codex_auth: bool
+    agent: str
+    agent_model: str
+    model_was_explicit: bool
+    adapter: AgentAdapter
+    host_agent_home: Path
+    mount_host_agent_auth: bool
 
     @property
     def run_image(self) -> str:
@@ -363,6 +364,9 @@ def case_config(
     prompt_path: Path,
     images: ImageConfig,
 ) -> CaseConfig:
+    adapter = benchmark_agent_adapter_from_env()
+    agent_model = adapter.model_from_env(os.environ)
+    model_was_explicit = adapter.model_was_explicit(os.environ)
     return CaseConfig(
         mode=mode,
         use_preinstalled_skills=use_preinstalled_skills,
@@ -371,12 +375,17 @@ def case_config(
         prompt_path=prompt_path,
         images=images,
         progress_interval_seconds=os.environ.get("PROGRESS_INTERVAL_SECONDS", "60"),
-        host_codex_home=absolute_path(os.environ.get("HOST_CODEX_HOME", str(Path.home() / ".codex"))),
-        mount_host_codex_auth=env_bool("MOUNT_HOST_CODEX_AUTH", "true"),
+        agent=adapter.name,
+        agent_model=agent_model,
+        model_was_explicit=model_was_explicit,
+        adapter=adapter,
+        host_agent_home=absolute_path(str(adapter.host_home_from_env(os.environ))),
+        mount_host_agent_auth=adapter.mount_auth_from_env(os.environ),
     )
 
 
 def docker_args_for_case(config: CaseConfig, logs: Iterable[Path] = (), prefix: str | None = None) -> list[str]:
+    runtime_env = config.adapter.runtime_env(config)
     args = [
         "docker",
         "run",
@@ -387,7 +396,6 @@ def docker_args_for_case(config: CaseConfig, logs: Iterable[Path] = (), prefix: 
         f"{config.result_dir}:/workspace/results",
         "-v",
         f"{config.prompt_path}:{CONTAINER_PROMPT_PATH}:ro",
-        *docker_env("CODEX_HOME", "/workspace/.codex"),
         *docker_env("JOB_INPUT_DIR", "/workspace/input"),
         *docker_env("TRAINING_CODE", "/workspace/input"),
         *docker_env("PROMPT_SOURCE", CONTAINER_PROMPT_PATH),
@@ -399,15 +407,11 @@ def docker_args_for_case(config: CaseConfig, logs: Iterable[Path] = (), prefix: 
         *docker_env("RECORDS_DIR", "/workspace/results/records"),
         *docker_env("NVFLARE_AGENT_RECORD", f"/workspace/results/records/{config.mode}_agent_record.json"),
     ]
-    add_openai_passthrough_env(args)
-    if config.mount_host_codex_auth:
-        add_codex_auth_mounts(
-            args,
-            host_codex_home=config.host_codex_home,
-            container_codex_home="/workspace/.codex",
-            logs=logs,
-            prefix=prefix,
-        )
+    for name, value in sorted(runtime_env.items()):
+        args.extend(docker_env(name, value))
+    add_agent_passthrough_env(args, config.adapter)
+    if config.mount_host_agent_auth:
+        add_agent_auth_mounts(args, mounts=config.adapter.auth_mounts(config), logs=logs, prefix=prefix)
     args.extend([config.run_image, "/workspace/venv/bin/python", "-m", "harness.container.agent_run"])
     return args
 
@@ -419,8 +423,10 @@ def write_runtime_image(config: CaseConfig) -> None:
         {
             "mode": config.mode,
             "use_preinstalled_skills": config.use_preinstalled_skills,
-            "agent": benchmark_agent_from_env(),
-            "agent_model": os.environ.get("CODEX_MODEL", "unspecified_default"),
+            "agent": config.agent,
+            "agent_model": config.agent_model,
+            "agent_model_explicit": config.model_was_explicit,
+            "agent_adapter": config.adapter.metadata(),
             "runtime_image": config.run_image,
             "report_image": config.images.report_image_name,
             "nvflare_image_kind": config.nvflare_image_kind,
@@ -434,5 +440,12 @@ def write_runtime_image(config: CaseConfig) -> None:
 def benchmark_agent_from_env() -> str:
     try:
         return validate_benchmark_agent(os.environ.get("BENCHMARK_AGENT", "codex"))
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+
+
+def benchmark_agent_adapter_from_env() -> AgentAdapter:
+    try:
+        return load_agent_adapter(os.environ.get("BENCHMARK_AGENT", "codex"))
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc

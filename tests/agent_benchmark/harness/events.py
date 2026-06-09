@@ -52,7 +52,7 @@ def normalize_command(value: Any) -> str | None:
     return None
 
 
-def parse_usage_and_activity(events_path: Path, usage_out: Path, activity_out: Path) -> None:
+def parse_usage_and_activity_data(events_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     # Usage and activity are derived in one pass so large event streams are only
     # decoded once; keep output-specific normalization below clearly separated.
     last_total_tokens: float | None = None
@@ -191,8 +191,6 @@ def parse_usage_and_activity(events_path: Path, usage_out: Path, activity_out: P
         "token_parser_warnings": token_parser_warnings,
         "usage_objects_seen": len(raw_usage_objects),
     }
-    usage_out.write_text(json.dumps(usage, indent=2, sort_keys=True), encoding="utf-8")
-
     activity = {
         "event_count": event_count,
         "json_decode_errors": decode_errors,
@@ -214,6 +212,12 @@ def parse_usage_and_activity(events_path: Path, usage_out: Path, activity_out: P
         "hint_counts": dict(hint_counts.most_common()),
         "commands": commands,
     }
+    return usage, activity
+
+
+def parse_usage_and_activity(events_path: Path, usage_out: Path, activity_out: Path) -> None:
+    usage, activity = parse_usage_and_activity_data(events_path)
+    usage_out.write_text(json.dumps(usage, indent=2, sort_keys=True), encoding="utf-8")
     activity_out.write_text(json.dumps(activity, indent=2, sort_keys=True), encoding="utf-8")
 
 

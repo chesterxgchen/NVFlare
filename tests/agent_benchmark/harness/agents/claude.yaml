@@ -1,0 +1,60 @@
+name: claude
+display_name: Claude Code
+default_model: unspecified_default
+model_env: CLAUDE_MODEL
+agent_home_env: CLAUDE_HOME
+container_home: /workspace/.claude
+
+images:
+  skills: nvflare-agent-benchmark:{agent}-skills
+  baseline: nvflare-agent-benchmark:{agent}-baseline
+  report: nvflare-agent-benchmark:{agent}-skills
+
+auth:
+  host_home_env: HOST_CLAUDE_HOME
+  mount_env: MOUNT_HOST_CLAUDE_AUTH
+  files: []
+
+runtime_env:
+  CLAUDE_HOME: "{container_home}"
+
+launch:
+  prompt_input_mode: stdin
+  argv:
+    - claude
+    - --print
+  model_argv:
+    - --model
+    - "{model}"
+  environment:
+    CLAUDE_HOME: "{container_home}"
+
+skill_exposure:
+  mechanism_type: launch_flag
+  skill_root: "{container_home}/skills"
+  launch_args:
+    - --add-dir
+    - "{skills_dir}"
+
+final_message:
+  source_type: stdout_end
+  parser: generic_stdout_last_message
+
+events:
+  parser: generic_jsonl
+  format: jsonl
+
+usage:
+  parser: generic_cli_usage
+  fidelity: unavailable
+  is_cumulative: false
+
+activity:
+  parser: generic_jsonl_activity
+
+exit:
+  classifier: generic_cli
+
+availability_probe:
+  - claude
+  - --version

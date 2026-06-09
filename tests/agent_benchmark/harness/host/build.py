@@ -26,12 +26,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-from .common import SCRIPT_DIR, benchmark_agent_from_env, emit
+from .common import SCRIPT_DIR, benchmark_agent_adapter_from_env, emit
 
 FLARE_TEST_DIR = SCRIPT_DIR.parent
 DEFAULT_UV_IMAGE = "ghcr.io/astral-sh/uv:0.11.19"
 DEFAULT_NODE_IMAGE = "node:22.16.0-bookworm-slim"
-DEFAULT_CODEX_CLI_VERSION = "0.137.0"
 
 
 def env_flag(name: str, default: str) -> bool:
@@ -216,7 +215,7 @@ def copy_harness(src: Path, dst: Path) -> None:
 
 
 def prepare_build_context() -> Path:
-    context = Path(tempfile.mkdtemp(prefix="nvflare-codex-build-context.", dir=os.environ.get("TMPDIR") or None))
+    context = Path(tempfile.mkdtemp(prefix="nvflare-agent-build-context.", dir=os.environ.get("TMPDIR") or None))
     (context / "dist" / "skills").mkdir(parents=True)
     (context / "dist" / "no_skills").mkdir(parents=True)
     shutil.copy2(SCRIPT_DIR / "docker" / "Dockerfile", context / "Dockerfile")
@@ -232,10 +231,13 @@ def docker_build(
     context: Path,
     uv_image: str,
     node_image: str,
-    codex_cli_version: str,
+    agent_build_args: dict[str, str],
     no_cache: bool,
 ) -> None:
     cache_args = ["--no-cache"] if no_cache else []
+    rendered_build_args = []
+    for key, value in sorted(agent_build_args.items()):
+        rendered_build_args.extend(["--build-arg", f"{key}={value}"])
     status = subprocess.call(
         [
             "docker",
@@ -247,8 +249,7 @@ def docker_build(
             f"UV_IMAGE={uv_image}",
             "--build-arg",
             f"NODE_IMAGE={node_image}",
-            "--build-arg",
-            f"CODEX_CLI_VERSION={codex_cli_version}",
+            *rendered_build_args,
             "-t",
             image,
             str(context),
@@ -262,10 +263,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build NVFLARE agent benchmark Docker images.")
     parser.parse_args(argv)
 
-    agent = benchmark_agent_from_env()
-    image_name = os.environ.get("IMAGE_NAME", f"nvflare-agent-benchmark:{agent}-skills")
-    baseline_image_name = os.environ.get("BASELINE_IMAGE_NAME", f"nvflare-agent-benchmark:{agent}-baseline")
-    report_image_name = os.environ.get("REPORT_IMAGE_NAME", image_name)
+    adapter = benchmark_agent_adapter_from_env()
+    targets = adapter.image_targets(os.environ)
+    image_name = targets.skills
+    baseline_image_name = targets.baseline
+    report_image_name = targets.report
     build_skills_image = env_flag("BUILD_SKILLS_IMAGE", "true")
     build_baseline_image = env_flag("BUILD_BASELINE_IMAGE", "true")
     build_wheel = env_flag("BUILD_NVFLARE_WHEEL", "true")
@@ -273,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
     docker_build_no_cache = env_flag("DOCKER_BUILD_NO_CACHE", "false")
     uv_image = os.environ.get("UV_IMAGE", DEFAULT_UV_IMAGE)
     node_image = os.environ.get("NODE_IMAGE", DEFAULT_NODE_IMAGE)
-    codex_cli_version = os.environ.get("CODEX_CLI_VERSION", DEFAULT_CODEX_CLI_VERSION)
+    agent_build_args = adapter.build_args_from_env(os.environ)
 
     context = prepare_build_context()
     try:
@@ -327,7 +329,8 @@ def main(argv: list[str] | None = None) -> int:
         emit(f"Docker build context: {context}")
         emit(f"UV image: {uv_image}")
         emit(f"Node runtime image: {node_image}")
-        emit(f"Codex CLI package: @openai/codex@{codex_cli_version}")
+        for key, value in sorted(agent_build_args.items()):
+            emit(f"Agent build arg: {key}={value}")
         emit(f"Docker build no-cache: {str(docker_build_no_cache).lower()}")
         if build_skills_image:
             emit(f"=== Building Docker skills image: {image_name} ===")
@@ -337,7 +340,7 @@ def main(argv: list[str] | None = None) -> int:
                 context=context,
                 uv_image=uv_image,
                 node_image=node_image,
-                codex_cli_version=codex_cli_version,
+                agent_build_args=agent_build_args,
                 no_cache=docker_build_no_cache,
             )
         if build_baseline_image:
@@ -348,7 +351,7 @@ def main(argv: list[str] | None = None) -> int:
                 context=context,
                 uv_image=uv_image,
                 node_image=node_image,
-                codex_cli_version=codex_cli_version,
+                agent_build_args=agent_build_args,
                 no_cache=docker_build_no_cache,
             )
 

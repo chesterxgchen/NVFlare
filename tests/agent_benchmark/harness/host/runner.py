@@ -22,6 +22,7 @@ import subprocess
 import sys
 import traceback
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Iterable
 
 from ..common import write_json
@@ -32,14 +33,14 @@ from .common import (
     CaseConfig,
     ImageConfig,
     absolute_path,
-    add_codex_auth_mounts,
-    add_openai_passthrough_env,
+    add_agent_auth_mounts,
+    add_agent_passthrough_env,
+    benchmark_agent_adapter_from_env,
     case_config,
     default_results_root,
     docker_args_for_case,
     docker_env,
     emit,
-    env_bool,
     parse_host_cli_options,
     stream_command,
     timestamp_slug,
@@ -333,8 +334,8 @@ def run_pair(argv: list[str]) -> int:
 def run_interactive(argv: list[str]) -> int:
     options = parse_host_cli_options(argv, "interactive")
     images = ImageConfig.from_env()
-    host_codex_home = absolute_path(os.environ.get("HOST_CODEX_HOME", str(Path.home() / ".codex")))
-    container_codex_home = os.environ.get("CONTAINER_CODEX_HOME", "/workspace/.codex")
+    adapter = benchmark_agent_adapter_from_env()
+    host_agent_home = absolute_path(str(adapter.host_home_from_env(os.environ)))
     container_records = os.environ.get("CONTAINER_RECORDS", "/tmp/nvflare/records")
     args = [
         "docker",
@@ -345,15 +346,25 @@ def run_interactive(argv: list[str]) -> int:
         f"{options.job_input}:/workspace/input",
         "-v",
         f"{options.prompt_path}:{CONTAINER_PROMPT_PATH}:ro",
-        *docker_env("CODEX_HOME", container_codex_home),
         *docker_env("JOB_INPUT_DIR", "/workspace/input"),
         *docker_env("TRAINING_CODE", "/workspace/input"),
         *docker_env("PROMPT_SOURCE", CONTAINER_PROMPT_PATH),
         *docker_env("RECORDS_DIR", container_records),
     ]
-    add_openai_passthrough_env(args)
-    if env_bool("MOUNT_HOST_CODEX_AUTH", "true"):
-        add_codex_auth_mounts(args, host_codex_home=host_codex_home, container_codex_home=container_codex_home)
+    for name, value in sorted(
+        adapter.runtime_env(
+            SimpleNamespace(
+                agent=adapter.name,
+                agent_model=adapter.model_from_env(os.environ),
+                model_was_explicit=adapter.model_was_explicit(os.environ),
+            )
+        ).items()
+    ):
+        args.extend(docker_env(name, value))
+    add_agent_passthrough_env(args, adapter)
+    if adapter.mount_auth_from_env(os.environ):
+        interactive_config = SimpleNamespace(host_agent_home=host_agent_home)
+        add_agent_auth_mounts(args, mounts=adapter.auth_mounts(interactive_config))
     emit(f"Mounting job folder: {options.job_input} -> /workspace/input")
     emit(f"Using prompt file: {options.prompt_path} -> {CONTAINER_PROMPT_PATH}")
     try:

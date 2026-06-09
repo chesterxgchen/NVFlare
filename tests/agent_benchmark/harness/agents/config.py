@@ -1,0 +1,427 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""YAML-driven benchmark agent adapter implementation."""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import string
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Mapping
+
+import yaml
+
+from .base import (
+    AgentAdapter,
+    AgentImageTargets,
+    AgentLaunchContext,
+    AgentLaunchSpec,
+    DockerMount,
+    FinalMessageSource,
+    SkillExposureContext,
+    SkillExposureSpec,
+)
+from .classifiers import classify_exit
+from .parsers import normalize_event_with_parser, parse_activity_from_events, parse_usage_from_events
+
+PROMPT_TEXT_PLACEHOLDER = "prompt_text"
+UNSPECIFIED_MODEL = "unspecified_default"
+
+
+@dataclass(frozen=True)
+class ParserConfig:
+    parser: str
+    fidelity: str | None = None
+    is_cumulative: bool | None = None
+
+
+@dataclass(frozen=True)
+class AgentConfig:
+    source_path: Path
+    raw: dict[str, Any]
+    source_sha256: str
+    name: str
+    display_name: str
+    default_model: str
+    model_env: str | None
+    agent_home_env: str
+    container_home: str
+    legacy_artifact_prefixes: tuple[str, ...]
+    images: dict[str, str]
+    auth: dict[str, Any]
+    launch: dict[str, Any]
+    skill_exposure: dict[str, Any]
+    final_message: dict[str, Any]
+    events: ParserConfig
+    usage: ParserConfig
+    activity: ParserConfig
+    exit_classifier: str
+    availability_probe: list[str] = field(default_factory=list)
+
+    @classmethod
+    def load(cls, config_path: Path) -> "AgentConfig":
+        source = config_path.read_text(encoding="utf-8")
+        if f"{{{PROMPT_TEXT_PLACEHOLDER}}}" in source:
+            raise ValueError(f"{config_path} must not use {{{PROMPT_TEXT_PLACEHOLDER}}}; use prompt_file delivery")
+        data = yaml.safe_load(source) or {}
+        if not isinstance(data, dict):
+            raise ValueError(f"{config_path} must contain a YAML object")
+        required = (
+            "name",
+            "display_name",
+            "agent_home_env",
+            "container_home",
+            "launch",
+            "skill_exposure",
+            "final_message",
+            "events",
+            "usage",
+            "activity",
+            "exit",
+        )
+        missing = [name for name in required if name not in data]
+        if missing:
+            raise ValueError(f"{config_path} is missing required field(s): {', '.join(missing)}")
+
+        launch = required_mapping(data, "launch", config_path)
+        if "argv" not in launch or not isinstance(launch["argv"], list):
+            raise ValueError(f"{config_path}: launch.argv must be a list")
+        prompt_input_mode = launch.get("prompt_input_mode")
+        if prompt_input_mode not in {"stdin", "file_arg"}:
+            raise ValueError(f"{config_path}: launch.prompt_input_mode must be stdin or file_arg")
+
+        return cls(
+            source_path=config_path,
+            raw=data,
+            source_sha256=hashlib.sha256(source.encode("utf-8")).hexdigest(),
+            name=str(data["name"]),
+            display_name=str(data["display_name"]),
+            default_model=str(data.get("default_model") or UNSPECIFIED_MODEL),
+            model_env=str(data["model_env"]) if data.get("model_env") else None,
+            agent_home_env=str(data["agent_home_env"]),
+            container_home=str(data["container_home"]),
+            legacy_artifact_prefixes=tuple(str(item) for item in data.get("legacy_artifact_prefixes") or ()),
+            images=dict(data.get("images") or {}),
+            auth=auth_config(data),
+            launch=launch,
+            skill_exposure=required_mapping(data, "skill_exposure", config_path),
+            final_message=required_mapping(data, "final_message", config_path),
+            events=parser_config(data, "events", config_path),
+            usage=parser_config(data, "usage", config_path),
+            activity=parser_config(data, "activity", config_path),
+            exit_classifier=str(required_mapping(data, "exit", config_path).get("classifier") or ""),
+            availability_probe=[str(item) for item in data.get("availability_probe") or []],
+        )
+
+
+def required_mapping(data: Mapping[str, Any], key: str, config_path: Path) -> dict[str, Any]:
+    value = data.get(key)
+    if not isinstance(value, dict):
+        raise ValueError(f"{config_path}: {key} must be a mapping")
+    return value
+
+
+def parser_config(data: Mapping[str, Any], key: str, config_path: Path) -> ParserConfig:
+    raw = required_mapping(data, key, config_path)
+    parser = raw.get("parser")
+    if not parser:
+        raise ValueError(f"{config_path}: {key}.parser is required")
+    return ParserConfig(
+        parser=str(parser),
+        fidelity=str(raw["fidelity"]) if raw.get("fidelity") else None,
+        is_cumulative=bool(raw["is_cumulative"]) if "is_cumulative" in raw else None,
+    )
+
+
+def template_fields(value: str) -> set[str]:
+    fields = set()
+    for _literal, field_name, _format_spec, _conversion in string.Formatter().parse(value):
+        if field_name:
+            fields.add(field_name)
+    return fields
+
+
+def render_string(value: str, values: Mapping[str, Any]) -> str:
+    fields = template_fields(value)
+    unknown = fields.difference(values)
+    if unknown:
+        raise ValueError(f"Unknown adapter template placeholder(s): {', '.join(sorted(unknown))}")
+    if PROMPT_TEXT_PLACEHOLDER in fields:
+        raise ValueError("Adapter templates must not reference prompt_text")
+    return value.format(**values)
+
+
+def auth_config(data: Mapping[str, Any]) -> dict[str, Any]:
+    auth = dict(data.get("auth") or {})
+    if "files" not in auth and isinstance(data.get("auth_mounts"), list):
+        auth["files"] = data["auth_mounts"]
+    return auth
+
+
+def render_list(values: list[Any], render_values: Mapping[str, Any]) -> list[str]:
+    rendered = []
+    for item in values:
+        if isinstance(item, dict):
+            condition = item.get("when")
+            if condition and not render_values.get(str(condition)):
+                continue
+            rendered.extend(render_list(list(item.get("args") or []), render_values))
+            continue
+        if not isinstance(item, str):
+            raise ValueError(f"Adapter argv/action entries must be strings; got {item!r}")
+        rendered.append(render_string(item, render_values))
+    return rendered
+
+
+def maybe_render_path(value: Any, render_values: Mapping[str, Any]) -> Path | None:
+    if not value:
+        return None
+    return Path(render_string(str(value), render_values))
+
+
+class ConfigurableAgentAdapter(AgentAdapter):
+    """Concrete adapter driven by a validated YAML config."""
+
+    def __init__(self, config_path: Path) -> None:
+        self._cfg = AgentConfig.load(config_path)
+
+    @property
+    def name(self) -> str:
+        return self._cfg.name
+
+    @property
+    def display_name(self) -> str:
+        return self._cfg.display_name
+
+    @property
+    def default_model(self) -> str:
+        return self._cfg.default_model
+
+    @property
+    def agent_home_env(self) -> str:
+        return self._cfg.agent_home_env
+
+    @property
+    def container_home(self) -> str:
+        return self._cfg.container_home
+
+    def model_from_env(self, env: Mapping[str, str]) -> str:
+        return (
+            env.get("BENCHMARK_AGENT_MODEL")
+            or (env.get(self._cfg.model_env) if self._cfg.model_env else None)
+            or self.default_model
+            or UNSPECIFIED_MODEL
+        )
+
+    def model_was_explicit(self, env: Mapping[str, str]) -> bool:
+        return bool(env.get("BENCHMARK_AGENT_MODEL") or (env.get(self._cfg.model_env) if self._cfg.model_env else None))
+
+    def model_env_names(self) -> tuple[str, ...]:
+        return (self._cfg.model_env,) if self._cfg.model_env else ()
+
+    def build_args_from_env(self, env: Mapping[str, str]) -> dict[str, str]:
+        build = self._cfg.raw.get("build") or {}
+        if not isinstance(build, dict):
+            return {}
+        args = {}
+        for key, value in (build.get("args") or {}).items():
+            if isinstance(value, dict):
+                env_name = value.get("env")
+                default = value.get("default", "")
+                args[str(key)] = str(env.get(str(env_name), default)) if env_name else str(default)
+            else:
+                args[str(key)] = render_string(str(value), {"agent": self.name, **env})
+        return args
+
+    def image_targets(self, env: Mapping[str, str] | None = None) -> AgentImageTargets:
+        env = env or os.environ
+        render_values = {"agent": self.name}
+        skills = render_string(
+            str(self._cfg.images.get("skills") or "nvflare-agent-benchmark:{agent}-skills"), render_values
+        )
+        baseline = render_string(
+            str(self._cfg.images.get("baseline") or "nvflare-agent-benchmark:{agent}-baseline"), render_values
+        )
+        report = render_string(str(self._cfg.images.get("report") or skills), render_values)
+        return AgentImageTargets(
+            skills=env.get("IMAGE_NAME", skills),
+            baseline=env.get("BASELINE_IMAGE_NAME", baseline),
+            report=env.get("REPORT_IMAGE_NAME", report),
+        )
+
+    def auth_mounts(self, host_config) -> list[DockerMount]:
+        auth = self._cfg.auth
+        if not auth:
+            return []
+        host_home = Path(getattr(host_config, "host_agent_home", Path.home()))
+        mounts = []
+        for item in auth.get("files") or []:
+            if not isinstance(item, dict):
+                continue
+            source_name = str(item.get("source") or "")
+            target_name = str(item.get("target") or source_name)
+            if not source_name or not target_name:
+                continue
+            mounts.append(
+                DockerMount(
+                    host_path=host_home / source_name,
+                    container_path=f"{self.container_home.rstrip('/')}/{target_name}",
+                    read_only=bool(item.get("read_only", True)),
+                    description=str(item.get("description") or f"{self.display_name} auth/config"),
+                    required=bool(item.get("required", False)),
+                )
+            )
+        return mounts
+
+    def host_home_from_env(self, env: Mapping[str, str]) -> Path:
+        host_home_env = self._cfg.auth.get("host_home_env") if self._cfg.auth else None
+        if host_home_env and env.get(str(host_home_env)):
+            return Path(str(env[str(host_home_env)])).expanduser()
+        return Path.home() / f".{self.name}"
+
+    def mount_auth_from_env(self, env: Mapping[str, str]) -> bool:
+        mount_env = self._cfg.auth.get("mount_env") if self._cfg.auth else None
+        if not mount_env:
+            return True
+        value = env.get(str(mount_env), "true")
+        if value not in {"true", "false"}:
+            raise ValueError(f"{mount_env} must be true or false; got {value}")
+        return value == "true"
+
+    def runtime_env(self, config) -> dict[str, str]:
+        env = {
+            self.agent_home_env: self.container_home,
+            "BENCHMARK_AGENT_HOME": self.container_home,
+            "BENCHMARK_AGENT": self.name,
+        }
+        if getattr(config, "model_was_explicit", False):
+            env["BENCHMARK_AGENT_MODEL"] = getattr(config, "agent_model", self.default_model)
+        for key, value in (self._cfg.raw.get("runtime_env") or {}).items():
+            env[str(key)] = render_string(str(value), {"container_home": self.container_home, "agent": self.name})
+        return env
+
+    def passthrough_env_names(self) -> tuple[str, ...]:
+        return tuple(str(item) for item in self._cfg.raw.get("passthrough_env") or ())
+
+    def launch_spec(self, config: AgentLaunchContext) -> AgentLaunchSpec:
+        final_message_dest = config.final_message_dest
+        render_values = {
+            "agent": self.name,
+            "model": config.model,
+            "workspace_dir": str(config.workspace_dir),
+            "prompt_file": str(config.prompt_file),
+            "result_dir": str(config.result_dir),
+            "events_dest": str(config.events_dest),
+            "stderr_dest": str(config.stderr_dest),
+            "final_message_dest": str(final_message_dest),
+            "container_home": self.container_home,
+            "model_was_explicit": config.model_was_explicit,
+        }
+        argv = render_list(list(self._cfg.launch["argv"]), render_values)
+        if config.model_was_explicit and self._cfg.launch.get("model_argv"):
+            model_argv = render_list(list(self._cfg.launch["model_argv"]), render_values)
+            if argv and argv[-1] == "-" and self._cfg.launch["prompt_input_mode"] == "stdin":
+                argv = [*argv[:-1], *model_argv, argv[-1]]
+            else:
+                argv.extend(model_argv)
+        env = {}
+        for key, value in (self._cfg.launch.get("environment") or {}).items():
+            env[str(key)] = render_string(str(value), render_values)
+        env.update({self.agent_home_env: self.container_home})
+        return AgentLaunchSpec(
+            argv=argv,
+            cwd=config.workspace_dir,
+            prompt_file=config.prompt_file,
+            prompt_input_mode=str(self._cfg.launch["prompt_input_mode"]),
+            stdout_events_dest=config.events_dest,
+            stderr_dest=config.stderr_dest,
+            final_message_dest=final_message_dest,
+            environment=env,
+            login_shell=bool(self._cfg.launch.get("login_shell", False)),
+            approval_flags=[str(item) for item in self._cfg.launch.get("approval_flags") or []],
+            sandbox_flags=[str(item) for item in self._cfg.launch.get("sandbox_flags") or []],
+            bypass_reason=str(self._cfg.launch.get("bypass_reason")) if self._cfg.launch.get("bypass_reason") else None,
+            launch_timeout=config.timeout_seconds,
+        )
+
+    def skill_exposure(self, config: SkillExposureContext) -> SkillExposureSpec:
+        render_values = {
+            "agent": self.name,
+            "container_home": str(config.container_home),
+            "result_dir": str(config.result_dir),
+            "skills_dir": str(config.container_home / "skills"),
+        }
+        raw = self._cfg.skill_exposure
+        return SkillExposureSpec(
+            mechanism_type=str(raw.get("mechanism_type") or "none"),
+            skill_root=maybe_render_path(raw.get("skill_root"), render_values),
+            source_paths=[Path(render_string(str(item), render_values)) for item in raw.get("source_paths") or []],
+            setup_action=render_list(list(raw.get("setup_action") or []), render_values),
+            probe_action=render_list(list(raw.get("probe_action") or []), render_values),
+            disable_action=render_list(list(raw.get("disable_action") or []), render_values),
+            launch_args=render_list(list(raw.get("launch_args") or []), render_values),
+            environment={
+                str(key): render_string(str(value), render_values)
+                for key, value in (raw.get("environment") or {}).items()
+            },
+            metadata_files=[Path(render_string(str(item), render_values)) for item in raw.get("metadata_files") or []],
+            expected_post_setup_state=(
+                str(raw.get("expected_post_setup_state")) if raw.get("expected_post_setup_state") else None
+            ),
+            disable_packaged_source=bool(raw.get("disable_packaged_source", False)),
+        )
+
+    def availability_probe(self) -> list[str]:
+        return list(self._cfg.availability_probe)
+
+    def normalize_event(self, raw_line: str) -> dict[str, Any] | None:
+        return normalize_event_with_parser(raw_line, self._cfg.events.parser)
+
+    def parse_usage(self, events_path: Path) -> dict[str, Any]:
+        usage = parse_usage_from_events(events_path, self._cfg.usage)
+        if self._cfg.usage.fidelity:
+            usage.setdefault("usage_fidelity", self._cfg.usage.fidelity)
+        if self._cfg.usage.is_cumulative is not None:
+            usage.setdefault("is_cumulative", self._cfg.usage.is_cumulative)
+        return usage
+
+    def parse_activity(self, events_path: Path) -> dict[str, Any]:
+        return parse_activity_from_events(events_path, self._cfg.activity)
+
+    def final_message_source(self, result_dir: Path) -> FinalMessageSource:
+        render_values = {"result_dir": str(result_dir), "agent": self.name}
+        source_type = str(self._cfg.final_message.get("source_type") or "file")
+        return FinalMessageSource(
+            source_type=source_type,
+            path=maybe_render_path(self._cfg.final_message.get("path"), render_values),
+            parser=str(self._cfg.final_message["parser"]) if self._cfg.final_message.get("parser") else None,
+        )
+
+    def metadata(self) -> dict[str, Any]:
+        return {
+            "agent": self.name,
+            "display_name": self.display_name,
+            "config_path": str(self._cfg.source_path),
+            "config_sha256": self._cfg.source_sha256,
+            "adapter_type": "ConfigurableAgentAdapter",
+        }
+
+    def exit_summary(self, exit_code: int, stderr_path: Path) -> dict[str, Any]:
+        return classify_exit(exit_code, stderr_path, self._cfg.exit_classifier)
+
+    def artifact_alias_prefixes(self) -> tuple[str, ...]:
+        return self._cfg.legacy_artifact_prefixes

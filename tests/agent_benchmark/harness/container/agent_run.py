@@ -29,13 +29,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..agents.base import normalize_agent_event, validate_benchmark_agent
+from ..agents.base import AgentLaunchContext, SkillExposureContext
+from ..agents.registry import load_agent_adapter
 from ..artifacts import capture_workspace_delta, write_workspace_baseline
 from ..common import bool_from_text, load_json, make_tree_readable, write_json
-from ..events import parse_usage_and_activity
 from ..modes import mode_spec
 from ..records import AgentRecordSynthesisInputs, merge_record, synthesize_agent_record, write_run_summary
 from ..timing import LifecycleEpochs, finalize_timing
+from .skills import apply_skill_exposure
+from .skills import copy_optional_metadata_files as _copy_optional_metadata_files
 
 DEFAULT_CONTAINER_VENV_DIR = "/workspace/venv"
 RUNTIME_ARTIFACT_ROOT = Path("/tmp/nvflare")
@@ -72,7 +74,8 @@ class AgentRunConfig:
     nvflare_image_kind: str
     agent: str
     agent_model: str
-    codex_home: Path
+    agent_home: Path
+    agent_model_was_explicit: bool
 
     @property
     def skill_run_mode(self) -> str:
@@ -115,26 +118,6 @@ class AgentRunConfig:
         return self.result_dir / "agent_stderr.txt"
 
     @property
-    def codex_events_path(self) -> Path:
-        return self.result_dir / "codex_events.jsonl"
-
-    @property
-    def codex_last_message_path(self) -> Path:
-        return self.result_dir / "codex_last_message.txt"
-
-    @property
-    def codex_usage_path(self) -> Path:
-        return self.result_dir / "codex_usage.json"
-
-    @property
-    def codex_activity_path(self) -> Path:
-        return self.result_dir / "codex_activity.json"
-
-    @property
-    def codex_stderr_path(self) -> Path:
-        return self.result_dir / "codex_stderr.txt"
-
-    @property
     def prompt_file_path(self) -> Path:
         return self.result_dir / "prompt.txt"
 
@@ -161,6 +144,9 @@ class AgentRunConfig:
             )
         job_input = env.get("JOB_INPUT_DIR") or env.get("TRAINING_CODE") or "/workspace/input"
         result_dir = env.get("RESULT_DIR", "/workspace/results")
+        adapter = load_agent_adapter(env.get("BENCHMARK_AGENT", "codex"))
+        agent_model = adapter.model_from_env(env)
+        agent_home = Path(env.get("BENCHMARK_AGENT_HOME") or env.get(adapter.agent_home_env, adapter.container_home))
         return cls(
             mode=mode,
             use_preinstalled_skills=use_preinstalled_skills,
@@ -171,9 +157,10 @@ class AgentRunConfig:
             prompt_source=Path(env.get("PROMPT_SOURCE", "/workspace/prompts/benchmark_prompt.txt")),
             progress_interval_seconds=int(env.get("PROGRESS_INTERVAL_SECONDS", "60") or "60"),
             nvflare_image_kind=env.get("NVFLARE_IMAGE_KIND", "unknown"),
-            agent=validate_benchmark_agent(env.get("BENCHMARK_AGENT", "codex")),
-            agent_model=env.get("CODEX_MODEL", "unspecified_default"),
-            codex_home=Path(env.get("CODEX_HOME", "/workspace/.codex")),
+            agent=adapter.name,
+            agent_model=agent_model,
+            agent_home=agent_home,
+            agent_model_was_explicit=adapter.model_was_explicit(env),
         )
 
 
@@ -226,17 +213,6 @@ class ProgressWriter:
         if self._thread is not None:
             self._thread.join(timeout=2)
             self._thread = None
-
-
-def discover_bundled_skills_root() -> str | None:
-    try:
-        from nvflare.tool.agent import skill_manager
-
-        source = skill_manager.find_skill_source()
-        root = getattr(source, "root", None)
-        return str(root) if root else None
-    except Exception:
-        return None
 
 
 def command_output(command: list[str]) -> str | None:
@@ -312,8 +288,8 @@ def login_shell_runtime_probe() -> dict[str, Any]:
 
 
 def persist_container_runtime_metadata(config: AgentRunConfig) -> None:
-    build_metadata = load_json(config.codex_home / "build_metadata.json", {}) or {}
-    wheel_metadata = load_json(config.codex_home / "nvflare_wheel_metadata.json", {}) or {}
+    build_metadata = load_json(config.agent_home / "build_metadata.json", {}) or {}
+    wheel_metadata = load_json(config.agent_home / "nvflare_wheel_metadata.json", {}) or {}
     if build_metadata:
         write_json(config.result_dir / "image_build_metadata.json", build_metadata)
     if wheel_metadata:
@@ -340,87 +316,30 @@ def persist_container_runtime_metadata(config: AgentRunConfig) -> None:
         raise RuntimeError(f"Login-shell runtime probe failed: {probe.get('reason')}")
 
 
-def disable_skills(skills_root: Path) -> dict[str, Any]:
-    skills_root.mkdir(parents=True, exist_ok=True)
-    for child in list(skills_root.iterdir()):
-        if child.is_dir() and not child.is_symlink():
-            shutil.rmtree(child)
-        else:
-            child.unlink(missing_ok=True)
-
-    bundled_root = discover_bundled_skills_root()
-    removed = False
-    if bundled_root:
-        path = Path(bundled_root)
-        if path.is_dir():
-            shutil.rmtree(path)
-            removed = True
-    return {
-        "codex_home_skills_removed": True,
-        "packaged_skill_source_removed_during_agent": removed,
-        "packaged_skill_source_path": bundled_root,
-    }
-
-
 def setup_skill_availability(config: AgentRunConfig) -> tuple[int, int]:
     start = epoch_seconds()
-    skills_root = config.codex_home / "skills"
-    if config.use_preinstalled_skills:
-        if not skills_root.is_dir() or not any(path.is_dir() for path in skills_root.iterdir()):
-            write_json(
-                config.result_dir / "skills_state.json",
-                {"status": "error", "reason": "preinstalled Codex skills are missing from CODEX_HOME"},
-            )
-            raise SystemExit(2)
-        write_json(
-            config.result_dir / "skills_state.json",
-            {
-                "status": "enabled",
-                "source": config.nvflare_image_kind,
-                "skills_enabled": True,
-            },
+    adapter = load_agent_adapter(config.agent)
+    spec = adapter.skill_exposure(
+        SkillExposureContext(
+            result_dir=config.result_dir,
+            container_home=config.agent_home,
+            mode=config.mode,
+            skills_enabled=config.use_preinstalled_skills,
+            nvflare_image_kind=config.nvflare_image_kind,
         )
-        copy_optional_metadata_files(
-            config.codex_home,
-            config.result_dir,
-            ("nvflare_skills_build_install.json", "nvflare_skills_list.json"),
-        )
-    else:
-        disabled = disable_skills(skills_root)
-        write_json(
-            config.result_dir / "skills_state.json",
-            {
-                "status": "disabled",
-                "source": config.nvflare_image_kind,
-                "skills_enabled": False,
-                "image_kind": config.nvflare_image_kind,
-                "reason": "baseline image installs a local no-skills NVFLARE wheel and does not preinstall Codex skills",
-                **disabled,
-                "reporting_note": "Wrapper-side reports run from the skills image so benchmark contracts are available outside the measured agent container.",
-            },
-        )
-        write_json(
-            config.result_dir / "skills_list.json",
-            {"status": "skipped", "installed": [], "reason": "skills intentionally removed for baseline run"},
-        )
+    )
+    result = apply_skill_exposure(
+        spec=spec,
+        skills_enabled=config.use_preinstalled_skills,
+        result_dir=config.result_dir,
+        nvflare_image_kind=config.nvflare_image_kind,
+    )
+    write_json(config.result_dir / "skills_exposure_result.json", result.__dict__)
     return start, epoch_seconds()
 
 
 def copy_optional_metadata_files(source_dir: Path, result_dir: Path, names: tuple[str, ...]) -> dict[str, Any]:
-    copied = []
-    missing = []
-    for name in names:
-        source = source_dir / name
-        if source.is_file():
-            target_name = name.removeprefix("nvflare_")
-            shutil.copy2(source, result_dir / target_name)
-            copied.append({"source": str(source), "target": str(result_dir / target_name)})
-        else:
-            missing.append(str(source))
-    payload = {"copied": copied, "missing": missing}
-    if missing:
-        write_json(result_dir / "skills_metadata_missing.json", payload)
-    return payload
+    return _copy_optional_metadata_files(source_dir, result_dir, names)
 
 
 def prepare_input_workspace(config: AgentRunConfig) -> tuple[int, int]:
@@ -460,16 +379,49 @@ def prepare_prompt(config: AgentRunConfig) -> tuple[int, int]:
 def write_agent_compatibility_copies(config: AgentRunConfig) -> None:
     # Use file copies rather than symlinks because benchmark results may live on
     # Docker volume mounts where symlink behavior varies by host platform.
-    copies = (
-        (config.agent_events_path, config.codex_events_path),
-        (config.agent_usage_path, config.codex_usage_path),
-        (config.agent_activity_path, config.codex_activity_path),
-        (config.agent_last_message_path, config.codex_last_message_path),
-        (config.agent_stderr_path, config.codex_stderr_path),
-    )
-    for source, target in copies:
-        if source.exists() and source != target:
-            shutil.copy2(source, target)
+    adapter = load_agent_adapter(config.agent)
+    suffixes = {
+        "events": config.agent_events_path,
+        "usage": config.agent_usage_path,
+        "activity": config.agent_activity_path,
+        "last_message": config.agent_last_message_path,
+        "stderr": config.agent_stderr_path,
+    }
+    for prefix in adapter.artifact_alias_prefixes():
+        for suffix, source in suffixes.items():
+            target = (
+                config.result_dir
+                / f"{prefix}_{suffix}.{'jsonl' if suffix == 'events' else 'json' if suffix in {'usage', 'activity'} else 'txt'}"
+            )
+            if source.exists() and source != target:
+                shutil.copy2(source, target)
+
+
+AGENT_ENV_DENYLIST = {
+    "MODE",
+    "USE_PREINSTALLED_SKILLS",
+    "NVFLARE_IMAGE_KIND",
+    "RESULT_DIR",
+    "RECORDS_DIR",
+    "NVFLARE_AGENT_RECORD",
+    "RUN_ROOT",
+    "PROMPT_SOURCE",
+    "JOB_INPUT_DIR",
+    "TRAINING_CODE",
+    "PROGRESS_INTERVAL_SECONDS",
+    "BENCHMARK_AGENT",
+    "BENCHMARK_AGENT_MODEL",
+    "BENCHMARK_AGENT_HOME",
+}
+
+
+def agent_subprocess_env(launch_env: dict[str, str], adapter=None) -> dict[str, str]:
+    denied = set(AGENT_ENV_DENYLIST)
+    if adapter is not None:
+        denied.update(str(item) for item in adapter.model_env_names())
+    env = {key: value for key, value in os.environ.items() if key not in denied}
+    env.update(launch_env)
+    return env
 
 
 def run_agent(config: AgentRunConfig, progress: ProgressWriter) -> tuple[int, int, int]:
@@ -479,50 +431,50 @@ def run_agent(config: AgentRunConfig, progress: ProgressWriter) -> tuple[int, in
     progress.start_heartbeat("agent_exec", config.progress_interval_seconds)
     agent_exit = 127
     launch_error: OSError | None = None
-
-    command = [
-        "codex",
-        "exec",
-        "--json",
-        "--skip-git-repo-check",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "-C",
-        str(config.run_workspace_dir),
-        "-o",
-        str(config.agent_last_message_path),
-    ]
-    if os.environ.get("CODEX_MODEL"):
-        command.extend(["-m", os.environ["CODEX_MODEL"]])
-    command.append("-")
+    adapter = load_agent_adapter(config.agent)
+    launch = adapter.launch_spec(
+        AgentLaunchContext(
+            workspace_dir=config.run_workspace_dir,
+            prompt_file=config.prompt_file_path,
+            result_dir=config.result_dir,
+            events_dest=config.agent_events_path,
+            stderr_dest=config.agent_stderr_path,
+            final_message_dest=config.agent_last_message_path,
+            model=config.agent_model,
+            model_was_explicit=config.agent_model_was_explicit,
+        )
+    )
 
     try:
         try:
             with (
-                config.prompt_file_path.open("rb") as stdin,
-                config.agent_events_path.open("w", encoding="utf-8") as events_out,
-                config.agent_stderr_path.open("wb") as stderr,
+                launch.prompt_file.open("rb") as prompt_stdin,
+                launch.stdout_events_dest.open("w", encoding="utf-8") as events_out,
+                launch.stderr_dest.open("wb") as stderr,
             ):
+                stdin = prompt_stdin if launch.prompt_input_mode == "stdin" else subprocess.DEVNULL
                 try:
                     process = subprocess.Popen(
-                        command,
-                        cwd=config.run_workspace_dir,
+                        launch.argv,
+                        cwd=launch.cwd,
                         stdin=stdin,
                         stdout=subprocess.PIPE,
                         stderr=stderr,
                         text=True,
                         encoding="utf-8",
                         errors="replace",
+                        env=agent_subprocess_env(launch.environment, adapter),
                     )
                 except OSError as exc:
                     launch_error = exc
-                    message = f"Failed to start Codex command: {type(exc).__name__}: {exc}\n"
+                    message = f"Failed to start agent command: {type(exc).__name__}: {exc}\n"
                     stderr.write(message.encode("utf-8", errors="replace"))
                     print(message.rstrip(), file=sys.stderr)
                 else:
                     if process.stdout is None:
-                        raise RuntimeError("Codex stdout pipe was not created")
+                        raise RuntimeError("Agent stdout pipe was not created")
                     for line in process.stdout:
-                        event = normalize_agent_event(config.agent, line)
+                        event = adapter.normalize_event(line)
                         normalized = (
                             json.dumps(event, sort_keys=True, separators=(",", ":")) if event is not None else None
                         )
@@ -532,7 +484,7 @@ def run_agent(config: AgentRunConfig, progress: ProgressWriter) -> tuple[int, in
                     agent_exit = process.wait()
         except OSError as exc:
             launch_error = exc
-            print(f"Failed to prepare Codex command streams: {type(exc).__name__}: {exc}", file=sys.stderr)
+            print(f"Failed to prepare agent command streams: {type(exc).__name__}: {exc}", file=sys.stderr)
     finally:
         progress.stop_heartbeat()
 
@@ -564,11 +516,9 @@ def post_process(
         RUNTIME_ARTIFACT_ROOT,
         delta_scope="agent_workspace",
     )
-    parse_usage_and_activity(
-        config.agent_events_path,
-        config.agent_usage_path,
-        config.agent_activity_path,
-    )
+    adapter = load_agent_adapter(config.agent)
+    write_json(config.agent_usage_path, adapter.parse_usage(config.agent_events_path))
+    write_json(config.agent_activity_path, adapter.parse_activity(config.agent_events_path))
     write_agent_compatibility_copies(config)
     synthesize_agent_record(
         AgentRecordSynthesisInputs(
@@ -654,12 +604,9 @@ def write_report_outcome(config: AgentRunConfig, agent_exit: int, report_statuse
 
 
 def configure_process_record_environment(config: AgentRunConfig) -> None:
-    # This runs inside the benchmark container; mutating os.environ is intentional
-    # so agent subprocesses can discover benchmark record locations.
-    os.environ["JOB_INPUT_DIR"] = str(config.job_input_dir)
-    os.environ["TRAINING_CODE"] = str(config.job_input_dir)
-    os.environ["RECORDS_DIR"] = str(config.records_dir)
-    os.environ["NVFLARE_AGENT_RECORD"] = str(config.agent_record_path)
+    # Record paths are harness-internal. The measured agent process receives a
+    # sanitized environment in run_agent() and does not inherit these values.
+    return None
 
 
 def exit_code_from_exception(exc: BaseException, default: int = 1) -> int:
@@ -711,8 +658,6 @@ def write_failure_record(
         "agent_model": agent_model,
         "skills_enabled": skills_enabled,
         "timestamp": error["timestamp"],
-        "codex_process_passed": False,
-        "codex_process_exit_code": exit_code,
         "agent_record_present": False,
         "agent_record_valid": False,
         "harness_failure": True,
@@ -728,8 +673,6 @@ def write_failure_record(
             "token_count": None,
             "agent_exit_code": exit_code,
             "agent_process_passed": 0,
-            "codex_exit_code": exit_code,
-            "codex_process_passed": 0,
             "harness_failure": 1,
             "agent_report_exit_code": 0,
             "agent_report_failed": 0,
@@ -790,6 +733,11 @@ def write_failure_record_from_env(exc: BaseException, exit_code: int, phase: str
     env = os.environ
     result_dir = Path(env.get("RESULT_DIR", "/workspace/results"))
     records_dir = Path(env.get("RECORDS_DIR", str(result_dir / "records")))
+    agent = env.get("BENCHMARK_AGENT", "codex")
+    try:
+        agent_model = load_agent_adapter(agent).model_from_env(env)
+    except Exception:
+        agent_model = env.get("BENCHMARK_AGENT_MODEL", "unspecified_default")
     return write_failure_record(
         result_dir=result_dir,
         records_dir=records_dir,
@@ -798,8 +746,8 @@ def write_failure_record_from_env(exc: BaseException, exit_code: int, phase: str
         error_type=type(exc).__name__,
         message=str(exc),
         phase=phase,
-        agent=env.get("BENCHMARK_AGENT", "codex"),
-        agent_model=env.get("CODEX_MODEL", "unspecified_default"),
+        agent=agent,
+        agent_model=agent_model,
     )
 
 
@@ -857,7 +805,6 @@ def run_agent_benchmark() -> int:
         config.run_root.mkdir(parents=True, exist_ok=True)
         phase = "runtime_metadata_probe"
         persist_container_runtime_metadata(config)
-        configure_process_record_environment(config)
 
         script_start = epoch_seconds()
         script_start_ns = epoch_nanoseconds()
