@@ -31,6 +31,7 @@ from .benchmark_insights import (
     final_record_path,
     human_readable_status,
     interpretation_section,
+    why_section,
     markdown_cell,
     metric_name_for_runs,
     mode_dir_for_benchmark,
@@ -197,6 +198,9 @@ def markdown_report(summary: dict[str, Any], insight_runs: dict[str, dict[str, A
     lines.extend(["", "## Metrics", "", embedded_bar_chart(insight_runs), "", outcome_metrics_table(insight_runs)])
     lines.extend(["", "## Activity Insights", "", activity_insights_table(insight_runs, modes)])
     lines.extend(["", interpretation_section(insight_runs, modes)])
+    why = why_section(insight_runs, modes)
+    if why:
+        lines.extend(["", why])
     comparison = summary.get("comparison") or {}
     if comparison:
         lines.extend(["", "## Comparison", "", "| Metric | Delta |", "|---|---:|"])
