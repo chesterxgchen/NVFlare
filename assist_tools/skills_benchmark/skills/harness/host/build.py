@@ -19,7 +19,6 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import hashlib
-import json
 import os
 import shutil
 import subprocess
@@ -34,7 +33,7 @@ from ..agents.registry import DEFAULT_BENCHMARK_AGENT, load_agent_adapter
 from ..sdks.base import SdkAdapter, SdkSkillsSetup, SdkSource, SdkWheelBuild, SdkWheelVariant
 from ..sdks.config import ConfigurableSdkAdapter
 from ..sdks.registry import DEFAULT_BENCHMARK_SDK, load_sdk_adapter
-from .common import SCRIPT_DIR, emit
+from .common import SCRIPT_DIR, emit, write_json
 
 REPO_ROOT = SCRIPT_DIR.parents[1]
 DEFAULT_UV_IMAGE = "ghcr.io/astral-sh/uv:0.11.19"
@@ -351,8 +350,7 @@ def write_wheel_metadata(
         "source_type": prepared.source_type,
         "variant": variant.name,
     }
-    metadata = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-    (out_dir / "sdk_wheel_metadata.json").write_text(metadata, encoding="utf-8")
+    write_json(out_dir / "sdk_wheel_metadata.json", payload)
 
 
 def copy_harness(src: Path, dst: Path) -> None:

@@ -14,6 +14,7 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def test_docker_build_args_reject_embedded_equals():
@@ -91,6 +92,37 @@ def test_build_copytree_calls_dereference_symlinks(tmp_path, monkeypatch):
     assert [(source, target) for source, target, _kwargs in calls] == [("package", "package"), ("package", "package")]
     assert all(kwargs["symlinks"] is False for _source, _target, kwargs in calls)
     assert all(callable(kwargs["ignore"]) for _source, _target, kwargs in calls)
+
+
+def test_write_wheel_metadata_uses_atomic_json_helper(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness.host import build
+
+    wheel = tmp_path / "example-1.0.0-py3-none-any.whl"
+    wheel.write_text("wheel\n", encoding="utf-8")
+    calls = []
+
+    def fake_write_json(path, payload):
+        calls.append((Path(path), payload))
+
+    monkeypatch.setattr(build, "write_json", fake_write_json)
+
+    build.write_wheel_metadata(
+        sdk=SimpleNamespace(
+            build_env_name="EXAMPLE_BUILD",
+            import_name="example",
+            metadata=lambda: {"name": "example"},
+            name="example",
+            package_name="example",
+        ),
+        variant=SimpleNamespace(build_env_value="1", name="skills"),
+        wheel_build=SimpleNamespace(build_type="uv_wheel"),
+        prepared=build.PreparedSdkWheel(wheel=wheel, source_type="wheel", source_path=tmp_path),
+        out_dir=tmp_path / "out",
+    )
+
+    assert calls[0][0] == tmp_path / "out" / "sdk_wheel_metadata.json"
+    assert calls[0][1]["filename"] == wheel.name
+    assert calls[0][1]["sdk_name"] == "example"
 
 
 def test_latest_sdk_wheel_skips_stat_failures(tmp_path, monkeypatch):
@@ -431,6 +463,42 @@ def test_container_sdk_skills_setup_copy_mode_installs_staged_folder(tmp_path, m
     assert install["mechanism"] == "copy"
     assert install["file_count"] == 1
     assert listing["installed"] == ["README.md"]
+
+
+def test_container_sdk_skills_setup_write_json_uses_atomic_helper(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness.container import sdk_skills_setup
+
+    calls = []
+
+    def fake_write_json_atomic(path, payload):
+        calls.append((Path(path), payload))
+
+    monkeypatch.setattr(sdk_skills_setup, "write_json_atomic", fake_write_json_atomic)
+
+    sdk_skills_setup.write_json(tmp_path / "metadata.json", {"status": "ok"})
+
+    assert calls == [(tmp_path / "metadata.json", {"status": "ok"})]
+
+
+def test_container_sdk_skills_setup_copy_mode_dereferences_symlinks(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness.container import sdk_skills_setup
+
+    staged = tmp_path / "sdk_skills"
+    staged.mkdir()
+    home = tmp_path / "agent-home"
+    calls = []
+
+    def fake_copytree(source, target, **kwargs):
+        calls.append((source, target, kwargs))
+
+    monkeypatch.setattr(sdk_skills_setup, "SDK_SKILLS_SOURCE", staged)
+    monkeypatch.setattr(sdk_skills_setup.shutil, "copytree", fake_copytree)
+    monkeypatch.setenv("BENCHMARK_AGENT_HOME", str(home))
+
+    result = sdk_skills_setup.copy_skills_folder()
+
+    assert result["status"] == "success"
+    assert calls == [(staged, home / "skills", {"dirs_exist_ok": True, "symlinks": False})]
 
 
 def test_container_sdk_skills_setup_visible_files_skips_symlinks(tmp_path):

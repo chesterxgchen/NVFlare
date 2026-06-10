@@ -16,18 +16,18 @@
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
 from pathlib import Path
 
+from ..common import write_json as write_json_atomic
+
 SDK_SKILLS_SOURCE = Path("/tmp/sdk_skills")
 
 
 def write_json(path: Path, payload: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_json_atomic(path, payload)
 
 
 def env(name: str, default: str = "") -> str:
@@ -70,7 +70,7 @@ def copy_skills_folder() -> dict:
     if not SDK_SKILLS_SOURCE.is_dir():
         raise SystemExit(f"Staged SDK skills folder is missing: {SDK_SKILLS_SOURCE}")
     target.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(SDK_SKILLS_SOURCE, target, dirs_exist_ok=True)
+    shutil.copytree(SDK_SKILLS_SOURCE, target, dirs_exist_ok=True, symlinks=False)
     files = visible_files(target)
     return {
         "status": "success",
