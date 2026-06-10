@@ -1197,7 +1197,7 @@ def activity_insights_table(runs: dict[str, dict[str, Any]], modes: list[str]) -
     rows = [
         ("File reads (`cat`/`sed`/Read tool)", "shell_cat_or_sed", "Direct file-read behavior; includes shell cat/sed and Read tool calls."),
         ("`find` commands", "shell_find", "Filesystem discovery proxy."),
-        ("`rg` commands", "shell_rg", "Search use proxy."),
+        ("`rg`/`grep` search commands", "shell_search", "Search use proxy; covers rg and grep."),
         ("Simulation references", "simulation", "Shows validation effort against generated jobs."),
         ("Python compile checks", "py_compile", "Shows syntax validation effort."),
         ("Skill calls / skill references", "skill_references", "Only skills-enabled runs should usually show these; includes Skill tool calls."),
@@ -1379,26 +1379,50 @@ def interpretation_section(runs: dict[str, dict[str, Any]], modes: list[str]) ->
             faster_mode = left if left_time <= right_time else right
             slower_mode = right if left_time <= right_time else left
             faster = runs[faster_mode].get("label") or faster_mode
-            slower = runs[slower_mode].get("label") or slower_mode
             time_delta = abs((right_time or 0) - (left_time or 0))
             lines.append(f"Runtime winner by wall-clock seconds: {faster} ({fmt_number(min(left_time, right_time))}s vs {fmt_number(max(left_time, right_time))}s, delta {fmt_number(time_delta)}s).")
-            if time_delta > 0:
-                analysis = _slower_run_analysis(runs[slower_mode], runs[faster_mode])
-                lines.append(f"Why {slower} is slower: {analysis}")
         if left_tokens is not None and right_tokens is not None:
             cheaper_mode = left if left_tokens <= right_tokens else right
-            costlier_mode = right if left_tokens <= right_tokens else left
             cheaper = runs[cheaper_mode].get("label") or cheaper_mode
-            costlier = runs[costlier_mode].get("label") or costlier_mode
             token_delta = abs((right_tokens or 0) - (left_tokens or 0))
             lines.append(f"Token-use winner: {cheaper} ({fmt_short(min(left_tokens, right_tokens))} vs {fmt_short(max(left_tokens, right_tokens))}, delta {fmt_short(token_delta)}).")
-            if token_delta > 0:
-                analysis = _higher_token_analysis(runs[costlier_mode], runs[cheaper_mode])
-                lines.append(f"Why {costlier} uses more tokens: {analysis}")
     lines.append(
         "Read cost winners only after checking the quality gates; a cheaper run that does not report the requested FL result is not a successful benchmark winner."
     )
     return "\n".join(lines)
+
+
+def why_section(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
+    if len(modes) != 2:
+        return ""
+    left, right = modes
+    left_time = as_number(run_summary(runs[left]).get("elapsed_seconds"))
+    right_time = as_number(run_summary(runs[right]).get("elapsed_seconds"))
+    left_tokens = as_number(run_summary(runs[left]).get("token_count"))
+    right_tokens = as_number(run_summary(runs[right]).get("token_count"))
+    lines = ["## Why", ""]
+    has_content = False
+    if left_time is not None and right_time is not None:
+        time_delta = abs((right_time or 0) - (left_time or 0))
+        if time_delta > 0:
+            slower_mode = right if left_time <= right_time else left
+            faster_mode = left if left_time <= right_time else right
+            slower = runs[slower_mode].get("label") or slower_mode
+            analysis = _slower_run_analysis(runs[slower_mode], runs[faster_mode])
+            lines.append(f"**Why {slower} is slower:** {analysis}")
+            lines.append("")
+            has_content = True
+    if left_tokens is not None and right_tokens is not None:
+        token_delta = abs((right_tokens or 0) - (left_tokens or 0))
+        if token_delta > 0:
+            costlier_mode = right if left_tokens <= right_tokens else left
+            cheaper_mode = left if left_tokens <= right_tokens else right
+            costlier = runs[costlier_mode].get("label") or costlier_mode
+            analysis = _higher_token_analysis(runs[costlier_mode], runs[cheaper_mode])
+            lines.append(f"**Why {costlier} uses more tokens:** {analysis}")
+            lines.append("")
+            has_content = True
+    return "\n".join(lines) if has_content else ""
 
 
 def mixed_metric_note(runs: dict[str, dict[str, Any]]) -> str:
@@ -1737,6 +1761,8 @@ def benchmark_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
             runtime_table(runs, modes),
             "",
             interpretation_section(runs, modes),
+            "",
+            why_section(runs, modes),
             "",
             "## Artifacts",
             "",

@@ -269,7 +269,7 @@ ACTIVITY_HINTS = {
     "python_job_py": ["python job.py", "python3 job.py"],
     "simulation": ["simulator", "simulate", "--workspace-root"],
     "shell_find": ["find "],
-    "shell_rg": ["rg "],
+    "shell_search": ["rg ", "grep "],
     "shell_cat_or_sed": ["cat ", "sed ", "nl -ba"],
 }
 
