@@ -5,6 +5,7 @@
 #   and markers; source.type=wheels requires source.wheels.skills/baseline.
 # - build: how skills/baseline wheels are prepared. build.type is required:
 #   uv_wheel builds with "uv build"; provided_wheels stages source.wheels.
+# - docker: build-time SDK verification and import/version checks.
 # - skills.setup: how SDK skills are installed in the skills image. type is
 #   required: command runs install_command; copy stages source_path; none skips.
 #
@@ -16,6 +17,7 @@
 # Optional defaults:
 # - build.variants.<name>.label defaults to the variant name.
 # - build.env_name/build_env_value are only needed by SDKs with build toggles.
+# - docker.version_command may be omitted when no CLI version check is needed.
 # - skills.setup.install_output defaults to skills_build_install.json.
 # - skills.setup.list_output defaults to skills_list.json.
 # - skills.setup.expected_source defaults to local_sdk_wheel.

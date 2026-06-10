@@ -147,6 +147,25 @@ def test_benchmark_reports_read_canonical_record_layout(tmp_path):
     assert "Metrics (AUROC)" in (tmp_path / "metrics_report.md").read_text(encoding="utf-8")
 
 
+def test_mode_dir_for_benchmark_does_not_guess_ambiguous_canonical_layout(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import mode_dir_for_benchmark
+
+    for repeat in ("01", "02"):
+        (
+            tmp_path
+            / "records"
+            / "agent=codex"
+            / "model=default"
+            / "workflow=default"
+            / "job=ames"
+            / f"repeat={repeat}"
+            / f"mode={NO_SKILLS_MODE}"
+        ).mkdir(parents=True)
+
+    assert mode_dir_for_benchmark(tmp_path, NO_SKILLS_MODE) == tmp_path / NO_SKILLS_MODE
+
+
 def test_numeric_comparison_rejects_bool_values():
     from assist_tools.skills_benchmark.skills.harness.reports.metrics_report import numeric_comparison
 
@@ -156,6 +175,21 @@ def test_numeric_comparison_rejects_bool_values():
     ]
 
     assert numeric_comparison(rows) == {}
+
+
+def test_numeric_comparison_uses_mode_names_not_row_order():
+    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.reports.metrics_report import numeric_comparison
+
+    rows = [
+        {"mode": WITH_SKILLS_MODE, "summary": {"elapsed_seconds": 13, "token_count": 150}},
+        {"mode": NO_SKILLS_MODE, "summary": {"elapsed_seconds": 10, "token_count": 100}},
+    ]
+
+    assert numeric_comparison(rows) == {
+        "elapsed_seconds_with_skills_minus_without_skills": 3,
+        "token_count_with_skills_minus_without_skills": 50,
+    }
 
 
 def test_structure_tree_falls_back_to_final_workspace_when_changed_python_is_empty():
@@ -1012,14 +1046,22 @@ def test_report_generators_write_two_mode_outputs(tmp_path, monkeypatch):
         (mode_dir / "agent_activity.json").write_text(json.dumps({"command_count": 3}) + "\n", encoding="utf-8")
         (mode_dir / "agent_usage.json").write_text(json.dumps({"total_tokens": 100}) + "\n", encoding="utf-8")
 
-    original_collect_benchmark_runs = metrics_report.collect_benchmark_runs
-    collect_calls = {"count": 0}
+    original_load_json = metrics_report.load_json
+    common_file_reads = {
+        "run_summary.json": 0,
+        "record": 0,
+        "agent_activity.json": 0,
+        "agent_usage.json": 0,
+    }
 
-    def counted_collect_benchmark_runs(root):
-        collect_calls["count"] += 1
-        return original_collect_benchmark_runs(root)
+    def counted_load_json(path, default=None):
+        if path.name in common_file_reads:
+            common_file_reads[path.name] += 1
+        elif path.name.endswith("_record.json") or path.name == "benchmark_record.json":
+            common_file_reads["record"] += 1
+        return original_load_json(path, default)
 
-    monkeypatch.setattr(metrics_report, "collect_benchmark_runs", counted_collect_benchmark_runs)
+    monkeypatch.setattr(metrics_report, "load_json", counted_load_json)
     metrics_report.write_reports(tmp_path, "Synthetic Metrics")
     monkeypatch.setattr(sys, "argv", ["benchmark_insights", str(tmp_path)])
     insights_main()
@@ -1034,4 +1076,9 @@ def test_report_generators_write_two_mode_outputs(tmp_path, monkeypatch):
     assert "Benchmark Metrics Comparison" not in insights_markdown
     assert "with_skills_eval" not in insights_markdown
     assert "Evaluator" not in insights_markdown
-    assert collect_calls["count"] == 1
+    assert common_file_reads == {
+        "run_summary.json": 2,
+        "record": 2,
+        "agent_activity.json": 2,
+        "agent_usage.json": 2,
+    }

@@ -131,7 +131,7 @@ def mode_dir_for_benchmark(root: Path, mode: str) -> Path:
     records_root = root / "records"
     if records_root.exists():
         matches = sorted(records_root.glob(f"**/mode={mode}"))
-        if matches:
+        if len(matches) == 1:
             return matches[0]
     return legacy
 

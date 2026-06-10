@@ -241,6 +241,21 @@ def _run_v1_lints_with_records(
         findings=findings,
         skipped_checks=[],
     )
+    root_error_codes = {"skills-root-missing", "skills-root-not-directory"}
+    if any(finding.global_finding and finding.code in root_error_codes for finding in findings):
+        summary = _summary_from_lint_findings(context.findings, len(records))
+        status = "failed" if summary["error_count"] else "ok"
+        return {
+            "schema_version": "1",
+            "status": status,
+            "passed": status == "ok",
+            "skills_root": str(root),
+            "docs_root": str(resolved_docs_root) if resolved_docs_root is not None else None,
+            "checks": list(selected),
+            "skipped_checks": context.skipped_checks,
+            "summary": summary,
+            "findings": [finding.as_dict() for finding in context.findings],
+        }, records
 
     lint_functions = {
         "skill-frontmatter-lint": _lint_frontmatter,
@@ -592,14 +607,19 @@ def _lint_catalog_category(context: LintContext) -> None:
         _skip(context, "skill-catalog-category-lint", "docs root is not available")
         return
 
-    product = _parse_product_catalog(docs_root / "agent_integration.md")
+    catalog_path = docs_root / "agent_integration.md"
+    if not catalog_path.is_file():
+        _skip(context, "skill-catalog-category-lint", "product skill catalog is not available")
+        return
+
+    product = _parse_product_catalog(catalog_path)
     conversion = _parse_conversion_table(docs_root / "agent_skill_authoring.md")
     if not product:
         context.findings.append(
             _finding(
                 "skill-catalog-category-lint",
                 FINDING_ERROR,
-                docs_root / "agent_integration.md",
+                catalog_path,
                 "product skill catalog could not be parsed",
                 "Keep the catalog markdown table headed by Category, Skill, Tier, and Purpose.",
                 code="skill-catalog-unparseable",

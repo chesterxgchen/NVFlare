@@ -22,18 +22,21 @@ from pathlib import Path
 from typing import Any
 
 from ..common import flatten_numbers, load_json, write_json
-from ..modes import BENCHMARK_RUNS
+from ..modes import BENCHMARK_RUNS, NO_SKILLS_MODE, WITH_SKILLS_MODE
 from .benchmark_insights import (
-    collect_benchmark_runs,
+    MAX_AGENT_EVENTS_TEXT_BYTES,
     embedded_bar_chart,
+    filter_mode_console,
     final_record_path,
     human_readable_status,
     markdown_cell,
     metric_name_for_runs,
     mode_dir_for_benchmark,
     outcome_metrics_table,
+    read_text,
     run_analysis,
     status_summary,
+    validation_metric_from_record,
 )
 
 
@@ -76,18 +79,49 @@ def collect_runs(root: Path) -> list[dict[str, Any]]:
 
 
 def runs_by_mode_for_insights(root: Path, rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    collected = collect_benchmark_runs(root)
-    for row in rows:
-        run = collected.get(row["mode"])
-        if isinstance(run, dict):
-            run["label"] = row["label"]
-    return collected
+    console_text = read_text(root / "console_output.log")
+    rows_by_mode = {row["mode"]: row for row in rows if isinstance(row, dict) and isinstance(row.get("mode"), str)}
+    runs: dict[str, dict[str, Any]] = {}
+    for spec in BENCHMARK_RUNS:
+        mode = spec.mode
+        row = rows_by_mode.get(mode) or {}
+        mode_dir = mode_dir_for_benchmark(root, mode)
+        available = bool(row.get("available")) if "available" in row else mode_dir.exists()
+        summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
+        record = row.get("record") if isinstance(row.get("record"), dict) else {}
+        usage = row.get("usage") if isinstance(row.get("usage"), dict) else {}
+        activity = row.get("activity") if isinstance(row.get("activity"), dict) else {}
+        runtime_image = row.get("runtime_image") if isinstance(row.get("runtime_image"), dict) else {}
+        mode_console_text = read_text(root / f"{mode}.console.log") or filter_mode_console(console_text, mode)
+        runs[mode] = {
+            "available": available,
+            "mode": mode,
+            "label": row.get("label") or spec.label,
+            "skills": "with skills" if spec.skills_enabled else "without skills",
+            "run": summary,
+            "record": record,
+            "container_exit": load_json(mode_dir / "container_exit_code.json", {}) if available else {},
+            "usage": usage,
+            "activity": activity,
+            "workspace_delta": load_json(mode_dir / "workspace_delta_manifest.json", {}) if available else {},
+            "runtime_image": runtime_image,
+            "agent_last_message": read_text(mode_dir / "agent_last_message.txt") if available else "",
+            "agent_stderr": read_text(mode_dir / "agent_stderr.txt") if available else "",
+            "agent_events_text": (
+                read_text(mode_dir / "agent_events.jsonl", max_bytes=MAX_AGENT_EVENTS_TEXT_BYTES) if available else ""
+            ),
+            "console_text": mode_console_text,
+            "validation_metric": validation_metric_from_record(record),
+        }
+    return runs
 
 
 def numeric_comparison(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    if len(rows) != 2:
+    rows_by_mode = {row.get("mode"): row for row in rows if isinstance(row, dict)}
+    without = rows_by_mode.get(NO_SKILLS_MODE)
+    with_skills = rows_by_mode.get(WITH_SKILLS_MODE)
+    if without is None or with_skills is None:
         return {}
-    without, with_skills = rows
     result: dict[str, Any] = {}
     for key in ("elapsed_seconds", "token_count"):
         left = without["summary"].get(key)

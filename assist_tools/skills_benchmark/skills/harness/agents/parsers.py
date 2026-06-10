@@ -23,10 +23,24 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from ..events import parse_timestamp, parse_usage_and_activity_data
-
 MAX_ACTIVITY_COMMANDS = 200
 CLAUDE_SHELL_TOOL_NAMES = {"bash"}
+
+
+def parse_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    text = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def parse_usage_and_activity_data(events_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    from ..events import parse_usage_and_activity_data as runtime_parse_usage_and_activity_data
+
+    return runtime_parse_usage_and_activity_data(events_path)
 
 
 def event_timestamp() -> str:
