@@ -487,14 +487,31 @@ def _resolve_target_override(target_dir: Path | str) -> Path:
     if any(part == ".." for part in target.parts):
         raise ValueError(f"agent skill target must not contain parent directory traversal: {target}")
     logical = Path(os.path.abspath(os.path.normpath(str(target))))
-    resolved = target.resolve(strict=False)
-    if resolved != logical:
-        symlink = _first_symlink_component(target) or logical
+    symlink = _first_disallowed_target_symlink_component(logical)
+    if symlink is not None:
         raise ValueError(f"agent skill target must not contain symlink components: {symlink}")
-    return resolved
+    return target.resolve(strict=False)
 
 
-def _first_symlink_component(path: Path) -> Optional[Path]:
+def _target_system_symlink_aliases() -> tuple[Path, ...]:
+    aliases = {Path("/tmp")}
+    for value in (os.environ.get("TMPDIR"), tempfile.gettempdir()):
+        if value:
+            aliases.add(Path(os.path.abspath(os.path.normpath(value))))
+    return tuple(sorted(aliases, key=lambda item: str(item)))
+
+
+def _is_allowed_system_target_symlink(path: Path) -> bool:
+    for alias in _target_system_symlink_aliases():
+        try:
+            alias.relative_to(path)
+            return True
+        except ValueError:
+            pass
+    return False
+
+
+def _first_disallowed_target_symlink_component(path: Path) -> Optional[Path]:
     absolute = path if path.is_absolute() else Path.cwd() / path
     current = Path(absolute.anchor)
     parts = absolute.parts[1:]
@@ -503,6 +520,8 @@ def _first_symlink_component(path: Path) -> Optional[Path]:
             continue
         current = current / part
         if current.is_symlink():
+            if _is_allowed_system_target_symlink(current):
+                continue
             return current
     return None
 

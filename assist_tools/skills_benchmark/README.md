@@ -1,4 +1,4 @@
-# NVFLARE Agent Benchmark Harness
+# Agent Skills Benchmark Harness
 
 This harness runs agent CLIs in Docker and compares the same unstructured
 NVFLARE job-conversion task with and without packaged NVFLARE agent skills.
@@ -51,7 +51,7 @@ Install or configure these on the host:
 
 - Docker.
 - Python 3.
-- `uv`, unless using existing local NVFLARE wheels.
+- `uv`, unless the SDK profile provides existing wheel files.
 - Codex authentication through `~/.codex/auth.json` and
   `~/.codex/config.toml`, or `OPENAI_API_KEY`.
 
@@ -81,59 +81,143 @@ cd assist_tools/skills_benchmark
 
 The build creates:
 
-- `nvflare-agent-benchmark:codex-baseline`
-- `nvflare-agent-benchmark:codex-skills`
+- `agent-skills-benchmark:codex-baseline`
+- `agent-skills-benchmark:codex-skills`
 
-Select another supported agent at build time:
+Both images install the selected benchmark SDK from the SDK profile. The
+default profile is `nvflare-profile`; the default agent profile is `codex`.
+The baseline image uses the SDK profile's baseline wheel variant; the skills
+image uses the skills wheel variant and runs the profile-declared skills
+setup mode.
+
+Select another supported agent profile:
 
 ```bash
-BENCHMARK_AGENT=claude ./bin/build.sh
+./bin/build.sh --agent-profile claude
 ```
 
-Both images install NVFLARE from local wheels built from the checkout. The
-baseline image builds with packaged agent skills disabled. The skills image
-builds with packaged agent skills enabled.
-
-If the checkout is not auto-detected:
+Use a custom profile file:
 
 ```bash
-NVFLARE_REPO=/path/to/NVFlare ./bin/build.sh
+./bin/build.sh \
+  --sdk-profile /path/to/sdk-profile.yaml \
+  --agent-profile /path/to/agent-profile.yaml
 ```
 
-Useful build overrides:
+For a repo-backed SDK build, set the SDK profile source:
 
-```bash
-BUILD_NVFLARE_WHEEL=false ./bin/build.sh
-ALLOW_EXISTING_WHEEL_FALLBACK=true ./bin/build.sh
-DOCKER_BUILD_NO_CACHE=true ./bin/build.sh
-CODEX_CLI_VERSION=0.137.0 ./bin/build.sh
-CLAUDE_CLI_VERSION=latest ./bin/build.sh
-NODE_IMAGE=node:22.16.0-bookworm-slim ./bin/build.sh
-UV_IMAGE=ghcr.io/astral-sh/uv:0.11.19 ./bin/build.sh
+```yaml
+source:
+  type: repo
+  path: /path/to/sdk-checkout
+  markers:
+    - pyproject.toml
+build:
+  type: uv_wheel
 ```
 
-Build only one image when iterating:
+For wheel-provided SDK images, set `source.type: wheels` and
+`build.type: provided_wheels`. In this mode `build.sh` stages the listed wheels
+and does not need the SDK repo or `uv`:
+
+```yaml
+source:
+  type: wheels
+  wheels:
+    skills: /path/to/sdk-with-skills.whl
+    baseline: /path/to/sdk-baseline.whl
+build:
+  type: provided_wheels
+```
+
+SDK skills setup is explicit in the same profile. Use `command` when the SDK
+has a CLI installer:
+
+```yaml
+skills:
+  setup:
+    type: command
+    install_command: sdk-cli skills install --agent "${BENCHMARK_DOCKER_AGENT}" --target "${BENCHMARK_AGENT_HOME}/skills"
+    list_command: sdk-cli skills list --agent "${BENCHMARK_DOCKER_AGENT}" --target "${BENCHMARK_AGENT_HOME}/skills"
+```
+
+Use `copy` when the SDK provides a skills folder directly. `build.sh` stages
+that folder into the Docker build context, and the image copies it into the
+selected agent profile home under `skills/`:
+
+```yaml
+skills:
+  setup:
+    type: copy
+    source_path: /path/to/sdk/agent-skills
+    expected_source: profile_skills_folder
+```
+
+Agent CLI versions and image names live in the agent profile:
+
+```yaml
+images:
+  skills: agent-skills-benchmark:{agent}-skills
+  baseline: agent-skills-benchmark:{agent}-baseline
+  report: agent-skills-benchmark:{agent}-skills
+
+build:
+  args:
+    BENCHMARK_DOCKER_AGENT: codex
+    BENCHMARK_AGENT_HOME: /workspace/.codex
+    CODEX_CLI_VERSION: 0.137.0
+```
+
+Useful build flags:
 
 ```bash
-BUILD_BASELINE_IMAGE=false ./bin/build.sh
-BUILD_SKILLS_IMAGE=false ./bin/build.sh
+./bin/build.sh --no-cache
+./bin/build.sh --skip-baseline-image
+./bin/build.sh --skip-skills-image
+./bin/build.sh --node-image node:22.16.0-bookworm-slim
+./bin/build.sh --uv-image ghcr.io/astral-sh/uv:0.11.19
 ```
 
 Verify the images exist:
 
 ```bash
-docker image ls 'nvflare-agent-benchmark'
+docker image ls 'agent-skills-benchmark'
 ```
 
-Verify NVFLARE and packaged skills in the skills image:
+Verify the default NVFlare SDK and packaged skills in the skills image:
 
 ```bash
-docker run --rm nvflare-agent-benchmark:codex-skills \
+docker run --rm agent-skills-benchmark:codex-skills \
   /bin/bash -lc 'nvflare --version; nvflare --format json agent skills list --agent codex'
 ```
 
 The images do not install job-specific training dependencies. Installing
 requirements from the job folder is part of the measured agent behavior.
+
+## Add Another SDK
+
+Add one SDK profile file:
+
+```text
+assist_tools/skills_benchmark/skills/harness/sdks/<sdk-profile>.yaml
+```
+
+The YAML declares the SDK package/import names, source, skills and baseline
+wheel variants, and `skills.setup`. `build.type: uv_wheel` builds wheels from a
+repo source. `build.type: provided_wheels` stages the exact wheel paths from a
+wheels source and skips SDK building. `skills.setup.type` must be `command`,
+`copy`, or `none`.
+Then build with:
+
+```bash
+./bin/build.sh --sdk-profile <sdk-profile>
+```
+
+Run the benchmark tests after adding the plugin:
+
+```bash
+python -m pytest tests/unit_test/skills_benchmark
+```
 
 ## Prompt Inputs
 
@@ -419,25 +503,12 @@ When a case fails, look for:
 | `MOUNT_HOST_CODEX_AUTH` | Mount host Codex auth/config files. Defaults to `true`. |
 | `HOST_CLAUDE_HOME` | Host Claude config directory. Defaults to `~/.claude`. |
 | `MOUNT_HOST_CLAUDE_AUTH` | Mount host Claude auth/config files. Defaults to `true`. |
-| `NVFLARE_REPO` | Checkout used for local wheel builds. |
-| `IMAGE_NAME` | Override skills runtime image. |
-| `BASELINE_IMAGE_NAME` | Override baseline runtime image. |
-| `REPORT_IMAGE_NAME` | Override report image. Defaults to the skills image. |
 | `PROGRESS_INTERVAL_SECONDS` | Agent progress heartbeat interval. Defaults to `60`. |
 | `MODE` | Single-run mode: `with_skills` or `without_skills`. |
 | `JOB_INPUT_DIR` | Job folder fallback when no CLI path is provided. |
 | `TRAINING_CODE` | Compatibility alias for `JOB_INPUT_DIR`. |
 | `RESULT_ROOT` | Exact pair output directory fallback when `--output-dir` is not provided. |
 | `RESULT_DIR` | Exact single-run output directory fallback when `--output-dir` is not provided. |
-| `BUILD_NVFLARE_WHEEL` | Build local wheels during `build.sh`. Defaults to `true`. |
-| `ALLOW_EXISTING_WHEEL_FALLBACK` | Use existing local matching wheels if build fails. Defaults to `false`. |
-| `BUILD_SKILLS_IMAGE` | Build the skills image. Defaults to `true`. |
-| `BUILD_BASELINE_IMAGE` | Build the baseline image. Defaults to `true`. |
-| `DOCKER_BUILD_NO_CACHE` | Pass `--no-cache` to `docker build`. Defaults to `false`. |
-| `CODEX_CLI_VERSION` | Codex CLI npm package version installed in the image. |
-| `CLAUDE_CLI_VERSION` | Claude Code npm package version installed in the image. |
-| `NODE_IMAGE` | Base Node image build arg. |
-| `UV_IMAGE` | Base uv image build arg. |
 
 ## Troubleshooting
 
@@ -451,7 +522,7 @@ Run:
 
 ```bash
 ./bin/build.sh
-docker image ls 'nvflare-agent-benchmark'
+docker image ls 'agent-skills-benchmark'
 ```
 
 Prompt missing:
@@ -510,17 +581,18 @@ agent to install job dependencies from available requirements files when needed.
 
 ## Harness Modules
 
-- `bin/build.sh`: thin wrapper around `nvidia.skills.harness.host.build`.
-- `bin/run.sh`: thin wrapper around `nvidia.skills.harness.host.runner`.
-- `docker/Dockerfile`: runtime image with Codex and NVFLARE wheels.
-- `nvidia/skills/harness/scenarios.py`: scenario validation, run-plan expansion, repeat
+- `bin/build.sh`: thin wrapper around `assist_tools.skills_benchmark.skills.harness.host.build`.
+- `bin/run.sh`: thin wrapper around `assist_tools.skills_benchmark.skills.harness.host.runner`.
+- `docker/Dockerfile`: runtime image with the selected agent CLI and SDK wheel.
+- `skills/harness/scenarios.py`: scenario validation, run-plan expansion, repeat
   aggregation, and scenario reports.
-- `nvidia/skills/harness/host/`: Docker orchestration, path handling, image selection, and
+- `skills/harness/host/`: Docker orchestration, path handling, image selection, and
   scenario execution.
-- `nvidia/skills/harness/container/`: in-container agent execution and artifact capture.
-- `harness/artifacts.py`, `events.py`, `records.py`, `timing.py`, and
+- `skills/harness/container/`: in-container agent execution and artifact capture.
+- `skills/harness/sdks/`: pluggable SDK build/install adapters.
+- `skills/harness/artifacts.py`, `events.py`, `records.py`, `timing.py`, and
   `quality_signals.py`: normalized measurement semantics.
-- `harness/reports/`: scenario report helpers and structure rendering.
+- `skills/harness/reports/`: scenario report helpers and structure rendering.
 
 ## Current Limits
 

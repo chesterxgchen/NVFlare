@@ -42,7 +42,7 @@ def base_scenario(tmp_path: Path) -> dict:
 
 
 def test_mode_ablation_expands_repeats_modes_and_target_record_paths(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     compilation = compile_scenario(raw, base_dir=tmp_path)
@@ -54,7 +54,7 @@ def test_mode_ablation_expands_repeats_modes_and_target_record_paths(tmp_path):
     assert scenario["name"] == "ci smoke scaffold"
     assert scenario["prompt"]["sha256"] == expected_prompt_hash
     assert scenario["reproducibility"]["prompt_hash"] == expected_prompt_hash
-    assert scenario["reproducibility"]["image_targets"]["codex"]["skills"] == "nvflare-agent-benchmark:codex-skills"
+    assert scenario["reproducibility"]["image_targets"]["codex"]["skills"] == "agent-skills-benchmark:codex-skills"
     assert scenario["reproducibility"]["agent_versions"]["codex"]["CODEX_CLI_VERSION"]
     assert scenario["reproducibility"]["wheel_variants"] == [
         "local_wheel_with_preinstalled_skills",
@@ -78,7 +78,7 @@ def test_mode_ablation_expands_repeats_modes_and_target_record_paths(tmp_path):
 
 
 def test_compile_scenario_file_writes_scenario_and_run_plan(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import compile_scenario_file
+    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario_file
 
     raw = base_scenario(tmp_path)
     scenario_path = tmp_path / "scenario.yaml"
@@ -95,24 +95,20 @@ def test_compile_scenario_file_writes_scenario_and_run_plan(tmp_path):
     assert run_plan_json["run_count"] == 4
 
 
-def test_scenario_reproducibility_records_image_env_overrides(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import compile_scenario
-
-    monkeypatch.setenv("IMAGE_NAME", "custom-skills")
-    monkeypatch.setenv("BASELINE_IMAGE_NAME", "custom-baseline")
-    monkeypatch.setenv("REPORT_IMAGE_NAME", "custom-report")
+def test_scenario_reproducibility_records_profile_image_targets(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
 
     scenario = compile_scenario(base_scenario(tmp_path), base_dir=tmp_path).scenario
 
     assert scenario["reproducibility"]["image_targets"]["codex"] == {
-        "skills": "custom-skills",
-        "baseline": "custom-baseline",
-        "report": "custom-report",
+        "skills": "agent-skills-benchmark:codex-skills",
+        "baseline": "agent-skills-benchmark:codex-baseline",
+        "report": "agent-skills-benchmark:codex-skills",
     }
 
 
 def test_prompt_path_must_stay_inside_scenario_directory(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     base_dir = tmp_path / "scenario"
     base_dir.mkdir()
@@ -130,7 +126,7 @@ def test_prompt_path_must_stay_inside_scenario_directory(tmp_path):
 
 
 def test_prompt_template_renders_only_explicit_variables(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     template = tmp_path / "prompt_template.txt"
@@ -168,7 +164,7 @@ def test_prompt_template_renders_only_explicit_variables(tmp_path):
 
 
 def test_prompt_path_with_variables_is_rendered_as_template(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     prompt = tmp_path / "prompt.txt"
@@ -184,9 +180,9 @@ def test_prompt_path_with_variables_is_rendered_as_template(tmp_path):
 
 
 def test_execute_run_plan_materializes_template_prompt_under_result_root(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.common import write_json
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host import runner
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.common import write_json
+    from assist_tools.skills_benchmark.skills.harness.host import runner
+    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["comparison"] = {"type": "one", "mode": "with_skills"}
@@ -239,7 +235,7 @@ def test_execute_run_plan_materializes_template_prompt_under_result_root(tmp_pat
 
 
 def test_prompt_template_rejects_missing_unsafe_and_non_scalar_variables(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     template = tmp_path / "prompt_template.txt"
     template.write_text("Convert {job.name} with {metric}.\n", encoding="utf-8")
@@ -275,8 +271,34 @@ def test_prompt_template_rejects_missing_unsafe_and_non_scalar_variables(tmp_pat
         raise AssertionError("prompt templates should reject non-scalar variables")
 
 
+def test_prompt_template_literal_brace_errors_explain_escaping(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+
+    raw = base_scenario(tmp_path)
+    template = tmp_path / "prompt_template.txt"
+    template.write_text('Return JSON like {"metric": "AUROC"}.\n', encoding="utf-8")
+    raw["prompt"] = {"template": template.name}
+
+    try:
+        compile_scenario(raw, base_dir=tmp_path)
+    except ScenarioValidationError as exc:
+        message = str(exc)
+        assert "literal braces" in message
+        assert "{{" in message
+        assert "}}" in message
+    else:
+        raise AssertionError("prompt templates should explain literal brace escaping")
+
+    template.write_text('Return JSON like {{"metric": "AUROC"}} for {job_name}.\n', encoding="utf-8")
+    raw["prompt"] = {"template": template.name, "variables": {"job_name": "ames"}}
+
+    compilation = compile_scenario(raw, base_dir=tmp_path)
+
+    assert compilation.scenario["prompt"]["_rendered_text"] == 'Return JSON like {"metric": "AUROC"} for ames.\n'
+
+
 def test_model_comparison_expands_comparison_models(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["agents"] = [{"name": "codex"}]
@@ -299,7 +321,7 @@ def test_model_comparison_expands_comparison_models(tmp_path):
 
 
 def test_model_comparison_dedupes_overlapping_top_level_models(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["agents"] = [{"name": "codex", "models": ["gpt-a", "gpt-b"]}]
@@ -318,13 +340,13 @@ def test_model_comparison_dedupes_overlapping_top_level_models(tmp_path):
 
 
 def test_model_slug_fallback_avoids_unhandled_missing_key():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import model_slug_for
+    from assist_tools.skills_benchmark.skills.harness.scenarios import model_slug_for
 
     assert model_slug_for({"models": {}}, "codex", "gpt-test") == "gpt_test"
 
 
 def test_model_slug_key_is_visible_and_agent_scoped():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import model_slug_for, model_slug_key
+    from assist_tools.skills_benchmark.skills.harness.scenarios import model_slug_for, model_slug_key
 
     codex_key = model_slug_key("codex", "shared/model")
     claude_key = model_slug_key("claude", "shared/model")
@@ -336,7 +358,7 @@ def test_model_slug_key_is_visible_and_agent_scoped():
 
 
 def test_missing_job_scale_is_rejected(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["jobs"][0].pop("scale")
@@ -350,7 +372,7 @@ def test_missing_job_scale_is_rejected(tmp_path):
 
 
 def test_fail_fast_requires_boolean(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["fail_fast"] = "false"
@@ -364,7 +386,7 @@ def test_fail_fast_requires_boolean(tmp_path):
 
 
 def test_quality_gate_override_is_recorded_and_applied(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import compile_scenario, quality_gate_failures
+    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario, quality_gate_failures
 
     raw = base_scenario(tmp_path)
     raw["quality_gate"] = {"required_validation_metric_status": ["present"]}
@@ -388,7 +410,7 @@ def test_quality_gate_override_is_recorded_and_applied(tmp_path):
 
 
 def test_quality_gate_rejects_unknown_fields(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["quality_gate"] = {"unknown_check": True}
@@ -402,7 +424,7 @@ def test_quality_gate_rejects_unknown_fields(tmp_path):
 
 
 def test_resource_policy_non_integer_values_are_validation_errors(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["resource_policy"] = {"small": {"agent_timeout_seconds": "fast"}}
@@ -430,7 +452,7 @@ def test_resource_policy_non_integer_values_are_validation_errors(tmp_path):
 
 
 def test_resource_policy_rejects_bool_and_non_positive_values(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["resource_policy"] = {"small": {"agent_timeout_seconds": False}}
@@ -458,7 +480,7 @@ def test_resource_policy_rejects_bool_and_non_positive_values(tmp_path):
 
 
 def test_prompt_file_size_guard_rejects_large_prompt(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import (
+    from assist_tools.skills_benchmark.skills.harness.scenarios import (
         MAX_PROMPT_BYTES,
         ScenarioValidationError,
         compile_scenario,
@@ -478,7 +500,7 @@ def test_prompt_file_size_guard_rejects_large_prompt(tmp_path):
 
 
 def test_prompt_file_size_guard_uses_read_bytes_length(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import (
+    from assist_tools.skills_benchmark.skills.harness.scenarios import (
         MAX_PROMPT_BYTES,
         ScenarioValidationError,
         compile_scenario,
@@ -504,10 +526,7 @@ def test_prompt_file_size_guard_uses_read_bytes_length(tmp_path, monkeypatch):
 
 
 def test_validate_path_budget_uses_longest_path_not_lexicographic_max():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import (
-        ScenarioValidationError,
-        validate_path_budget,
-    )
+    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, validate_path_budget
 
     short_late_path = "zz"
     long_early_path = "a" * 80
@@ -527,10 +546,7 @@ def test_validate_path_budget_uses_longest_path_not_lexicographic_max():
 
 
 def test_validate_path_budget_can_use_actual_result_root():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import (
-        ScenarioValidationError,
-        validate_path_budget,
-    )
+    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, validate_path_budget
 
     result_root = Path("r" * 40)
     artifact_path = "short.txt"
@@ -550,7 +566,7 @@ def test_validate_path_budget_can_use_actual_result_root():
 
 
 def test_quality_gate_failures_reports_missing_final_exit_as_not_recorded():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import quality_gate_failures
+    from assist_tools.skills_benchmark.skills.harness.scenarios import quality_gate_failures
 
     failures = quality_gate_failures(
         {"agent_process_passed": True, "source_input_immutable_policy": {"status": "pass"}},
@@ -563,7 +579,7 @@ def test_quality_gate_failures_reports_missing_final_exit_as_not_recorded():
 
 
 def test_quality_gate_failures_derives_missing_required_validation_metric():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import quality_gate_failures
+    from assist_tools.skills_benchmark.skills.harness.scenarios import quality_gate_failures
 
     record = {
         "agent_process_passed": True,
@@ -584,7 +600,7 @@ def test_quality_gate_failures_derives_missing_required_validation_metric():
 
 
 def test_quality_gate_failures_derives_critical_quality_check_failure():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import quality_gate_failures
+    from assist_tools.skills_benchmark.skills.harness.scenarios import quality_gate_failures
 
     record = {
         "agent_process_passed": True,
@@ -599,7 +615,7 @@ def test_quality_gate_failures_derives_critical_quality_check_failure():
 
 
 def test_known_pending_agent_is_rejected(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["agents"] = [{"name": "hermes"}]
@@ -614,7 +630,7 @@ def test_known_pending_agent_is_rejected(tmp_path):
 
 
 def test_claude_scenario_requires_explicit_model(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["agents"] = [{"name": "claude"}]
@@ -630,7 +646,7 @@ def test_claude_scenario_requires_explicit_model(tmp_path):
 
 
 def test_agent_comparison_requires_unambiguous_model_selection(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["agents"] = [{"name": "codex", "models": ["gpt-a", "gpt-b"]}]
@@ -646,7 +662,7 @@ def test_agent_comparison_requires_unambiguous_model_selection(tmp_path):
 
 
 def test_agent_comparison_models_by_agent_resolves_single_model(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["agents"] = [{"name": "codex", "models": ["gpt-a", "gpt-b"]}]
@@ -666,9 +682,9 @@ def test_agent_comparison_models_by_agent_resolves_single_model(tmp_path):
 
 
 def test_execute_run_plan_writes_canonical_records_repeat_and_scenario_summary(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.common import write_json
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host import runner
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.common import write_json
+    from assist_tools.skills_benchmark.skills.harness.host import runner
+    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["repeat_count"] = 1
@@ -700,7 +716,7 @@ def test_execute_run_plan_writes_canonical_records_repeat_and_scenario_summary(t
             config.result_dir / "runtime_image.json",
             {
                 "runtime_image": "runtime-image",
-                "nvflare_image_kind": "skills" if config.use_preinstalled_skills else "baseline",
+                "sdk_image_kind": "skills" if config.use_preinstalled_skills else "baseline",
             },
         )
         write_json(config.result_dir / "agent_activity.json", {"command_count": 2})
@@ -751,8 +767,8 @@ def test_execute_run_plan_writes_canonical_records_repeat_and_scenario_summary(t
 
 
 def test_execute_run_plan_fails_preflight_before_missing_docker_image(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host import runner
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.host import runner
+    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["comparison"] = {"type": "one", "mode": "with_skills"}
@@ -780,7 +796,7 @@ def test_execute_run_plan_fails_preflight_before_missing_docker_image(tmp_path, 
     assert called["run_case"] is False
     preflight = json.loads((result_root / "docker_image_preflight.json").read_text(encoding="utf-8"))
     assert preflight["status"] == "fail"
-    assert preflight["missing_images"] == ["nvflare-agent-benchmark:codex-skills"]
+    assert preflight["missing_images"] == ["agent-skills-benchmark:codex-skills"]
     summary = json.loads((result_root / "scenario_summary.json").read_text(encoding="utf-8"))
     assert summary["status"] == "failed"
     assert summary["harness_failure"]["failure_category"] == "harness_preflight_failure"
@@ -788,8 +804,8 @@ def test_execute_run_plan_fails_preflight_before_missing_docker_image(tmp_path, 
 
 
 def test_scenario_summary_failed_when_all_runs_fail_quality_gate(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.common import write_json
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import compile_scenario, write_scenario_summaries
+    from assist_tools.skills_benchmark.skills.harness.common import write_json
+    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario, write_scenario_summaries
 
     raw = base_scenario(tmp_path)
     raw["repeat_count"] = 1
@@ -811,8 +827,8 @@ def test_scenario_summary_failed_when_all_runs_fail_quality_gate(tmp_path):
 
 
 def test_scenario_summary_degraded_when_fail_fast_leaves_runs_unexecuted(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.common import write_json
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import compile_scenario, write_scenario_summaries
+    from assist_tools.skills_benchmark.skills.harness.common import write_json
+    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario, write_scenario_summaries
 
     raw = base_scenario(tmp_path)
     raw["repeat_count"] = 1
@@ -834,8 +850,8 @@ def test_scenario_summary_degraded_when_fail_fast_leaves_runs_unexecuted(tmp_pat
 
 
 def test_scenario_summary_failed_when_report_generation_fails(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness import scenarios
-    from assist_tools.skills_benchmark.nvidia.skills.harness.common import write_json
+    from assist_tools.skills_benchmark.skills.harness import scenarios
+    from assist_tools.skills_benchmark.skills.harness.common import write_json
 
     raw = base_scenario(tmp_path)
     raw["comparison"] = {"type": "one", "mode": "with_skills"}
@@ -868,8 +884,8 @@ def test_scenario_summary_failed_when_report_generation_fails(tmp_path, monkeypa
 
 
 def test_scenario_summary_marks_report_generation_pending_before_render(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness import scenarios
-    from assist_tools.skills_benchmark.nvidia.skills.harness.common import write_json
+    from assist_tools.skills_benchmark.skills.harness import scenarios
+    from assist_tools.skills_benchmark.skills.harness.common import write_json
 
     raw = base_scenario(tmp_path)
     raw["comparison"] = {"type": "one", "mode": "with_skills"}
@@ -903,7 +919,7 @@ def test_scenario_summary_marks_report_generation_pending_before_render(tmp_path
 
 
 def test_comparison_group_summary_ignores_non_numeric_token_count():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import comparison_group_summary
+    from assist_tools.skills_benchmark.skills.harness.scenarios import comparison_group_summary
 
     group = {
         "comparison_group_id": "group_001",
@@ -933,10 +949,10 @@ def test_comparison_group_summary_ignores_non_numeric_token_count():
 
 
 def test_replay_result_root_regenerates_agent_parser_artifacts(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
-    from assist_tools.skills_benchmark.nvidia.skills.harness.common import write_json
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host.runner import replay_result_root
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import compile_scenario
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.common import write_json
+    from assist_tools.skills_benchmark.skills.harness.host.runner import replay_result_root
+    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["agents"] = [{"name": "claude", "models": ["claude-test"]}]

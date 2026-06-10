@@ -15,6 +15,7 @@
 import json
 import os
 import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -50,6 +51,14 @@ def test_resolve_target_override_skips_agent_home_resolution(tmp_path):
     target = resolve_agent_target_dir("codex", target_dir=tmp_path / "custom-target", env={"CODEX_HOME": "ignored"})
 
     assert target == tmp_path / "custom-target"
+
+
+def test_resolve_target_override_accepts_system_temp_alias(tmp_path):
+    target = Path(tempfile.gettempdir()) / f"nvflare-skill-target-{tmp_path.name}"
+
+    resolved = resolve_agent_target_dir("codex", target_dir=target, env={"CODEX_HOME": "ignored"})
+
+    assert resolved == target.resolve(strict=False)
 
 
 @pytest.mark.skipif(not hasattr(os, "symlink"), reason="symlinks are not supported on this platform")

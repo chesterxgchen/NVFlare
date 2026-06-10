@@ -6,3 +6,5 @@ harness/**/__pycache__/
 harness/**/*.pyc
 !dist/
 !dist/**
+!sdk_skills/
+!sdk_skills/**

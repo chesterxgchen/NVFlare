@@ -15,12 +15,13 @@
 import hashlib
 import json
 import os
+import stat
 import sys
 from pathlib import Path
 
 
 def test_codex_event_normalizer_returns_agent_event():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     event = load_agent_adapter("codex").normalize_event('{"type": "turn", "message": "ok"}')
 
@@ -30,7 +31,7 @@ def test_codex_event_normalizer_returns_agent_event():
 
 
 def test_known_pending_agent_event_normalizer_fails_fast():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     try:
         load_agent_adapter("hermes")
@@ -42,13 +43,12 @@ def test_known_pending_agent_event_normalizer_fails_fast():
 
 
 def test_codex_agent_config_loads_parser_and_classifier_ids():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.config import AgentConfig
+    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     config_path = (
         Path(__file__).resolve().parents[3]
         / "assist_tools"
         / "skills_benchmark"
-        / "nvidia"
         / "skills"
         / "harness"
         / "agents"
@@ -66,13 +66,12 @@ def test_codex_agent_config_loads_parser_and_classifier_ids():
 
 
 def test_claude_agent_config_uses_config_dir_and_valid_final_message_source():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.config import AgentConfig
+    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     config_path = (
         Path(__file__).resolve().parents[3]
         / "assist_tools"
         / "skills_benchmark"
-        / "nvidia"
         / "skills"
         / "harness"
         / "agents"
@@ -92,7 +91,7 @@ def test_claude_agent_config_uses_config_dir_and_valid_final_message_source():
 
 
 def test_adapter_template_rejects_positional_placeholders():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.config import render_string
+    from assist_tools.skills_benchmark.skills.harness.agents.config import render_string
 
     try:
         render_string("agent {}", {"agent": "codex"})
@@ -103,7 +102,7 @@ def test_adapter_template_rejects_positional_placeholders():
 
 
 def test_adapter_template_rejects_attribute_and_index_access():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.config import render_string
+    from assist_tools.skills_benchmark.skills.harness.agents.config import render_string
 
     for template in ("{workspace_dir.parent}", "{argv[0]}"):
         try:
@@ -115,8 +114,8 @@ def test_adapter_template_rejects_attribute_and_index_access():
 
 
 def test_claude_adapter_launch_spec_uses_stream_json_without_prompt_text(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.base import AgentLaunchContext
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchContext
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     result_dir = tmp_path / "results"
     workspace_dir = tmp_path / "workspace"
@@ -148,7 +147,7 @@ def test_claude_adapter_launch_spec_uses_stream_json_without_prompt_text(tmp_pat
 
 
 def test_claude_adapter_requires_explicit_model():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("claude")
 
@@ -162,7 +161,7 @@ def test_claude_adapter_requires_explicit_model():
 
 
 def test_runtime_env_uses_agent_run_config_model_explicit_field():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     class Config:
         agent_model = "claude-test"
@@ -174,7 +173,7 @@ def test_runtime_env_uses_agent_run_config_model_explicit_field():
 
 
 def test_runtime_env_rejects_unexplicit_model_for_required_agent():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     class Config:
         agent_model = "unspecified_default"
@@ -190,8 +189,8 @@ def test_runtime_env_rejects_unexplicit_model_for_required_agent():
 
 
 def test_claude_launch_spec_rejects_unexplicit_model_context(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.base import AgentLaunchContext
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchContext
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     result_dir = tmp_path / "results"
     workspace_dir = tmp_path / "workspace"
@@ -220,7 +219,7 @@ def test_claude_launch_spec_rejects_unexplicit_model_context(tmp_path):
 
 
 def test_claude_stream_parser_normalizes_event_usage_and_activity(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("claude")
     events_path = tmp_path / "agent_events.jsonl"
@@ -286,8 +285,34 @@ def test_claude_stream_parser_normalizes_event_usage_and_activity(tmp_path):
     assert "command" not in assistant_event
 
 
+def test_generic_event_usage_and_activity_share_cached_parse(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from assist_tools.skills_benchmark.skills.harness.agents import parsers
+
+    events_path = tmp_path / "agent_events.jsonl"
+    events_path.write_text("{}\n", encoding="utf-8")
+    calls = {"count": 0}
+
+    def counted_parse(path):
+        calls["count"] += 1
+        assert path == events_path
+        return {"total_tokens": 7}, {"event_count": 1}
+
+    parsers.parse_cached_usage_and_activity.cache_clear()
+    monkeypatch.setattr(parsers, "parse_usage_and_activity_data", counted_parse)
+
+    usage = parsers.parse_usage_from_events(events_path, SimpleNamespace(parser="codex_cumulative_usage"))
+    activity = parsers.parse_activity_from_events(events_path, SimpleNamespace(parser="codex_jsonl_activity"))
+
+    assert usage == {"total_tokens": 7, "parser_id": "codex_cumulative_usage"}
+    assert activity == {"event_count": 1, "parser_id": "codex_jsonl_activity"}
+    assert calls["count"] == 1
+    parsers.parse_cached_usage_and_activity.cache_clear()
+
+
 def test_claude_stream_usage_falls_back_when_result_usage_is_zero(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("claude")
     events_path = tmp_path / "agent_events.jsonl"
@@ -326,7 +351,7 @@ def test_claude_stream_usage_falls_back_when_result_usage_is_zero(tmp_path):
 
 
 def test_claude_stream_usage_accumulates_multiple_result_events(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("claude")
     events_path = tmp_path / "agent_events.jsonl"
@@ -376,7 +401,7 @@ def test_claude_stream_usage_accumulates_multiple_result_events(tmp_path):
 
 
 def test_claude_stream_parser_ignores_non_shell_tool_command_fields(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("claude")
     raw_event = {
@@ -394,7 +419,7 @@ def test_claude_stream_parser_ignores_non_shell_tool_command_fields(tmp_path):
 
 
 def test_claude_stream_parser_uses_exact_shell_tool_allowlist():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("claude")
     raw_event = {
@@ -414,8 +439,8 @@ def test_claude_stream_parser_uses_exact_shell_tool_allowlist():
 def test_claude_final_message_source_materializes_structured_result_event(tmp_path):
     from collections import deque
 
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import (
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
         AgentRunConfig,
         materialize_final_message,
     )
@@ -432,7 +457,7 @@ def test_claude_final_message_source_materializes_structured_result_event(tmp_pa
         run_root=tmp_path / "run",
         prompt_source=tmp_path / "prompt.txt",
         progress_interval_seconds=0,
-        nvflare_image_kind="test-skills",
+        sdk_image_kind="test-skills",
         agent="claude",
         agent_model="claude-test",
         agent_home=tmp_path / ".claude",
@@ -461,8 +486,8 @@ def test_claude_final_message_source_materializes_structured_result_event(tmp_pa
 def test_structured_final_message_not_read_when_stdout_reader_active(tmp_path):
     from collections import deque
 
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import (
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
         AgentRunConfig,
         materialize_final_message,
     )
@@ -479,7 +504,7 @@ def test_structured_final_message_not_read_when_stdout_reader_active(tmp_path):
         run_root=tmp_path / "run",
         prompt_source=tmp_path / "prompt.txt",
         progress_interval_seconds=0,
-        nvflare_image_kind="test-skills",
+        sdk_image_kind="test-skills",
         agent="claude",
         agent_model="claude-test",
         agent_home=tmp_path / ".claude",
@@ -505,8 +530,8 @@ def test_structured_final_message_not_read_when_stdout_reader_active(tmp_path):
 
 
 def test_launch_spec_metadata_records_sandbox_flags_and_bypass_reason(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.base import AgentLaunchSpec, SkillExposureResult
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import (
+    from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchSpec, SkillExposureResult
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
         AgentRunConfig,
         write_launch_spec_metadata,
     )
@@ -522,7 +547,7 @@ def test_launch_spec_metadata_records_sandbox_flags_and_bypass_reason(tmp_path):
         run_root=tmp_path / "run",
         prompt_source=tmp_path / "prompt.txt",
         progress_interval_seconds=0,
-        nvflare_image_kind="test-skills",
+        sdk_image_kind="test-skills",
         agent="claude",
         agent_model="claude-test",
         agent_home=tmp_path / ".claude",
@@ -564,7 +589,7 @@ def test_launch_spec_metadata_records_sandbox_flags_and_bypass_reason(tmp_path):
 
 
 def test_claude_exit_classifier_detects_auth_and_model_failures(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("claude")
     stderr = tmp_path / "stderr.txt"
@@ -583,7 +608,7 @@ def test_claude_exit_classifier_detects_auth_and_model_failures(tmp_path):
 
 
 def test_codex_exit_classifier_prioritizes_missing_cli_over_stderr_text(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("codex")
     stderr = tmp_path / "stderr.txt"
@@ -595,13 +620,12 @@ def test_codex_exit_classifier_prioritizes_missing_cli_over_stderr_text(tmp_path
 
 
 def test_agent_config_rejects_unknown_parser_id(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.config import AgentConfig
+    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     source_path = (
         Path(__file__).resolve().parents[3]
         / "assist_tools"
         / "skills_benchmark"
-        / "nvidia"
         / "skills"
         / "harness"
         / "agents"
@@ -619,13 +643,12 @@ def test_agent_config_rejects_unknown_parser_id(tmp_path):
 
 
 def test_agent_config_rejects_unknown_exit_classifier(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.config import AgentConfig
+    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     source_path = (
         Path(__file__).resolve().parents[3]
         / "assist_tools"
         / "skills_benchmark"
-        / "nvidia"
         / "skills"
         / "harness"
         / "agents"
@@ -643,13 +666,12 @@ def test_agent_config_rejects_unknown_exit_classifier(tmp_path):
 
 
 def test_agent_config_rejects_unknown_final_message_source_type(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.config import AgentConfig
+    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     source_path = (
         Path(__file__).resolve().parents[3]
         / "assist_tools"
         / "skills_benchmark"
-        / "nvidia"
         / "skills"
         / "harness"
         / "agents"
@@ -667,13 +689,12 @@ def test_agent_config_rejects_unknown_final_message_source_type(tmp_path):
 
 
 def test_agent_config_rejects_unknown_final_message_parser(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.config import AgentConfig
+    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     source_path = (
         Path(__file__).resolve().parents[3]
         / "assist_tools"
         / "skills_benchmark"
-        / "nvidia"
         / "skills"
         / "harness"
         / "agents"
@@ -695,13 +716,12 @@ def test_agent_config_rejects_unknown_final_message_parser(tmp_path):
 
 
 def test_agent_config_rejects_model_argv_without_explicit_position(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.config import AgentConfig
+    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     source_path = (
         Path(__file__).resolve().parents[3]
         / "assist_tools"
         / "skills_benchmark"
-        / "nvidia"
         / "skills"
         / "harness"
         / "agents"
@@ -722,13 +742,12 @@ def test_agent_config_rejects_model_argv_without_explicit_position(tmp_path):
 
 
 def test_agent_config_rejects_append_model_argv_for_stdin_prompt(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.config import AgentConfig
+    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     source_path = (
         Path(__file__).resolve().parents[3]
         / "assist_tools"
         / "skills_benchmark"
-        / "nvidia"
         / "skills"
         / "harness"
         / "agents"
@@ -751,13 +770,12 @@ def test_agent_config_rejects_append_model_argv_for_stdin_prompt(tmp_path):
 
 
 def test_agent_config_rejects_unknown_when_condition(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.config import AgentConfig
+    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     source_path = (
         Path(__file__).resolve().parents[3]
         / "assist_tools"
         / "skills_benchmark"
-        / "nvidia"
         / "skills"
         / "harness"
         / "agents"
@@ -781,7 +799,7 @@ def test_agent_config_rejects_unknown_when_condition(tmp_path):
 
 
 def test_agent_adapter_cache_can_be_cleared_for_tests():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import (
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import (
         clear_agent_adapter_cache,
         load_agent_adapter,
     )
@@ -793,32 +811,28 @@ def test_agent_adapter_cache_can_be_cleared_for_tests():
     assert first is not second
 
 
-def test_codex_adapter_build_args_use_default_and_env_override(monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
+def test_codex_adapter_build_args_come_from_profile():
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("codex")
-    monkeypatch.delenv("CODEX_CLI_VERSION", raising=False)
-    default_args = adapter.build_args_from_env({})
-    assert default_args["BENCHMARK_DOCKER_AGENT"] == "codex"
-    assert default_args["BENCHMARK_AGENT_HOME"] == "/workspace/.codex"
-    assert default_args["CODEX_CLI_VERSION"] == "0.137.0"
-    assert adapter.build_args_from_env({"CODEX_CLI_VERSION": "0.200.0"})["CODEX_CLI_VERSION"] == "0.200.0"
+    build_args = adapter.build_args()
+    assert build_args["BENCHMARK_DOCKER_AGENT"] == "codex"
+    assert build_args["BENCHMARK_AGENT_HOME"] == "/workspace/.codex"
+    assert build_args["CODEX_CLI_VERSION"] == "0.137.0"
 
 
 def test_claude_adapter_build_auth_and_skill_exposure_contract(tmp_path):
     from types import SimpleNamespace
 
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.base import SkillExposureContext
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.agents.base import SkillExposureContext
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("claude")
-    default_args = adapter.build_args_from_env({})
-    override_args = adapter.build_args_from_env({"CLAUDE_CLI_VERSION": "2.1.0"})
+    build_args = adapter.build_args()
 
-    assert default_args["BENCHMARK_DOCKER_AGENT"] == "claude"
-    assert default_args["BENCHMARK_AGENT_HOME"] == "/workspace/.claude"
-    assert default_args["CLAUDE_CLI_VERSION"] == "latest"
-    assert override_args["CLAUDE_CLI_VERSION"] == "2.1.0"
+    assert build_args["BENCHMARK_DOCKER_AGENT"] == "claude"
+    assert build_args["BENCHMARK_AGENT_HOME"] == "/workspace/.claude"
+    assert build_args["CLAUDE_CLI_VERSION"] == "latest"
     assert "ANTHROPIC_API_KEY" in adapter.passthrough_env_names()
 
     host_home = tmp_path / ".claude"
@@ -833,7 +847,7 @@ def test_claude_adapter_build_auth_and_skill_exposure_contract(tmp_path):
             container_home=tmp_path / ".claude-container",
             mode="with_skills",
             skills_enabled=True,
-            nvflare_image_kind="test-skills",
+            sdk_image_kind="test-skills",
         )
     )
     assert spec.mechanism_type == "launch_flag"
@@ -846,7 +860,7 @@ def test_adapter_auth_mounts_reject_path_components(tmp_path):
 
     import yaml
 
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.config import ConfigurableAgentAdapter
+    from assist_tools.skills_benchmark.skills.harness.agents.config import ConfigurableAgentAdapter
 
     config_path = tmp_path / "bad-agent.yaml"
     config_path.write_text(
@@ -884,7 +898,7 @@ def test_adapter_auth_mounts_reject_path_components(tmp_path):
 def test_agent_config_rejects_unknown_skill_exposure_mechanism(tmp_path):
     import yaml
 
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.config import AgentConfig
+    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     config_path = tmp_path / "bad-agent.yaml"
     config_path.write_text(
@@ -922,7 +936,7 @@ def test_agent_config_rejects_unknown_skill_exposure_mechanism(tmp_path):
 def test_agent_config_rejects_unsafe_legacy_artifact_prefix(tmp_path):
     import yaml
 
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.config import AgentConfig
+    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     config_path = tmp_path / "bad-agent.yaml"
     config_path.write_text(
@@ -958,7 +972,7 @@ def test_agent_config_rejects_unsafe_legacy_artifact_prefix(tmp_path):
 
 
 def test_docker_build_args_reject_embedded_equals():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host.build import render_agent_build_args
+    from assist_tools.skills_benchmark.skills.harness.host.build import render_agent_build_args
 
     try:
         render_agent_build_args({"AGENT_CLI_VERSION": "1.0=bad"})
@@ -976,7 +990,7 @@ def test_docker_build_args_reject_embedded_equals():
 
 
 def test_prepare_build_context_cleans_temp_dir_on_internal_failure(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host import build
+    from assist_tools.skills_benchmark.skills.harness.host import build
 
     monkeypatch.setenv("TMPDIR", str(tmp_path))
     monkeypatch.setattr(build, "copy_harness", lambda _src, _dst: (_ for _ in ()).throw(RuntimeError("copy failed")))
@@ -991,13 +1005,15 @@ def test_prepare_build_context_cleans_temp_dir_on_internal_failure(tmp_path, mon
     assert list(tmp_path.iterdir()) == []
 
 
-def test_latest_nvflare_wheel_skips_stat_failures(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host import build
+def test_latest_sdk_wheel_skips_stat_failures(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness.host import build
 
     stale = tmp_path / "nvflare-0.0.1-py3-none-any.whl"
     current = tmp_path / "nvflare-0.0.2-py3-none-any.whl"
+    baseline = tmp_path / "nvflare-0.0.3-no_skills-py3-none-any.whl"
     stale.write_text("stale\n", encoding="utf-8")
     current.write_text("current\n", encoding="utf-8")
+    baseline.write_text("baseline\n", encoding="utf-8")
     original_stat = type(stale).stat
 
     def flaky_stat(path):
@@ -1007,11 +1023,286 @@ def test_latest_nvflare_wheel_skips_stat_failures(tmp_path, monkeypatch):
 
     monkeypatch.setattr(type(stale), "stat", flaky_stat)
 
-    assert build.latest_nvflare_wheel("skills", tmp_path) == current
+    assert build.latest_sdk_wheel(tmp_path, ("nvflare-*.whl", "nvflare_nightly-*.whl"), ("*no_skills*.whl",)) == current
+
+
+def test_nvflare_sdk_adapter_loads_build_contract():
+    from assist_tools.skills_benchmark.skills.harness.sdks.registry import load_sdk_adapter, supported_sdk_names
+
+    sdk = load_sdk_adapter("nvflare-profile")
+    skills = sdk.wheel_variant("skills")
+    baseline = sdk.wheel_variant("baseline")
+    build_args = sdk.docker_build_args()
+    source = sdk.source(repo_root=Path(__file__).resolve().parents[3], home=Path.home())
+
+    assert sdk.name == "nvflare"
+    assert "nvflare-profile" in supported_sdk_names()
+    assert sdk.wheel_build().build_type == "uv_wheel"
+    assert source.source_type == "repo"
+    assert source.repo_markers == ("pyproject.toml", "nvflare/")
+    assert sdk.build_env_name == "NVFLARE_PACKAGE_AGENT_SKILLS"
+    assert skills.build_env_value == "1"
+    assert skills.wheel_exclude_globs == ("*no_skills*.whl",)
+    assert baseline.build_env_value == "0"
+    assert baseline.wheel_globs == ("*no_skills*.whl",)
+    assert build_args["SKILLS_INSTALL_COMMAND"].startswith("nvflare --format json agent skills install")
+
+
+def test_configurable_sdk_adapter_loads_non_nvflare_contract(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.sdks.config import ConfigurableSdkAdapter
+
+    config_path = tmp_path / "example_sdk.yaml"
+    config_path.write_text(
+        """
+name: example
+display_name: Example SDK
+package_name: example-sdk
+import_name: example_sdk
+source:
+  type: repo
+  path: "{repo_root}"
+  markers:
+    - pyproject.toml
+build:
+  type: uv_wheel
+  env_name: EXAMPLE_PACKAGE_SKILLS
+  variants:
+    skills:
+      label: skills
+      build_env_value: "with"
+      wheel_globs:
+        - example_sdk-*.whl
+    baseline:
+      label: baseline
+      build_env_value: "without"
+      wheel_globs:
+        - example_sdk_baseline-*.whl
+docker:
+  version_command: example-sdk --version
+skills:
+  setup:
+    type: command
+    install_command: example-sdk skills install --agent "${BENCHMARK_DOCKER_AGENT}" --target "${BENCHMARK_AGENT_HOME}/skills"
+    list_command: example-sdk skills list --agent "${BENCHMARK_DOCKER_AGENT}" --target "${BENCHMARK_AGENT_HOME}/skills"
+    install_output: skills_build_install.json
+    list_output: skills_list.json
+    expected_source: local_sdk_wheel
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    sdk = ConfigurableSdkAdapter(config_path)
+    skills = sdk.wheel_variant("skills")
+    baseline = sdk.wheel_variant("baseline")
+    build_args = sdk.docker_build_args()
+    source = sdk.source(repo_root=tmp_path, home=tmp_path)
+
+    assert sdk.name == "example"
+    assert sdk.package_name == "example-sdk"
+    assert sdk.import_name == "example_sdk"
+    assert sdk.wheel_build().build_type == "uv_wheel"
+    assert source.source_type == "repo"
+    assert source.repo_path == tmp_path
+    assert sdk.build_env_name == "EXAMPLE_PACKAGE_SKILLS"
+    assert skills.build_env_value == "with"
+    assert baseline.build_env_value == "without"
+    assert build_args["SDK_PACKAGE_NAME"] == "example-sdk"
+    assert build_args["SKILLS_SETUP_TYPE"] == "command"
+    assert build_args["SKILLS_INSTALL_OUTPUT"] == "skills_build_install.json"
+
+
+def test_configurable_sdk_adapter_loads_wheel_source_contract(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.sdks.config import ConfigurableSdkAdapter
+
+    skills_wheel = tmp_path / "example_sdk-1.0.0-py3-none-any.whl"
+    baseline_wheel = tmp_path / "example_sdk_baseline-1.0.0-py3-none-any.whl"
+    skills_wheel.write_bytes(b"skills wheel")
+    baseline_wheel.write_bytes(b"baseline wheel")
+    config_path = tmp_path / "example_sdk_wheels.yaml"
+    config_path.write_text(
+        f"""
+name: example
+display_name: Example SDK
+package_name: example-sdk
+import_name: example_sdk
+source:
+  type: wheels
+  wheels:
+    skills: {skills_wheel}
+    baseline: {baseline_wheel}
+build:
+  type: provided_wheels
+  variants:
+    skills:
+      label: skills
+      build_env_value: "with"
+      wheel_globs:
+        - example_sdk-*.whl
+    baseline:
+      label: baseline
+      build_env_value: "without"
+      wheel_globs:
+        - example_sdk_baseline-*.whl
+docker:
+  version_command: example-sdk --version
+skills:
+  setup:
+    type: command
+    install_command: example-sdk skills install --agent "${{BENCHMARK_DOCKER_AGENT}}" --target "${{BENCHMARK_AGENT_HOME}}/skills"
+    list_command: example-sdk skills list --agent "${{BENCHMARK_DOCKER_AGENT}}" --target "${{BENCHMARK_AGENT_HOME}}/skills"
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    sdk = ConfigurableSdkAdapter(config_path)
+    source = sdk.source(repo_root=tmp_path, home=tmp_path)
+
+    assert source.source_type == "wheels"
+    assert sdk.wheel_build().build_type == "provided_wheels"
+    assert source.wheel_paths == {"skills": skills_wheel, "baseline": baseline_wheel}
+
+
+def test_wheel_source_stages_configured_wheel_without_repo_build(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.host import build
+    from assist_tools.skills_benchmark.skills.harness.sdks.config import ConfigurableSdkAdapter
+
+    skills_wheel = tmp_path / "example_sdk-1.0.0-py3-none-any.whl"
+    baseline_wheel = tmp_path / "example_sdk_baseline-1.0.0-py3-none-any.whl"
+    skills_wheel.write_bytes(b"skills wheel")
+    baseline_wheel.write_bytes(b"baseline wheel")
+    config_path = tmp_path / "example_sdk_wheels.yaml"
+    config_path.write_text(
+        f"""
+name: example
+display_name: Example SDK
+package_name: example-sdk
+import_name: example_sdk
+source:
+  type: wheels
+  wheels:
+    skills: {skills_wheel}
+    baseline: {baseline_wheel}
+build:
+  type: provided_wheels
+  variants:
+    skills:
+      label: skills
+      build_env_value: "with"
+      wheel_globs:
+        - example_sdk-*.whl
+    baseline:
+      label: baseline
+      build_env_value: "without"
+      wheel_globs:
+        - example_sdk_baseline-*.whl
+docker:
+  version_command: example-sdk --version
+skills:
+  setup:
+    type: command
+    install_command: example-sdk skills install --agent "${{BENCHMARK_DOCKER_AGENT}}" --target "${{BENCHMARK_AGENT_HOME}}/skills"
+    list_command: example-sdk skills list --agent "${{BENCHMARK_DOCKER_AGENT}}" --target "${{BENCHMARK_AGENT_HOME}}/skills"
+""".lstrip(),
+        encoding="utf-8",
+    )
+    sdk = ConfigurableSdkAdapter(config_path)
+    source = build.resolve_sdk_source(sdk)
+
+    prepared = build.prepare_sdk_wheel(
+        source=source,
+        wheel_build=sdk.wheel_build(),
+        sdk=sdk,
+        variant=sdk.wheel_variant("skills"),
+        out_dir=tmp_path / "staged",
+    )
+
+    assert prepared.source_type == "wheels"
+    assert prepared.source_path == skills_wheel.resolve()
+    assert prepared.wheel.name == skills_wheel.name
+    assert prepared.wheel.read_bytes() == b"skills wheel"
+
+
+def test_copy_skills_setup_stages_profile_skills_folder(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.host import build
+    from assist_tools.skills_benchmark.skills.harness.sdks.config import ConfigurableSdkAdapter
+
+    skills_dir = tmp_path / "agent-skills"
+    skills_dir.mkdir()
+    (skills_dir / "README.md").write_text("example skill\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'example'\n", encoding="utf-8")
+    config_path = tmp_path / "example_sdk_copy_skills.yaml"
+    config_path.write_text(
+        f"""
+name: example
+display_name: Example SDK
+package_name: example-sdk
+import_name: example_sdk
+source:
+  type: repo
+  path: {tmp_path}
+  markers:
+    - pyproject.toml
+build:
+  type: uv_wheel
+  variants:
+    skills:
+      label: skills
+      build_env_value: "with"
+      wheel_globs:
+        - example_sdk-*.whl
+    baseline:
+      label: baseline
+      build_env_value: "without"
+      wheel_globs:
+        - example_sdk_baseline-*.whl
+docker:
+  version_command: example-sdk --version
+skills:
+  setup:
+    type: copy
+    source_path: {skills_dir}
+    expected_source: profile_skills_folder
+""".lstrip(),
+        encoding="utf-8",
+    )
+    sdk = ConfigurableSdkAdapter(config_path)
+    setup = build.resolve_sdk_skills_setup(sdk)
+    context = tmp_path / "context"
+    context.mkdir()
+
+    build.stage_sdk_skills_setup(context, setup)
+
+    assert setup.setup_type == "copy"
+    assert (context / "sdk_skills" / "README.md").read_text(encoding="utf-8") == "example skill\n"
+
+
+def test_container_sdk_skills_setup_copy_mode_installs_staged_folder(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness.container import sdk_skills_setup
+
+    staged = tmp_path / "sdk_skills"
+    staged.mkdir()
+    (staged / "README.md").write_text("example skill\n", encoding="utf-8")
+    home = tmp_path / "agent-home"
+    monkeypatch.setattr(sdk_skills_setup, "SDK_SKILLS_SOURCE", staged)
+    monkeypatch.setenv("BENCHMARK_AGENT_HOME", str(home))
+    monkeypatch.setenv("BENCHMARK_DOCKER_AGENT", "codex")
+    monkeypatch.setenv("SKILLS_SETUP_TYPE", "copy")
+    monkeypatch.setenv("SKILLS_INSTALL_OUTPUT", "install.json")
+    monkeypatch.setenv("SKILLS_LIST_OUTPUT", "list.json")
+    monkeypatch.delenv("SKILLS_LIST_COMMAND", raising=False)
+
+    assert sdk_skills_setup.main() == 0
+
+    install = json.loads((home / "install.json").read_text(encoding="utf-8"))
+    listing = json.loads((home / "list.json").read_text(encoding="utf-8"))
+    assert (home / "skills" / "README.md").read_text(encoding="utf-8") == "example skill\n"
+    assert install["mechanism"] == "copy"
+    assert install["file_count"] == 1
+    assert listing["installed"] == ["README.md"]
 
 
 def test_agent_config_rejects_prompt_text_placeholder(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.config import AgentConfig
+    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     config_path = tmp_path / "unsafe.yaml"
     config_path.write_text(
@@ -1037,7 +1328,7 @@ def test_agent_config_rejects_prompt_text_placeholder(tmp_path):
 
 
 def test_agent_config_rejects_file_arg_without_prompt_file_placeholder(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.config import AgentConfig
+    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     config_path = tmp_path / "missing_prompt_file.yaml"
     config_path.write_text(
@@ -1069,8 +1360,8 @@ def test_agent_config_rejects_file_arg_without_prompt_file_placeholder(tmp_path)
 
 
 def test_codex_adapter_launch_spec_uses_prompt_file_without_prompt_text(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.base import AgentLaunchContext
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchContext
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     result_dir = tmp_path / "results"
     workspace_dir = tmp_path / "workspace"
@@ -1106,7 +1397,7 @@ def test_codex_adapter_launch_spec_uses_prompt_file_without_prompt_text(tmp_path
 def test_codex_adapter_runtime_env_sets_generic_agent_model_and_home(tmp_path):
     from types import SimpleNamespace
 
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     agent_home = tmp_path / ".codex"
     env = load_agent_adapter("codex").runtime_env(
@@ -1123,7 +1414,7 @@ def test_codex_adapter_runtime_env_sets_generic_agent_model_and_home(tmp_path):
 
 
 def test_container_config_uses_generic_agent_model_and_home(monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import AgentRunConfig
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig
 
     monkeypatch.delenv("CODEX_MODEL", raising=False)
     monkeypatch.delenv("CODEX_HOME", raising=False)
@@ -1139,7 +1430,7 @@ def test_container_config_uses_generic_agent_model_and_home(monkeypatch):
 
 
 def test_container_config_requires_benchmark_agent(monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import AgentRunConfig
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig
 
     monkeypatch.delenv("BENCHMARK_AGENT", raising=False)
 
@@ -1152,7 +1443,7 @@ def test_container_config_requires_benchmark_agent(monkeypatch):
 
 
 def test_container_config_rejects_invalid_progress_interval(monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import AgentRunConfig
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig
 
     monkeypatch.setenv("BENCHMARK_AGENT", "codex")
     monkeypatch.setenv("PROGRESS_INTERVAL_SECONDS", "fast")
@@ -1166,8 +1457,8 @@ def test_container_config_rejects_invalid_progress_interval(monkeypatch):
 
 
 def test_agent_subprocess_env_hides_harness_controls_and_adapter_model_env(monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import agent_subprocess_env
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import agent_subprocess_env
 
     adapter = load_agent_adapter("codex")
     monkeypatch.setenv("MODE", "with_skills")
@@ -1190,8 +1481,26 @@ def test_agent_subprocess_env_hides_harness_controls_and_adapter_model_env(monke
     assert env["CODEX_HOME"] == "/workspace/.codex"
 
 
+def test_progress_writer_serializes_concurrent_file_writes(tmp_path):
+    import threading
+
+    from assist_tools.skills_benchmark.skills.harness.container.progress import ProgressWriter
+
+    writer = ProgressWriter("with_skills", 0, tmp_path / "progress.jsonl")
+    threads = [threading.Thread(target=writer.write, args=(f"phase-{index}", "running", index)) for index in range(20)]
+
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    rows = [json.loads(line) for line in (tmp_path / "progress.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 20
+    assert {row["phase"] for row in rows} == {f"phase-{index}" for index in range(20)}
+
+
 def test_launch_subprocess_argv_wraps_login_shell_command():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import launch_subprocess_argv
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import launch_subprocess_argv
 
     argv = launch_subprocess_argv(["agent", "run", "prompt with spaces"], login_shell=True)
 
@@ -1201,9 +1510,9 @@ def test_launch_subprocess_argv_wraps_login_shell_command():
 
 
 def test_run_agent_enforces_launch_timeout(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.base import AgentLaunchSpec, FinalMessageSource
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container import agent_run
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import (
+    from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchSpec, FinalMessageSource
+    from assist_tools.skills_benchmark.skills.harness.container import agent_run
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
         AGENT_TIMEOUT_EXIT_CODE,
         AgentRunConfig,
         ProgressWriter,
@@ -1248,7 +1557,7 @@ def test_run_agent_enforces_launch_timeout(tmp_path, monkeypatch):
         run_root=run_root,
         prompt_source=prompt,
         progress_interval_seconds=0,
-        nvflare_image_kind="test-skills",
+        sdk_image_kind="test-skills",
         agent="test",
         agent_model="test-model",
         agent_home=tmp_path / ".agent",
@@ -1266,9 +1575,9 @@ def test_run_agent_stops_stdout_reader_before_events_file_closes(tmp_path, monke
     import threading
     import time
 
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.base import AgentLaunchSpec, FinalMessageSource
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container import agent_run
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import (
+    from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchSpec, FinalMessageSource
+    from assist_tools.skills_benchmark.skills.harness.container import agent_run
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
         AgentRunConfig,
         ProgressWriter,
         run_agent,
@@ -1343,7 +1652,7 @@ def test_run_agent_stops_stdout_reader_before_events_file_closes(tmp_path, monke
         run_root=run_root,
         prompt_source=prompt,
         progress_interval_seconds=0,
-        nvflare_image_kind="test-skills",
+        sdk_image_kind="test-skills",
         agent="test",
         agent_model="test-model",
         agent_home=tmp_path / ".agent",
@@ -1366,9 +1675,9 @@ def test_run_agent_stops_stdout_reader_before_events_file_closes(tmp_path, monke
 def test_run_agent_closes_stdout_pipe_when_reader_is_blocked(tmp_path, monkeypatch):
     import threading
 
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.base import AgentLaunchSpec, FinalMessageSource
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container import agent_run
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import (
+    from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchSpec, FinalMessageSource
+    from assist_tools.skills_benchmark.skills.harness.container import agent_run
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
         AgentRunConfig,
         ProgressWriter,
         run_agent,
@@ -1434,7 +1743,7 @@ def test_run_agent_closes_stdout_pipe_when_reader_is_blocked(tmp_path, monkeypat
         run_root=run_root,
         prompt_source=prompt,
         progress_interval_seconds=0,
-        nvflare_image_kind="test-skills",
+        sdk_image_kind="test-skills",
         agent="test",
         agent_model="test-model",
         agent_home=tmp_path / ".agent",
@@ -1451,9 +1760,9 @@ def test_run_agent_closes_stdout_pipe_when_reader_is_blocked(tmp_path, monkeypat
 
 
 def test_run_agent_materializes_final_message_before_reader_error(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.base import AgentLaunchSpec, FinalMessageSource
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container import agent_run
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import (
+    from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchSpec, FinalMessageSource
+    from assist_tools.skills_benchmark.skills.harness.container import agent_run
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
         AgentRunConfig,
         ProgressWriter,
         run_agent,
@@ -1495,7 +1804,7 @@ def test_run_agent_materializes_final_message_before_reader_error(tmp_path, monk
         run_root=run_root,
         prompt_source=prompt,
         progress_interval_seconds=0,
-        nvflare_image_kind="test-skills",
+        sdk_image_kind="test-skills",
         agent="test",
         agent_model="test-model",
         agent_home=tmp_path / ".agent",
@@ -1516,8 +1825,8 @@ def test_run_agent_materializes_final_message_before_reader_error(tmp_path, monk
 def test_materialize_final_message_from_stdout_tail(tmp_path):
     from collections import deque
 
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.base import FinalMessageSource
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import (
+    from assist_tools.skills_benchmark.skills.harness.agents.base import FinalMessageSource
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
         AgentRunConfig,
         materialize_final_message,
     )
@@ -1537,7 +1846,7 @@ def test_materialize_final_message_from_stdout_tail(tmp_path):
         run_root=tmp_path / "run",
         prompt_source=tmp_path / "prompt.txt",
         progress_interval_seconds=0,
-        nvflare_image_kind="test-skills",
+        sdk_image_kind="test-skills",
         agent="test",
         agent_model="test-model",
         agent_home=tmp_path / ".agent",
@@ -1559,7 +1868,7 @@ def test_materialize_final_message_from_stdout_tail(tmp_path):
 
 
 def test_stdout_tail_line_is_bounded_by_bytes():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import (
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
         MAX_STDOUT_TAIL_LINE_BYTES,
         STDOUT_TAIL_TRUNCATED_MARKER,
         truncate_stdout_tail_line,
@@ -1575,7 +1884,7 @@ def test_stdout_tail_line_is_bounded_by_bytes():
 
 
 def test_collect_report_artifacts_skips_symlinks(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.artifacts import collect_report_artifacts
+    from assist_tools.skills_benchmark.skills.harness.artifacts import collect_report_artifacts
 
     root = tmp_path / "results"
     root.mkdir()
@@ -1592,7 +1901,7 @@ def test_collect_report_artifacts_skips_symlinks(tmp_path):
 def test_collect_report_artifacts_does_not_traverse_symlinked_directories(tmp_path):
     if not hasattr(os, "symlink"):
         return
-    from assist_tools.skills_benchmark.nvidia.skills.harness.artifacts import collect_report_artifacts
+    from assist_tools.skills_benchmark.skills.harness.artifacts import collect_report_artifacts
 
     root = tmp_path / "results"
     root.mkdir()
@@ -1610,10 +1919,7 @@ def test_collect_report_artifacts_does_not_traverse_symlinked_directories(tmp_pa
 def test_workspace_artifact_capture_does_not_traverse_symlinked_directories(tmp_path):
     if not hasattr(os, "symlink"):
         return
-    from assist_tools.skills_benchmark.nvidia.skills.harness.artifacts import (
-        capture_workspace_delta,
-        write_workspace_baseline,
-    )
+    from assist_tools.skills_benchmark.skills.harness.artifacts import capture_workspace_delta, write_workspace_baseline
 
     workspace = tmp_path / "workspace"
     outside = tmp_path / "outside"
@@ -1642,7 +1948,7 @@ def test_workspace_artifact_capture_does_not_traverse_symlinked_directories(tmp_
 
 
 def test_parse_usage_activity_scans_hints_from_raw_line_without_json_reserialize(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness import events
+    from assist_tools.skills_benchmark.skills.harness import events
 
     events_path = tmp_path / "events.jsonl"
     events_path.write_text(json.dumps({"type": "turn", "message": "read SKILL.md"}) + "\n", encoding="utf-8")
@@ -1655,7 +1961,7 @@ def test_parse_usage_activity_scans_hints_from_raw_line_without_json_reserialize
 
 
 def test_parse_usage_activity_caps_command_list(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness import events
+    from assist_tools.skills_benchmark.skills.harness import events
 
     events_path = tmp_path / "events.jsonl"
     with events_path.open("w", encoding="utf-8") as stream:
@@ -1671,10 +1977,7 @@ def test_parse_usage_activity_caps_command_list(tmp_path):
 
 
 def test_prepare_input_workspace_rejects_symlink_escaping_input(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import (
-        AgentRunConfig,
-        prepare_input_workspace,
-    )
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig, prepare_input_workspace
 
     job = tmp_path / "job"
     job.mkdir()
@@ -1692,7 +1995,7 @@ def test_prepare_input_workspace_rejects_symlink_escaping_input(tmp_path):
         run_root=tmp_path / "run",
         prompt_source=tmp_path / "prompt.txt",
         progress_interval_seconds=0,
-        nvflare_image_kind="test-skills",
+        sdk_image_kind="test-skills",
         agent="test",
         agent_model="test-model",
         agent_home=tmp_path / ".agent",
@@ -1710,7 +2013,7 @@ def test_prepare_input_workspace_rejects_symlink_escaping_input(tmp_path):
 def test_validate_input_symlinks_does_not_traverse_symlinked_directory_loop(tmp_path):
     if not hasattr(os, "symlink"):
         return
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import validate_input_symlinks
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import validate_input_symlinks
 
     job = tmp_path / "job"
     job.mkdir()
@@ -1720,7 +2023,7 @@ def test_validate_input_symlinks_does_not_traverse_symlinked_directory_loop(tmp_
 
 
 def test_prepare_prompt_hashes_copied_prompt_file(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import AgentRunConfig, prepare_prompt
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig, prepare_prompt
 
     result_dir = tmp_path / "results"
     result_dir.mkdir()
@@ -1735,7 +2038,7 @@ def test_prepare_prompt_hashes_copied_prompt_file(tmp_path):
         run_root=tmp_path / "run",
         prompt_source=prompt,
         progress_interval_seconds=0,
-        nvflare_image_kind="test-skills",
+        sdk_image_kind="test-skills",
         agent="test",
         agent_model="test-model",
         agent_home=tmp_path / ".agent",
@@ -1755,15 +2058,15 @@ def test_prepare_prompt_hashes_copied_prompt_file(tmp_path):
 
 
 def test_expand_home_path_uses_pathlib_expanduser():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host.common import expand_home_path
+    from assist_tools.skills_benchmark.skills.harness.host.common import expand_home_path
 
     assert expand_home_path("~/nvflare") == str(Path.home() / "nvflare")
     assert expand_home_path("/workspace/input") == "/workspace/input"
 
 
 def test_agent_availability_probe_records_missing_cli(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container import agent_run
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import (
+    from assist_tools.skills_benchmark.skills.harness.container import agent_run
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
         AgentRunConfig,
         run_agent_availability_probe,
     )
@@ -1789,7 +2092,7 @@ def test_agent_availability_probe_records_missing_cli(tmp_path, monkeypatch):
         run_root=tmp_path / "run",
         prompt_source=tmp_path / "prompt.txt",
         progress_interval_seconds=0,
-        nvflare_image_kind="test-skills",
+        sdk_image_kind="test-skills",
         agent="test",
         agent_model="test-model",
         agent_home=tmp_path / ".agent",
@@ -1810,7 +2113,7 @@ def test_agent_availability_probe_records_missing_cli(tmp_path, monkeypatch):
 
 
 def test_host_image_config_rejects_unsupported_agent(monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host.common import ImageConfig
+    from assist_tools.skills_benchmark.skills.harness.host.common import ImageConfig
 
     monkeypatch.setenv("BENCHMARK_AGENT", "hermes")
 
@@ -1824,8 +2127,8 @@ def test_host_image_config_rejects_unsupported_agent(monkeypatch):
 
 
 def test_host_docker_args_use_migrated_container_entrypoint(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host.common import (
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.host.common import (
         CONTAINER_PROMPT_PATH,
         CaseConfig,
         ImageConfig,
@@ -1848,9 +2151,9 @@ def test_host_docker_args_use_migrated_container_entrypoint(tmp_path):
         result_dir=result_dir,
         prompt_path=prompt_path,
         images=ImageConfig(
-            image_name="nvflare-agent-benchmark:codex-skills",
-            baseline_image_name="nvflare-agent-benchmark:codex-baseline",
-            report_image_name="nvflare-agent-benchmark:codex-skills",
+            image_name="agent-skills-benchmark:codex-skills",
+            baseline_image_name="agent-skills-benchmark:codex-baseline",
+            report_image_name="agent-skills-benchmark:codex-skills",
         ),
         progress_interval_seconds="0",
         agent="codex",
@@ -1865,16 +2168,16 @@ def test_host_docker_args_use_migrated_container_entrypoint(tmp_path):
 
     assert "-m" in args
     module_index = args.index("-m") + 1
-    assert args[module_index] == "assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run"
+    assert args[module_index] == "assist_tools.skills_benchmark.skills.harness.container.agent_run"
     assert f"{prompt_path}:{CONTAINER_PROMPT_PATH}:ro" in args
     assert f"PROMPT_SOURCE={CONTAINER_PROMPT_PATH}" in args
     assert "RECORDS_DIR=/workspace/results/records" in args
 
 
 def test_enforce_result_size_budget_reports_oversized_results(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.registry import load_agent_adapter
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host.common import CaseConfig, ImageConfig
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host.runner import enforce_result_size_budget
+    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from assist_tools.skills_benchmark.skills.harness.host.common import CaseConfig, ImageConfig
+    from assist_tools.skills_benchmark.skills.harness.host.runner import enforce_result_size_budget
 
     result_dir = tmp_path / "results"
     result_dir.mkdir()
@@ -1886,9 +2189,9 @@ def test_enforce_result_size_budget_reports_oversized_results(tmp_path):
         result_dir=result_dir,
         prompt_path=tmp_path / "prompt.txt",
         images=ImageConfig(
-            image_name="nvflare-agent-benchmark:codex-skills",
-            baseline_image_name="nvflare-agent-benchmark:codex-baseline",
-            report_image_name="nvflare-agent-benchmark:codex-skills",
+            image_name="agent-skills-benchmark:codex-skills",
+            baseline_image_name="agent-skills-benchmark:codex-baseline",
+            report_image_name="agent-skills-benchmark:codex-skills",
         ),
         progress_interval_seconds="0",
         agent="codex",
@@ -1907,7 +2210,7 @@ def test_enforce_result_size_budget_reports_oversized_results(tmp_path):
 
 
 def test_directory_size_bytes_does_not_traverse_symlinked_directories(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host.runner import directory_size_bytes
+    from assist_tools.skills_benchmark.skills.harness.host.runner import directory_size_bytes
 
     result_dir = tmp_path / "results"
     outside = tmp_path / "outside"
@@ -1921,7 +2224,7 @@ def test_directory_size_bytes_does_not_traverse_symlinked_directories(tmp_path):
 
 
 def test_case_config_for_entry_applies_resource_policy(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host import runner
+    from assist_tools.skills_benchmark.skills.harness.host import runner
 
     entry = {
         "agent": "codex",
@@ -1947,16 +2250,16 @@ def test_case_config_for_entry_applies_resource_policy(tmp_path, monkeypatch):
     assert config.result_size_budget_bytes == 33
 
 
-def test_positive_numeric_timeout_accepts_float_values():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host.runner import positive_numeric_timeout
+def test_positive_int_resource_value_accepts_float_values():
+    from assist_tools.skills_benchmark.skills.harness.host.runner import positive_int_resource_value
 
-    assert positive_numeric_timeout(1800.0) == 1800
-    assert positive_numeric_timeout(0.0) is None
-    assert positive_numeric_timeout(True) is None
+    assert positive_int_resource_value(1800.0) == 1800
+    assert positive_int_resource_value(0.0) is None
+    assert positive_int_resource_value(True) is None
 
 
 def test_stream_command_warns_when_reader_thread_stays_alive(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host import common
+    from assist_tools.skills_benchmark.skills.harness.host import common
 
     class FakeStdout:
         def close(self):
@@ -1993,7 +2296,7 @@ def test_stream_command_warns_when_reader_thread_stays_alive(tmp_path, monkeypat
 
 
 def test_host_cli_accepts_results_root(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host.common import parse_host_cli_options
+    from assist_tools.skills_benchmark.skills.harness.host.common import parse_host_cli_options
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -2014,7 +2317,7 @@ def test_host_cli_accepts_results_root(tmp_path):
 
 
 def test_default_results_root_uses_codex_compat_alias(monkeypatch, tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host.common import default_results_root
+    from assist_tools.skills_benchmark.skills.harness.host.common import default_results_root
 
     compat_root = tmp_path / "compat-results"
     monkeypatch.delenv("AGENT_BENCHMARK_RESULTS_ROOT", raising=False)
@@ -2024,8 +2327,8 @@ def test_default_results_root_uses_codex_compat_alias(monkeypatch, tmp_path):
 
 
 def test_pair_compilation_accepts_explicit_absolute_prompt_path(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host.common import parse_host_cli_options
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host.runner import pair_compilation_from_options
+    from assist_tools.skills_benchmark.skills.harness.host.common import parse_host_cli_options
+    from assist_tools.skills_benchmark.skills.harness.host.runner import pair_compilation_from_options
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -2045,7 +2348,7 @@ def test_pair_compilation_accepts_explicit_absolute_prompt_path(tmp_path):
 def test_run_one_executes_compiled_one_scenario(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host import runner
+    from assist_tools.skills_benchmark.skills.harness.host import runner
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -2087,7 +2390,7 @@ def test_run_one_executes_compiled_one_scenario(tmp_path, monkeypatch):
 def test_run_pair_returns_failure_for_any_run_id_status(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host import runner
+    from assist_tools.skills_benchmark.skills.harness.host import runner
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -2119,8 +2422,8 @@ def test_run_pair_returns_failure_for_any_run_id_status(tmp_path, monkeypatch):
 def test_run_pair_reports_scenario_validation_without_traceback(tmp_path, monkeypatch, capsys):
     from types import SimpleNamespace
 
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host import runner
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import ScenarioValidationError
+    from assist_tools.skills_benchmark.skills.harness.host import runner
+    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -2155,8 +2458,8 @@ def test_run_pair_reports_scenario_validation_without_traceback(tmp_path, monkey
 def test_run_pair_writes_host_report_status_after_preflight_report(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host import runner
-    from assist_tools.skills_benchmark.nvidia.skills.harness.scenarios import ScenarioValidationError
+    from assist_tools.skills_benchmark.skills.harness.host import runner
+    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -2192,7 +2495,7 @@ def test_run_pair_writes_host_report_status_after_preflight_report(tmp_path, mon
 
 
 def test_host_cli_output_dir_maps_to_exact_result_location(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host.common import parse_host_cli_options
+    from assist_tools.skills_benchmark.skills.harness.host.common import parse_host_cli_options
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -2216,7 +2519,7 @@ def test_host_cli_output_dir_maps_to_exact_result_location(tmp_path):
 
 
 def test_host_cli_requires_prompt_path(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host.common import parse_host_cli_options
+    from assist_tools.skills_benchmark.skills.harness.host.common import parse_host_cli_options
 
     job_input = tmp_path / "job"
     job_input.mkdir()
@@ -2230,7 +2533,7 @@ def test_host_cli_requires_prompt_path(tmp_path):
 
 
 def test_container_config_rejects_unknown_mode(monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import AgentRunConfig
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig
 
     monkeypatch.setenv("MODE", "with_skill_typo")
 
@@ -2245,7 +2548,7 @@ def test_container_config_rejects_unknown_mode(monkeypatch):
 
 
 def test_container_config_rejects_mode_skill_flag_conflict(monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import AgentRunConfig
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig
 
     monkeypatch.setenv("MODE", "without_skills")
     monkeypatch.setenv("USE_PREINSTALLED_SKILLS", "true")
@@ -2260,7 +2563,7 @@ def test_container_config_rejects_mode_skill_flag_conflict(monkeypatch):
 
 
 def test_setup_skill_availability_allows_missing_optional_metadata(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import (
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
         AgentRunConfig,
         setup_skill_availability,
     )
@@ -2280,7 +2583,7 @@ def test_setup_skill_availability_allows_missing_optional_metadata(tmp_path):
         run_root=tmp_path / "run",
         prompt_source=tmp_path / "prompt.txt",
         progress_interval_seconds=0,
-        nvflare_image_kind="test-skills",
+        sdk_image_kind="test-skills",
         agent="codex",
         agent_model="test-model",
         agent_home=codex_home,
@@ -2294,15 +2597,15 @@ def test_setup_skill_availability_allows_missing_optional_metadata(tmp_path):
     assert state["status"] == "prepared"
     assert state["skills_enabled"] is True
     assert sorted(Path(item).name for item in missing["missing"]) == [
-        "nvflare_skills_build_install.json",
-        "nvflare_skills_list.json",
+        "skills_build_install.json",
+        "skills_list.json",
     ]
     assert not (result_dir / "skills_build_install.json").exists()
 
 
 def test_skill_exposure_carries_launch_args_and_environment(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.base import SkillExposureSpec
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.skills import apply_skill_exposure
+    from assist_tools.skills_benchmark.skills.harness.agents.base import SkillExposureSpec
+    from assist_tools.skills_benchmark.skills.harness.container.skills import apply_skill_exposure
 
     skill_root = tmp_path / "skills"
     (skill_root / "nvflare-convert-pytorch").mkdir(parents=True)
@@ -2319,7 +2622,7 @@ def test_skill_exposure_carries_launch_args_and_environment(tmp_path):
         ),
         skills_enabled=True,
         result_dir=result_dir,
-        nvflare_image_kind="test-skills",
+        sdk_image_kind="test-skills",
     )
 
     state = json.loads((result_dir / "skills_state.json").read_text(encoding="utf-8"))
@@ -2329,9 +2632,38 @@ def test_skill_exposure_carries_launch_args_and_environment(tmp_path):
     assert result.environment == {"AGENT_SKILLS_DIR": str(skill_root)}
 
 
+def test_skill_exposure_action_timeout_writes_failure_state(tmp_path, monkeypatch):
+    import subprocess
+
+    from assist_tools.skills_benchmark.skills.harness.container import skills
+
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+
+    def timeout_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs["timeout"], output="partial output\n")
+
+    monkeypatch.setattr(skills.subprocess, "run", timeout_run)
+
+    try:
+        skills.run_exposure_action(["agent", "skills", "install"], result_dir, "setup_action", {})
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("timed out exposure action should abort skill exposure")
+
+    state = json.loads((result_dir / "skills_state.json").read_text(encoding="utf-8"))
+    output = (result_dir / "skills_setup_action_output.txt").read_text(encoding="utf-8")
+    assert state["reason"] == "action_timeout"
+    assert state["action_name"] == "setup_action"
+    assert state["timeout_seconds"] == skills.EXPOSURE_ACTION_TIMEOUT_SECONDS
+    assert state["output_ref"].endswith("skills_setup_action_output.txt")
+    assert output == "partial output\n"
+
+
 def test_skill_exposure_rejects_skill_root_outside_container_home(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.base import SkillExposureSpec
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.skills import apply_skill_exposure
+    from assist_tools.skills_benchmark.skills.harness.agents.base import SkillExposureSpec
+    from assist_tools.skills_benchmark.skills.harness.container.skills import apply_skill_exposure
 
     result_dir = tmp_path / "results"
     result_dir.mkdir()
@@ -2346,7 +2678,7 @@ def test_skill_exposure_rejects_skill_root_outside_container_home(tmp_path):
             ),
             skills_enabled=False,
             result_dir=result_dir,
-            nvflare_image_kind="test-baseline",
+            sdk_image_kind="test-baseline",
         )
     except SystemExit as exc:
         assert exc.code == 2
@@ -2359,8 +2691,8 @@ def test_skill_exposure_rejects_skill_root_outside_container_home(tmp_path):
 
 
 def test_skill_exposure_rejects_metadata_file_outside_container_home(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.base import SkillExposureSpec
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.skills import apply_skill_exposure
+    from assist_tools.skills_benchmark.skills.harness.agents.base import SkillExposureSpec
+    from assist_tools.skills_benchmark.skills.harness.container.skills import apply_skill_exposure
 
     result_dir = tmp_path / "results"
     result_dir.mkdir()
@@ -2380,7 +2712,7 @@ def test_skill_exposure_rejects_metadata_file_outside_container_home(tmp_path):
             ),
             skills_enabled=True,
             result_dir=result_dir,
-            nvflare_image_kind="test-skills",
+            sdk_image_kind="test-skills",
         )
     except SystemExit as exc:
         assert exc.code == 2
@@ -2393,8 +2725,8 @@ def test_skill_exposure_rejects_metadata_file_outside_container_home(tmp_path):
 
 
 def test_skill_exposure_requires_container_home_when_skill_root_is_configured(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.base import SkillExposureSpec
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.skills import apply_skill_exposure
+    from assist_tools.skills_benchmark.skills.harness.agents.base import SkillExposureSpec
+    from assist_tools.skills_benchmark.skills.harness.container.skills import apply_skill_exposure
 
     result_dir = tmp_path / "results"
     result_dir.mkdir()
@@ -2405,7 +2737,7 @@ def test_skill_exposure_requires_container_home_when_skill_root_is_configured(tm
             spec=SkillExposureSpec(mechanism_type="preinstalled_home", skill_root=skill_root),
             skills_enabled=False,
             result_dir=result_dir,
-            nvflare_image_kind="test-baseline",
+            sdk_image_kind="test-baseline",
         )
     except SystemExit as exc:
         assert exc.code == 2
@@ -2417,8 +2749,8 @@ def test_skill_exposure_requires_container_home_when_skill_root_is_configured(tm
 
 
 def test_skill_exposure_rejects_bundled_root_outside_workspace(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.base import SkillExposureSpec
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.skills import apply_skill_exposure
+    from assist_tools.skills_benchmark.skills.harness.agents.base import SkillExposureSpec
+    from assist_tools.skills_benchmark.skills.harness.container.skills import apply_skill_exposure
 
     result_dir = tmp_path / "results"
     result_dir.mkdir()
@@ -2435,7 +2767,7 @@ def test_skill_exposure_rejects_bundled_root_outside_workspace(tmp_path):
             ),
             skills_enabled=False,
             result_dir=result_dir,
-            nvflare_image_kind="test-baseline",
+            sdk_image_kind="test-baseline",
             bundled_skills_root=lambda: str(tmp_path / "unsafe-bundled-source"),
         )
     except SystemExit as exc:
@@ -2447,33 +2779,33 @@ def test_skill_exposure_rejects_bundled_root_outside_workspace(tmp_path):
     assert state["reason"] == "bundled_skill_source_outside_workspace"
 
 
-def test_copy_optional_metadata_files_strips_nvflare_prefix(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import copy_optional_metadata_files
+def test_copy_optional_metadata_files_preserves_generic_names(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import copy_optional_metadata_files
 
     source_dir = tmp_path / "source"
     result_dir = tmp_path / "results"
     source_dir.mkdir()
     result_dir.mkdir()
-    (source_dir / "nvflare_skills_list.json").write_text('{"installed": []}\n', encoding="utf-8")
+    (source_dir / "skills_list.json").write_text('{"installed": []}\n', encoding="utf-8")
 
     payload = copy_optional_metadata_files(
         source_dir,
         result_dir,
-        ("nvflare_skills_list.json", "nvflare_skills_build_install.json"),
+        ("skills_list.json", "skills_build_install.json"),
     )
 
     assert (result_dir / "skills_list.json").read_text(encoding="utf-8") == '{"installed": []}\n'
     assert payload["copied"] == [
         {
-            "source": str(source_dir / "nvflare_skills_list.json"),
+            "source": str(source_dir / "skills_list.json"),
             "target": str(result_dir / "skills_list.json"),
         }
     ]
-    assert payload["missing"] == [str(source_dir / "nvflare_skills_build_install.json")]
+    assert payload["missing"] == [str(source_dir / "skills_build_install.json")]
 
 
 def test_copy_optional_metadata_files_rejects_path_traversal(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import copy_optional_metadata_files
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import copy_optional_metadata_files
 
     source_dir = tmp_path / "source"
     result_dir = tmp_path / "results"
@@ -2488,8 +2820,26 @@ def test_copy_optional_metadata_files_rejects_path_traversal(tmp_path):
         raise AssertionError("metadata file names must not traverse outside the source dir")
 
 
+def test_available_skill_names_skips_symlinked_skill_directories(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness import records
+
+    agent_home = tmp_path / "agent-home"
+    skills_root = agent_home / "skills"
+    outside = tmp_path / "outside-skills"
+    skills_root.mkdir(parents=True)
+    outside.mkdir()
+    (skills_root / "nvflare-real").mkdir()
+    try:
+        (skills_root / "nvflare-linked").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        return
+    monkeypatch.setenv("BENCHMARK_AGENT_HOME", str(agent_home))
+
+    assert records.available_skill_names() == {"nvflare-real"}
+
+
 def test_infer_from_events_scores_installed_skill_names_in_single_pass(monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness import records
+    from assist_tools.skills_benchmark.skills.harness import records
 
     monkeypatch.setattr(records, "available_skill_names", lambda: {"nvflare-a", "nvflare-b"})
 
@@ -2500,7 +2850,7 @@ def test_infer_from_events_scores_installed_skill_names_in_single_pass(monkeypat
 
 
 def test_infer_from_events_uses_case_id_boundaries(monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness import records
+    from assist_tools.skills_benchmark.skills.harness import records
 
     monkeypatch.setattr(records, "available_skill_names", lambda: {"nvflare-a"})
     monkeypatch.setattr(records, "eval_case_ids_for_skill", lambda _skill: ["basic", "basic-v2"])
@@ -2511,7 +2861,7 @@ def test_infer_from_events_uses_case_id_boundaries(monkeypatch):
 
 
 def test_load_text_caps_bytes(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.records import load_text
+    from assist_tools.skills_benchmark.skills.harness.records import load_text
 
     path = tmp_path / "events.jsonl"
     path.write_bytes(b"abcdef")
@@ -2520,7 +2870,7 @@ def test_load_text_caps_bytes(tmp_path):
 
 
 def test_synthesize_agent_record_caps_event_text_for_identity(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness import records
+    from assist_tools.skills_benchmark.skills.harness import records
 
     monkeypatch.setattr(records, "MAX_EVENTS_TEXT_BYTES", 8)
     monkeypatch.setattr(records, "available_skill_names", lambda: {"nvflare-large"})
@@ -2567,7 +2917,7 @@ def test_synthesize_agent_record_caps_event_text_for_identity(tmp_path, monkeypa
 
 
 def test_iter_json_records_enforces_file_count_limit(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness import records
+    from assist_tools.skills_benchmark.skills.harness import records
 
     for index in range(3):
         (tmp_path / f"record-{index}.json").write_text(
@@ -2582,7 +2932,7 @@ def test_iter_json_records_enforces_file_count_limit(tmp_path, monkeypatch):
 
 
 def test_iter_json_records_skips_oversized_json_files(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness import records
+    from assist_tools.skills_benchmark.skills.harness import records
 
     small = tmp_path / "small.json"
     small.write_text(json.dumps({"skill": "nvflare-test"}), encoding="utf-8")
@@ -2600,7 +2950,7 @@ def test_iter_json_records_skips_oversized_json_files(tmp_path, monkeypatch):
 def test_iter_json_records_does_not_traverse_symlinked_directories(tmp_path):
     if not hasattr(os, "symlink"):
         return
-    from assist_tools.skills_benchmark.nvidia.skills.harness import records
+    from assist_tools.skills_benchmark.skills.harness import records
 
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -2616,7 +2966,7 @@ def test_iter_json_records_does_not_traverse_symlinked_directories(tmp_path):
 
 
 def test_login_shell_runtime_probe_uses_configured_venv_path(monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container import agent_run
+    from assist_tools.skills_benchmark.skills.harness.container import agent_run
 
     class Result:
         returncode = 0
@@ -2624,32 +2974,42 @@ def test_login_shell_runtime_probe_uses_configured_venv_path(monkeypatch):
             [
                 "PATH=/custom/venv/bin:/usr/bin",
                 "python=/custom/venv/bin/python",
-                "nvflare=/custom/venv/bin/nvflare",
-                "nvflare_version=NVFlare 9.9",
-                "nvflare_import_version=9.9",
+                "sdk_import_name=example_sdk",
+                "sdk_import_version=9.9",
+                "sdk_version_output=Example SDK 9.9",
             ]
         )
 
     monkeypatch.setenv("BENCHMARK_CONTAINER_VENV_DIR", "/custom/venv")
+    monkeypatch.setenv("SDK_IMPORT_NAME", "example_sdk")
+    monkeypatch.setenv("SDK_VERSION_COMMAND", "example-sdk --version")
     monkeypatch.setattr(agent_run.subprocess, "run", lambda *args, **kwargs: Result())
 
     probe = agent_run.login_shell_runtime_probe()
 
     assert probe["ok"] is True
     assert probe["expected_python"] == "/custom/venv/bin/python"
-    assert probe["expected_nvflare"] == "/custom/venv/bin/nvflare"
+    assert probe["sdk_import_name"] == "example_sdk"
+    assert probe["sdk_import_version"] == "9.9"
+    assert probe["sdk_version_output"] == "Example SDK 9.9"
 
 
 def test_runtime_metadata_skips_login_shell_probe_when_launch_does_not_require_it(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.agents.base import AgentLaunchSpec
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container import agent_run
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import (
+    from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchSpec
+    from assist_tools.skills_benchmark.skills.harness.container import agent_run
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
         AgentRunConfig,
         persist_container_runtime_metadata,
     )
 
     result_dir = tmp_path / "results"
+    agent_home = tmp_path / ".agent"
     result_dir.mkdir()
+    agent_home.mkdir()
+    (agent_home / "sdk_wheel_metadata.json").write_text(
+        json.dumps({"sdk_name": "example", "variant": "skills"}, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     config = AgentRunConfig(
         mode="with_skills",
         use_preinstalled_skills=True,
@@ -2659,10 +3019,10 @@ def test_runtime_metadata_skips_login_shell_probe_when_launch_does_not_require_i
         run_root=tmp_path / "run",
         prompt_source=tmp_path / "prompt.txt",
         progress_interval_seconds=0,
-        nvflare_image_kind="test-skills",
+        sdk_image_kind="test-skills",
         agent="test",
         agent_model="test-model",
-        agent_home=tmp_path / ".agent",
+        agent_home=agent_home,
         agent_model_was_explicit=False,
     )
     launch = AgentLaunchSpec(
@@ -2687,11 +3047,13 @@ def test_runtime_metadata_skips_login_shell_probe_when_launch_does_not_require_i
     metadata = json.loads((result_dir / "runtime_image.json").read_text(encoding="utf-8"))
     assert metadata["login_shell_required"] is False
     assert metadata["login_shell_runtime_probe"]["reason"] == "skipped_adapter_does_not_use_login_shell"
+    assert metadata["sdk_wheel_metadata"]["sdk_name"] == "example"
+    assert (result_dir / "sdk_wheel_metadata.json").is_file()
 
 
 def test_finalize_timing_uses_named_lifecycle_epochs(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.common import write_json
-    from assist_tools.skills_benchmark.nvidia.skills.harness.timing import LifecycleEpochs, finalize_timing
+    from assist_tools.skills_benchmark.skills.harness.common import write_json
+    from assist_tools.skills_benchmark.skills.harness.timing import LifecycleEpochs, finalize_timing
 
     summary_path = tmp_path / "run_summary.json"
     record_path = tmp_path / "record.json"
@@ -2742,8 +3104,71 @@ def test_finalize_timing_uses_named_lifecycle_epochs(tmp_path):
     assert record["process_metrics"]["phase_seconds"]["agent_elapsed_seconds"] == 10
 
 
+def test_finalize_timing_does_not_partially_replace_when_staging_fails(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.timing import LifecycleEpochs, finalize_timing
+
+    summary_path = tmp_path / "run_summary.json"
+    timing_path = tmp_path / "timing.json"
+    activity_path = tmp_path / "agent_activity.json"
+    record_path = tmp_path / "missing_parent" / "record.json"
+    summary_text = '{"old_summary": true}\n'
+    timing_text = '{"old_timing": true}\n'
+    summary_path.write_text(summary_text, encoding="utf-8")
+    timing_path.write_text(timing_text, encoding="utf-8")
+    activity_path.write_text("{}\n", encoding="utf-8")
+
+    try:
+        finalize_timing(
+            summary_path,
+            record_path,
+            timing_path,
+            activity_path,
+            LifecycleEpochs(
+                script_start=10,
+                skill_availability_start=11,
+                skill_availability_end=13,
+                input_copy_start=13,
+                input_copy_end=17,
+                prompt_prep_start=18,
+                prompt_prep_end=20,
+                agent_start=21,
+                agent_end=31,
+                post_process_start=31,
+                post_process_end=35,
+                report_outcome_start=36,
+                report_outcome_end=37,
+                script_end=40,
+            ),
+        )
+    except OSError:
+        pass
+    else:
+        raise AssertionError("missing record parent should fail before replacing timing artifacts")
+
+    assert summary_path.read_text(encoding="utf-8") == summary_text
+    assert timing_path.read_text(encoding="utf-8") == timing_text
+
+
+def test_atomic_json_writer_cleans_staged_temp_file_when_dump_fails(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness import timing
+
+    def fail_json_dump(*_args, **_kwargs):
+        raise TypeError("cannot serialize")
+
+    monkeypatch.setattr(timing.json, "dump", fail_json_dump)
+
+    try:
+        timing._write_json_files_atomic({tmp_path / "out.json": {"bad": object()}})
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("json dump failure should propagate")
+
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_write_failure_record_outputs_early_failure_artifacts(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import write_failure_record
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import write_failure_record
 
     result_dir = tmp_path / "results"
     records_dir = result_dir / "records"
@@ -2774,7 +3199,7 @@ def test_write_failure_record_outputs_early_failure_artifacts(tmp_path):
 
 
 def test_write_failure_record_defaults_to_unknown_agent(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import write_failure_record
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import write_failure_record
 
     result_dir = tmp_path / "results"
     records_dir = result_dir / "records"
@@ -2795,11 +3220,8 @@ def test_write_failure_record_defaults_to_unknown_agent(tmp_path):
 
 
 def test_merge_harness_failure_preserves_existing_record(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.common import write_json
-    from assist_tools.skills_benchmark.nvidia.skills.harness.container.agent_run import (
-        AgentRunConfig,
-        merge_harness_failure,
-    )
+    from assist_tools.skills_benchmark.skills.harness.common import write_json
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig, merge_harness_failure
 
     result_dir = tmp_path / "results"
     records_dir = result_dir / "records"
@@ -2823,7 +3245,7 @@ def test_merge_harness_failure_preserves_existing_record(tmp_path):
         run_root=tmp_path / "run",
         prompt_source=tmp_path / "prompt.txt",
         progress_interval_seconds=0,
-        nvflare_image_kind="test-skills",
+        sdk_image_kind="test-skills",
         agent="codex",
         agent_model="test-model",
         agent_home=tmp_path / ".codex",
@@ -2846,7 +3268,7 @@ def test_merge_harness_failure_preserves_existing_record(tmp_path):
 
 
 def test_pair_result_root_cleanup_removes_legacy_eval_artifacts(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.host.runner import clean_pair_result_root
+    from assist_tools.skills_benchmark.skills.harness.host.runner import clean_pair_result_root
 
     result_root = tmp_path / "result"
     result_root.mkdir()
@@ -2871,8 +3293,8 @@ def test_pair_result_root_cleanup_removes_legacy_eval_artifacts(tmp_path):
 
 
 def test_benchmark_insights_explains_docker_image_failures(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.modes import NO_SKILLS_MODE
-    from assist_tools.skills_benchmark.nvidia.skills.harness.reports.benchmark_insights import (
+    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
         collect_benchmark_runs,
         failure_root_cause,
         human_readable_status,
@@ -2882,8 +3304,8 @@ def test_benchmark_insights_explains_docker_image_failures(tmp_path):
     mode_dir.mkdir()
     (mode_dir / "container_exit_code.json").write_text(json.dumps({"exit_code": 1}) + "\n", encoding="utf-8")
     (tmp_path / "console_output.log").write_text(
-        "[without_skills] Unable to find image 'nvflare-agent-benchmark:codex-baseline' locally\n"
-        "[without_skills] docker: Error response from daemon: pull access denied for nvflare-agent-benchmark\n",
+        "[without_skills] Unable to find image 'agent-skills-benchmark:codex-baseline' locally\n"
+        "[without_skills] docker: Error response from daemon: pull access denied for agent-skills-benchmark\n",
         encoding="utf-8",
     )
 
@@ -2895,8 +3317,8 @@ def test_benchmark_insights_explains_docker_image_failures(tmp_path):
 
 
 def test_benchmark_insights_scopes_shared_console_evidence_by_mode(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
-    from assist_tools.skills_benchmark.nvidia.skills.harness.reports.benchmark_insights import (
+    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
         collect_benchmark_runs,
         dependency_reference_notes,
     )
@@ -2932,15 +3354,29 @@ def test_benchmark_insights_scopes_shared_console_evidence_by_mode(tmp_path):
     assert dependency_reference_notes(runs[WITH_SKILLS_MODE]) == []
 
 
+def test_benchmark_insights_caps_agent_events_text(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.reports import benchmark_insights
+
+    mode_dir = tmp_path / NO_SKILLS_MODE
+    mode_dir.mkdir()
+    (mode_dir / "agent_events.jsonl").write_text("0123456789", encoding="utf-8")
+    monkeypatch.setattr(benchmark_insights, "MAX_AGENT_EVENTS_TEXT_BYTES", 8)
+
+    run = benchmark_insights.collect_benchmark_runs(tmp_path)[NO_SKILLS_MODE]
+
+    assert run["agent_events_text"] == "01234567"
+
+
 def test_status_summary_is_human_readable_for_failures():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.modes import NO_SKILLS_MODE
-    from assist_tools.skills_benchmark.nvidia.skills.harness.reports.benchmark_insights import status_summary
+    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import status_summary
 
     runs = {
         NO_SKILLS_MODE: {
             "available": True,
             "container_exit": {"exit_code": 1},
-            "console_text": "docker: Error response from daemon: pull access denied for nvflare-agent-benchmark",
+            "console_text": "docker: Error response from daemon: pull access denied for agent-skills-benchmark",
             "run": {},
             "status": "missing",
             "validation_metric": {},
@@ -2956,7 +3392,7 @@ def test_status_summary_is_human_readable_for_failures():
 
 
 def test_failure_analysis_extracts_unsupported_model_message():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.reports.benchmark_insights import (
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
         failure_evidence,
         failure_root_cause,
     )
@@ -2979,7 +3415,7 @@ def test_failure_analysis_extracts_unsupported_model_message():
 
 
 def test_failure_root_cause_prefers_agent_exit_classifier():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.reports.benchmark_insights import failure_root_cause
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import failure_root_cause
 
     run = {
         "available": True,
@@ -2992,9 +3428,7 @@ def test_failure_root_cause_prefers_agent_exit_classifier():
 
 
 def test_failure_analysis_identifies_agent_generated_requirements_file():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.reports.benchmark_insights import (
-        dependency_reference_notes,
-    )
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import dependency_reference_notes
 
     run = {
         "agent_last_message": "Install with python3 -m pip install -r requirements-federated.txt.",
@@ -3031,7 +3465,7 @@ def test_shared_lifecycle_requires_dependency_preflight_before_missing_dependenc
 
 
 def test_readme_metric_alignment_uses_aggregated_validation_metric_scalar():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.quality_signals import metric_signal
+    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
 
     signal = metric_signal(
         None,
@@ -3058,7 +3492,7 @@ Round 2 validation AUROC by site:
 
 
 def test_readme_metric_alignment_uses_named_aggregated_metric_scalar():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.quality_signals import metric_signal
+    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
 
     signal = metric_signal(
         None,
@@ -3081,8 +3515,8 @@ Validation:
 
 
 def test_job_guidance_metric_alignment_uses_non_readme_docs(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.quality_signals import metric_signal
-    from assist_tools.skills_benchmark.nvidia.skills.harness.records import discover_job_guidance
+    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
+    from assist_tools.skills_benchmark.skills.harness.records import discover_job_guidance
 
     job = tmp_path / "job"
     docs = job / "docs"
@@ -3102,8 +3536,8 @@ def test_job_guidance_metric_alignment_uses_non_readme_docs(tmp_path):
     assert signal["reported_validation_metric"]["name"] == "accuracy"
 
 
-def test_job_guidance_dedupes_symlinks_when_resolve_fails(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness import records
+def test_job_guidance_skips_symlink_guidance_files(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness import records
 
     job = tmp_path / "job"
     job.mkdir()
@@ -3115,26 +3549,34 @@ def test_job_guidance_dedupes_symlinks_when_resolve_fails(tmp_path, monkeypatch)
         right.symlink_to("target.md")
     except (OSError, NotImplementedError):
         return
-    original_resolve = Path.resolve
-
-    def flaky_resolve(path, *args, **kwargs):
-        if path in {left, right}:
-            raise OSError("synthetic resolve failure")
-        return original_resolve(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "resolve", flaky_resolve)
 
     sources, guidance_text = records.discover_job_guidance(job)
 
-    assert len(sources) == 1
-    assert guidance_text.count("Target validation metric") == 1
+    assert sources == []
+    assert guidance_text == ""
+
+
+def test_job_guidance_skips_symlinked_docs_directory(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness import records
+
+    job = tmp_path / "job"
+    outside_docs = tmp_path / "outside_docs"
+    job.mkdir()
+    outside_docs.mkdir()
+    outside_docs.joinpath("README.md").write_text("Target validation metric: accuracy.\n", encoding="utf-8")
+    try:
+        job.joinpath("docs").symlink_to(outside_docs, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        return
+
+    sources, guidance_text = records.discover_job_guidance(job)
+
+    assert sources == []
+    assert guidance_text == ""
 
 
 def test_job_guidance_skips_oversized_guidance_files(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.records import (
-        MAX_GUIDANCE_FILE_BYTES,
-        discover_job_guidance,
-    )
+    from assist_tools.skills_benchmark.skills.harness.records import MAX_GUIDANCE_FILE_BYTES, discover_job_guidance
 
     job = tmp_path / "job"
     job.mkdir()
@@ -3148,7 +3590,7 @@ def test_job_guidance_skips_oversized_guidance_files(tmp_path):
 
 
 def test_job_guidance_stops_collecting_after_guidance_file_cap(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness import records
+    from assist_tools.skills_benchmark.skills.harness import records
 
     job = tmp_path / "job"
     job.mkdir()
@@ -3170,8 +3612,8 @@ def test_job_guidance_stops_collecting_after_guidance_file_cap(tmp_path, monkeyp
 
 
 def test_job_guidance_metric_alignment_includes_prompt(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.quality_signals import metric_signal
-    from assist_tools.skills_benchmark.nvidia.skills.harness.records import discover_job_guidance
+    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
+    from assist_tools.skills_benchmark.skills.harness.records import discover_job_guidance
 
     job = tmp_path / "job"
     job.mkdir()
@@ -3191,8 +3633,8 @@ def test_job_guidance_metric_alignment_includes_prompt(tmp_path):
 
 
 def test_job_guidance_metric_alignment_uses_source_priority(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.quality_signals import metric_signal
-    from assist_tools.skills_benchmark.nvidia.skills.harness.records import discover_job_guidance
+    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
+    from assist_tools.skills_benchmark.skills.harness.records import discover_job_guidance
 
     job = tmp_path / "job"
     job.mkdir()
@@ -3214,8 +3656,8 @@ def test_job_guidance_metric_alignment_uses_source_priority(tmp_path):
 
 
 def test_job_guidance_metric_alignment_reports_matched_doc_source(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.quality_signals import metric_signal
-    from assist_tools.skills_benchmark.nvidia.skills.harness.records import discover_job_guidance
+    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
+    from assist_tools.skills_benchmark.skills.harness.records import discover_job_guidance
 
     job = tmp_path / "job"
     job.mkdir()
@@ -3239,9 +3681,9 @@ def test_job_guidance_metric_alignment_reports_matched_doc_source(tmp_path):
 
 
 def test_metric_mismatch_reports_actual_metric_without_marking_missing():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.modes import NO_SKILLS_MODE
-    from assist_tools.skills_benchmark.nvidia.skills.harness.quality_signals import metric_signal
-    from assist_tools.skills_benchmark.nvidia.skills.harness.reports.benchmark_insights import (
+    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
         benchmark_outcome,
         human_readable_status,
         missing_result_metrics_section,
@@ -3273,7 +3715,7 @@ def test_metric_mismatch_reports_actual_metric_without_marking_missing():
 
 
 def test_metric_mismatch_evidence_includes_integer_metric_value():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.quality_signals import format_metric_value
+    from assist_tools.skills_benchmark.skills.harness.quality_signals import format_metric_value
 
     assert format_metric_value(1) == " 1."
     assert format_metric_value(1.0) == " 1.0000."
@@ -3281,8 +3723,8 @@ def test_metric_mismatch_evidence_includes_integer_metric_value():
 
 
 def test_missing_target_metric_section_reports_observed_alternate_metrics():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.modes import NO_SKILLS_MODE
-    from assist_tools.skills_benchmark.nvidia.skills.harness.reports.benchmark_insights import (
+    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
         additional_or_observed_metric_values_display,
         missing_result_metrics_section,
         outcome_details_table,
@@ -3322,8 +3764,8 @@ def test_missing_target_metric_section_reports_observed_alternate_metrics():
 
 
 def test_failure_analysis_reports_recovered_job_failure_and_metric_gap():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.modes import NO_SKILLS_MODE
-    from assist_tools.skills_benchmark.nvidia.skills.harness.reports.benchmark_insights import (
+    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
         additional_or_observed_metric_values_display,
         failure_analysis_section,
         outcome_details_table,
@@ -3338,7 +3780,7 @@ def test_failure_analysis_reports_recovered_job_failure_and_metric_gap():
         "Finished FedAvg.\n"
         "site-1: round=0 train_loss=0.6275 valid_auroc=0.7049\n"
         "site-2: round=0 train_loss=0.6259 valid_auroc=0.7342\n"
-        "Result workspace: /tmp/nvflare/ames-smoke\n"
+        "Result workspace: /tmp/agent_benchmark/ames-smoke\n"
     )
     events = [
         {
@@ -3406,7 +3848,7 @@ def test_failure_analysis_reports_recovered_job_failure_and_metric_gap():
 
 
 def test_readme_metric_alignment_uses_server_best_validation_metric_scalar():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.quality_signals import metric_signal
+    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
 
     signal = metric_signal(
         None,
@@ -3431,7 +3873,7 @@ Final round metrics:
 
 
 def test_readme_metric_alignment_passes_for_site_level_values_without_scalar():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.quality_signals import metric_signal
+    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
 
     signal = metric_signal(
         None,
@@ -3456,8 +3898,8 @@ Final round metrics:
 
 
 def test_metrics_chart_names_metric_once_in_panel_title():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
-    from assist_tools.skills_benchmark.nvidia.skills.harness.reports.benchmark_insights import (
+    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
         embedded_bar_chart,
         outcome_metrics_table,
     )
@@ -3498,8 +3940,8 @@ def test_metrics_chart_names_metric_once_in_panel_title():
 
 
 def test_metrics_chart_uses_labeled_aggregated_metric_from_legacy_record():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
-    from assist_tools.skills_benchmark.nvidia.skills.harness.reports.benchmark_insights import (
+    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
         embedded_bar_chart,
         outcome_metrics_table,
     )
@@ -3537,8 +3979,8 @@ def test_metrics_chart_uses_labeled_aggregated_metric_from_legacy_record():
 
 
 def test_metrics_chart_marks_mixed_metric_names_non_comparable():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
-    from assist_tools.skills_benchmark.nvidia.skills.harness.reports.benchmark_insights import (
+    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
         embedded_bar_chart,
         outcome_metrics_table,
     )
@@ -3568,7 +4010,7 @@ def test_metrics_chart_marks_mixed_metric_names_non_comparable():
 
 
 def test_structure_tree_renderer_uses_tree_format():
-    from assist_tools.skills_benchmark.nvidia.skills.harness.reports.benchmark_insights import tree_from_paths
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import tree_from_paths
 
     tree = tree_from_paths(
         [
@@ -3586,7 +4028,7 @@ def test_structure_tree_renderer_uses_tree_format():
 
 
 def test_run_summary_uses_agent_keys_without_codex_aliases(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.records import write_json, write_run_summary
+    from assist_tools.skills_benchmark.skills.harness.records import write_json, write_run_summary
 
     final_record = tmp_path / "record.json"
     summary_path = tmp_path / "run_summary.json"
@@ -3623,7 +4065,7 @@ def test_run_summary_uses_agent_keys_without_codex_aliases(tmp_path):
 
 
 def test_run_summary_ignores_codex_usage_fallback_and_reports_prompt_hash(tmp_path):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.records import write_json, write_run_summary
+    from assist_tools.skills_benchmark.skills.harness.records import write_json, write_run_summary
 
     final_record = tmp_path / "record.json"
     summary_path = tmp_path / "run_summary.json"
@@ -3660,10 +4102,56 @@ def test_run_summary_ignores_codex_usage_fallback_and_reports_prompt_hash(tmp_pa
     }
 
 
+def test_make_tree_readable_does_not_follow_symlinked_directories(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.common import make_tree_readable
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_file = outside / "secret.txt"
+    outside_file.write_text("keep private\n", encoding="utf-8")
+    outside_file.chmod(0o600)
+    root = tmp_path / "result"
+    root.mkdir()
+    (root / "outside_link").symlink_to(outside, target_is_directory=True)
+
+    make_tree_readable(root)
+
+    assert stat.S_IMODE(outside_file.stat().st_mode) == 0o600
+
+
+def test_scenario_report_escapes_markdown_table_pipes(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.reports.scenario_report import write_scenario_report
+
+    write_scenario_report(
+        tmp_path,
+        {
+            "scenario_name": "pipe scenario",
+            "status": "passed",
+            "completed_run_count": 1,
+            "expanded_case_count": 1,
+            "winner_policy": "quality",
+            "aggregate_results": {
+                "by_label": {
+                    "with|skills": {
+                        "run_count": 1,
+                        "quality_pass_count": 1,
+                        "agent_elapsed_seconds": {"median": 2.5},
+                        "token_count": {"median": 10},
+                    }
+                },
+                "winner": {"label": "with|skills"},
+            },
+        },
+    )
+
+    report = (tmp_path / "reports" / "scenario_report.md").read_text(encoding="utf-8")
+    assert "with\\|skills" in report
+
+
 def test_report_generators_write_two_mode_outputs(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.nvidia.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
-    from assist_tools.skills_benchmark.nvidia.skills.harness.reports.benchmark_insights import main as insights_main
-    from assist_tools.skills_benchmark.nvidia.skills.harness.reports.metrics_report import write_reports
+    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.reports import metrics_report
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import main as insights_main
 
     for mode, value in ((NO_SKILLS_MODE, 0.7562), (WITH_SKILLS_MODE, 0.7529)):
         mode_dir = tmp_path / mode
@@ -3697,7 +4185,15 @@ def test_report_generators_write_two_mode_outputs(tmp_path, monkeypatch):
         (mode_dir / "agent_activity.json").write_text(json.dumps({"command_count": 3}) + "\n", encoding="utf-8")
         (mode_dir / "agent_usage.json").write_text(json.dumps({"total_tokens": 100}) + "\n", encoding="utf-8")
 
-    write_reports(tmp_path, "Synthetic Metrics")
+    original_collect_benchmark_runs = metrics_report.collect_benchmark_runs
+    collect_calls = {"count": 0}
+
+    def counted_collect_benchmark_runs(root):
+        collect_calls["count"] += 1
+        return original_collect_benchmark_runs(root)
+
+    monkeypatch.setattr(metrics_report, "collect_benchmark_runs", counted_collect_benchmark_runs)
+    metrics_report.write_reports(tmp_path, "Synthetic Metrics")
     monkeypatch.setattr(sys, "argv", ["benchmark_insights", str(tmp_path)])
     insights_main()
 
@@ -3711,3 +4207,4 @@ def test_report_generators_write_two_mode_outputs(tmp_path, monkeypatch):
     assert "Benchmark Metrics Comparison" not in insights_markdown
     assert "with_skills_eval" not in insights_markdown
     assert "Evaluator" not in insights_markdown
+    assert collect_calls["count"] == 1
