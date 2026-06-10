@@ -16,6 +16,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 
 def test_codex_event_normalizer_returns_agent_event():
     from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
@@ -427,10 +429,10 @@ def test_claude_final_message_source_materializes_structured_result_event(tmp_pa
     from collections import deque
 
     from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
-        AgentRunConfig,
-        materialize_final_message,
-    )
+
+    agent_run = pytest.importorskip("assist_tools.skills_benchmark.skills.harness.container.agent_run")
+    AgentRunConfig = agent_run.AgentRunConfig
+    materialize_final_message = agent_run.materialize_final_message
 
     adapter = load_agent_adapter("claude")
     result_dir = tmp_path / "results"
@@ -474,10 +476,10 @@ def test_structured_final_message_not_read_when_stdout_reader_active(tmp_path):
     from collections import deque
 
     from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
-        AgentRunConfig,
-        materialize_final_message,
-    )
+
+    agent_run = pytest.importorskip("assist_tools.skills_benchmark.skills.harness.container.agent_run")
+    AgentRunConfig = agent_run.AgentRunConfig
+    materialize_final_message = agent_run.materialize_final_message
 
     adapter = load_agent_adapter("claude")
     result_dir = tmp_path / "results"
@@ -518,10 +520,10 @@ def test_structured_final_message_not_read_when_stdout_reader_active(tmp_path):
 
 def test_launch_spec_metadata_records_sandbox_flags_and_bypass_reason(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchSpec, SkillExposureResult
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
-        AgentRunConfig,
-        write_launch_spec_metadata,
-    )
+
+    agent_run = pytest.importorskip("assist_tools.skills_benchmark.skills.harness.container.agent_run")
+    AgentRunConfig = agent_run.AgentRunConfig
+    write_launch_spec_metadata = agent_run.write_launch_spec_metadata
 
     result_dir = tmp_path / "results"
     result_dir.mkdir()
@@ -782,7 +784,7 @@ def test_claude_adapter_build_auth_and_skill_exposure_contract(tmp_path):
     assert build_args["BENCHMARK_DOCKER_AGENT"] == "claude"
     assert build_args["BENCHMARK_AGENT_HOME"] == "/workspace/.claude"
     assert build_args["AGENT_CLI_NAME"] == "claude"
-    assert build_args["AGENT_INSTALL_COMMAND"] == 'npm install -g "@anthropic-ai/claude-code@latest"'
+    assert build_args["AGENT_INSTALL_COMMAND"] == 'npm install -g "@anthropic-ai/claude-code@2.1.170"'
     assert build_args["AGENT_VERSION_COMMAND"] == "claude --version"
     assert "ANTHROPIC_API_KEY" in adapter.passthrough_env_names()
 

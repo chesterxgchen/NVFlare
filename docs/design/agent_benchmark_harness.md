@@ -932,7 +932,7 @@ build:
     BENCHMARK_DOCKER_AGENT: claude
     BENCHMARK_AGENT_HOME: /workspace/.claude
     AGENT_CLI_NAME: claude
-    AGENT_INSTALL_COMMAND: npm install -g "@anthropic-ai/claude-code@latest"
+    AGENT_INSTALL_COMMAND: npm install -g "@anthropic-ai/claude-code@2.1.170"
     AGENT_VERSION_COMMAND: claude --version
 
 runtime_env:
