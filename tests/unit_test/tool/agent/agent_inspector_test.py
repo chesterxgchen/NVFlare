@@ -137,10 +137,28 @@ def test_inspect_stops_and_caps_skips_after_file_limit(tmp_path):
 
     data = inspect_path(root, max_files=3)
 
+    assert data["scan"]["entries_visited"] == 3
     assert data["scan"]["files_considered"] == 3
     assert data["scan"]["files_scanned"] == 3
     assert data["scan"]["files_skipped_count"] == 1
     assert data["scan"]["files_skipped_truncated"] is False
     assert data["scan"]["files_skipped"] == [
         {"code": "FILE_LIMIT_REACHED", "path": "train_03.py", "message": "file scan limit reached"}
+    ]
+
+
+def test_inspect_file_limit_counts_non_python_entries(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    for index in range(5):
+        (root / f"metadata_{index:02d}.json").write_text("{}\n", encoding="utf-8")
+    (root / "train.py").write_text("import torch\n", encoding="utf-8")
+
+    data = inspect_path(root, max_files=3)
+
+    assert data["scan"]["entries_visited"] == 3
+    assert data["scan"]["files_considered"] == 3
+    assert data["scan"]["files_scanned"] == 0
+    assert data["scan"]["files_skipped"] == [
+        {"code": "FILE_LIMIT_REACHED", "path": "metadata_03.json", "message": "file scan limit reached"}
     ]

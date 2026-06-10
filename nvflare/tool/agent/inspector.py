@@ -77,6 +77,7 @@ FRAMEWORK_SKILLS = {
 class InspectState:
     root: Path
     redact: bool
+    entries_visited: int = 0
     files_considered: int = 0
     files_scanned: int = 0
     bytes_scanned: int = 0
@@ -135,6 +136,7 @@ def inspect_path(
             "max_evidence_per_bucket": MAX_EVIDENCE_PER_BUCKET,
         },
         "scan": {
+            "entries_visited": state.entries_visited,
             "files_considered": state.files_considered,
             "files_scanned": state.files_scanned,
             "bytes_scanned": state.bytes_scanned,
@@ -187,11 +189,12 @@ def _inspect_dir(root: Path, state: InspectState, *, max_files: int, max_file_by
                     continue
                 stack.append(child)
                 continue
-            if not child.is_file():
-                continue
-            if state.files_considered >= max_files:
+            if state.entries_visited >= max_files:
                 _add_skip(state, _skip_entry(child, state, "FILE_LIMIT_REACHED", "file scan limit reached"))
                 return
+            state.entries_visited += 1
+            if not child.is_file():
+                continue
             _inspect_file(child, state, max_file_bytes)
 
 

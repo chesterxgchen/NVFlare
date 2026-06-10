@@ -41,6 +41,15 @@ def string_tuple(value: Any, *, label: str, config_path: Path) -> tuple[str, ...
     return tuple(str(item) for item in value)
 
 
+def format_config_value(value: Any, values: Mapping[str, str], *, label: str, config_path: Path) -> str:
+    try:
+        return str(value).format(**values)
+    except KeyError as exc:
+        raise ValueError(f"{config_path}: unknown placeholder {{{exc.args[0]}}} in {label}") from exc
+    except ValueError as exc:
+        raise ValueError(f"{config_path}: invalid template syntax in {label}: {exc}") from exc
+
+
 def validate_skills_setup(skills: Mapping[str, Any], config_path: Path) -> None:
     setup = required_mapping(skills, "setup", config_path)
     setup_type = str(setup.get("type") or "")
@@ -170,7 +179,14 @@ class ConfigurableSdkAdapter(SdkAdapter):
         }
         source_type = str(self._cfg.source.get("type"))
         if source_type == "repo":
-            repo_path = Path(str(self._cfg.source["path"]).format(**values)).expanduser()
+            repo_path = Path(
+                format_config_value(
+                    self._cfg.source["path"],
+                    values,
+                    label="source.path",
+                    config_path=self._cfg.source_path,
+                )
+            ).expanduser()
             return SdkSource(
                 source_type="repo",
                 repo_path=repo_path,
@@ -184,8 +200,22 @@ class ConfigurableSdkAdapter(SdkAdapter):
         return SdkSource(
             source_type="wheels",
             wheel_paths={
-                "skills": Path(str(wheels["skills"]).format(**values)).expanduser(),
-                "baseline": Path(str(wheels["baseline"]).format(**values)).expanduser(),
+                "skills": Path(
+                    format_config_value(
+                        wheels["skills"],
+                        values,
+                        label="source.wheels.skills",
+                        config_path=self._cfg.source_path,
+                    )
+                ).expanduser(),
+                "baseline": Path(
+                    format_config_value(
+                        wheels["baseline"],
+                        values,
+                        label="source.wheels.baseline",
+                        config_path=self._cfg.source_path,
+                    )
+                ).expanduser(),
             },
         )
 
@@ -222,7 +252,18 @@ class ConfigurableSdkAdapter(SdkAdapter):
         source_path = raw.get("source_path")
         return SdkSkillsSetup(
             setup_type=setup_type,
-            source_path=Path(str(source_path).format(**values)).expanduser() if source_path else None,
+            source_path=(
+                Path(
+                    format_config_value(
+                        source_path,
+                        values,
+                        label="skills.setup.source_path",
+                        config_path=self._cfg.source_path,
+                    )
+                ).expanduser()
+                if source_path
+                else None
+            ),
             install_command=str(raw.get("install_command", "")),
             list_command=str(raw.get("list_command", "")),
             install_output=str(raw.get("install_output", "skills_build_install.json")),

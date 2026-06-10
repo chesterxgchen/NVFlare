@@ -47,13 +47,22 @@ def run_command(command: str, output_path: Path) -> None:
         raise SystemExit("skills.setup.type=command requires SKILLS_INSTALL_COMMAND")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as stream:
-        subprocess.run(["/bin/bash", "-lc", command], check=True, stdout=stream)
+        subprocess.run(["/bin/bash", "-c", command], check=True, stdout=stream)
 
 
 def visible_files(path: Path) -> list[str]:
     if not path.is_dir():
         return []
-    return sorted(str(item.relative_to(path)) for item in path.rglob("*") if item.is_file())
+    files: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(path, followlinks=False):
+        directory = Path(dirpath)
+        dirnames[:] = [name for name in dirnames if not (directory / name).is_symlink()]
+        for name in filenames:
+            item = directory / name
+            if item.is_symlink() or not item.is_file():
+                continue
+            files.append(str(item.relative_to(path)))
+    return sorted(files)
 
 
 def copy_skills_folder() -> dict:

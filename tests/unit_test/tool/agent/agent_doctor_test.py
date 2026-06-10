@@ -136,6 +136,40 @@ def test_doctor_online_uses_read_only_status_check(monkeypatch, tmp_path):
     assert fake_session.closed is True
 
 
+def test_doctor_online_reports_timeout_separately(monkeypatch, tmp_path):
+    _configure_active_startup_kit(tmp_path, monkeypatch)
+
+    class FakeSession:
+        def check_status(self, target_type, client_names):
+            raise TimeoutError("status timed out")
+
+        def close(self):
+            return None
+
+    with patch("nvflare.tool.cli_session.new_cli_session_for_args", return_value=FakeSession()):
+        data = doctor_environment(online=True, args=SimpleNamespace(kit_id=None, startup_kit=None))
+
+    assert data["online"]["status"] == "timeout"
+    assert data["online"]["findings"][0]["code"] == "ONLINE_CHECK_TIMEOUT"
+
+
+def test_doctor_online_generic_error_includes_exception_type(monkeypatch, tmp_path):
+    _configure_active_startup_kit(tmp_path, monkeypatch)
+
+    class FakeSession:
+        def check_status(self, target_type, client_names):
+            raise RuntimeError("unexpected")
+
+        def close(self):
+            return None
+
+    with patch("nvflare.tool.cli_session.new_cli_session_for_args", return_value=FakeSession()):
+        data = doctor_environment(online=True, args=SimpleNamespace(kit_id=None, startup_kit=None))
+
+    assert data["online"]["status"] == "error"
+    assert data["online"]["findings"][0]["code"] == "ONLINE_CHECK_FAILED_RUNTIMEERROR"
+
+
 def test_doctor_online_skips_when_session_would_create_download_dir(monkeypatch, tmp_path):
     home = tmp_path / "home"
     admin_dir = tmp_path / "active-admin"
