@@ -206,7 +206,7 @@ def run_one(argv: list[str]) -> int:
     options = parse_host_cli_options(argv, "run-one")
     try:
         adapter = agent_adapter_from_options(options)
-        images = ImageConfig.for_adapter(adapter)
+        images = image_config_from_adapter(adapter)
         compilation = one_compilation_from_options(options)
     except ScenarioValidationError as exc:
         return emit_scenario_validation_error(exc)
@@ -480,7 +480,14 @@ def one_compilation_from_options(options) -> ScenarioCompilation:
 
 
 def image_config_for_agent(agent: str) -> ImageConfig:
-    return ImageConfig.for_adapter(load_agent_adapter(agent))
+    return image_config_from_adapter(load_agent_adapter(agent))
+
+
+def image_config_from_adapter(adapter) -> ImageConfig:
+    try:
+        return ImageConfig.for_adapter(adapter)
+    except ValueError as exc:
+        raise ScenarioValidationError(str(exc)) from exc
 
 
 def model_was_explicit_for_entry(entry: dict[str, object]) -> bool:
@@ -767,9 +774,9 @@ def run_pair(argv: list[str]) -> int:
     try:
         adapter = agent_adapter_from_options(options)
         compilation = pair_compilation_from_options(options)
+        images = image_config_from_adapter(adapter)
     except ScenarioValidationError as exc:
         return emit_scenario_validation_error(exc, logs=logs)
-    images = ImageConfig.for_adapter(adapter)
 
     emit(f"Result root: {result_root}", logs=logs)
     emit(f"Console log: {console_log}", logs=logs)
@@ -859,9 +866,9 @@ def run_interactive(argv: list[str]) -> int:
     try:
         adapter = agent_adapter_from_options(options)
         agent_model, model_was_explicit = agent_model_from_options(adapter, options)
+        images = image_config_from_adapter(adapter)
     except ScenarioValidationError as exc:
         return emit_scenario_validation_error(exc)
-    images = ImageConfig.for_adapter(adapter)
     runtime_auth_options = runtime_auth_options_from_host_cli(options)
     host_agent_home = runtime_auth_options.agent_home or absolute_path(str(adapter.host_home_from_env(os.environ)))
     mount_agent_auth = (

@@ -884,7 +884,7 @@ def test_scenario_summary_failed_when_report_generation_fails(tmp_path, monkeypa
     assert "render failed" in summary["report_generation_status"]["message"]
 
 
-def test_scenario_summary_marks_report_generation_pending_before_render(tmp_path, monkeypatch):
+def test_scenario_summary_keeps_report_generation_pending_in_memory_only(tmp_path, monkeypatch):
     from assist_tools.skills_benchmark.skills.harness import scenarios
     from assist_tools.skills_benchmark.skills.harness.common import write_json
 
@@ -907,8 +907,8 @@ def test_scenario_summary_marks_report_generation_pending_before_render(tmp_path
     )
 
     def assert_pending_report_status(root, _summary):
-        interim = json.loads((root / "scenario_summary.json").read_text(encoding="utf-8"))
-        assert interim["report_generation_status"]["status"] == "pending"
+        assert _summary["report_generation_status"]["status"] == "pending"
+        assert not (root / "scenario_summary.json").exists()
 
     monkeypatch.setattr(scenarios, "write_scenario_report", assert_pending_report_status)
 
@@ -917,6 +917,64 @@ def test_scenario_summary_marks_report_generation_pending_before_render(tmp_path
     assert summary["report_generation_status"]["status"] == "ok"
     saved = json.loads((result_root / "scenario_summary.json").read_text(encoding="utf-8"))
     assert saved["report_generation_status"]["status"] == "ok"
+
+
+def test_scenario_summary_replaces_stale_summary_atomically(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness import scenarios
+    from assist_tools.skills_benchmark.skills.harness.common import write_json
+
+    raw = base_scenario(tmp_path)
+    raw["comparison"] = {"type": "one", "mode": "with_skills"}
+    compilation = scenarios.compile_scenario(raw, base_dir=tmp_path).write(tmp_path / "results")
+    result_root = tmp_path / "results"
+    (result_root / "scenario_summary.json").write_text('{"status": "stale"}', encoding="utf-8")
+    entry = compilation.run_plan["entries"][0]
+    record_dir = result_root / entry["record_dir"]
+    record_dir.mkdir(parents=True)
+    write_json(record_dir / "container_exit_code.json", {"exit_code": 0})
+    write_json(
+        record_dir / "record_summary.json",
+        {
+            "agent_process_passed": True,
+            "final_container_exit_code": 0,
+            "source_input_immutable_policy": {"status": "pass"},
+            "required_validation_metric_status": "not_required",
+        },
+    )
+
+    summary = scenarios.write_scenario_summaries(result_root, {entry["run_id"]: 0})
+
+    saved = json.loads((result_root / "scenario_summary.json").read_text(encoding="utf-8"))
+    assert saved["status"] == summary["status"]
+    assert saved["status"] != "stale"
+    assert saved["report_generation_status"]["status"] == "ok"
+    assert not (result_root / ".scenario_summary.json.tmp").exists()
+
+
+def test_write_json_atomic_removes_temp_file_when_write_fails(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness.scenario_summaries import write_json_atomic
+
+    target = tmp_path / "scenario_summary.json"
+    tmp_file = tmp_path / ".scenario_summary.json.tmp"
+    original_write_text = Path.write_text
+
+    def fail_after_partial_write(self, data, *args, **kwargs):
+        if self == tmp_file:
+            original_write_text(self, "partial", encoding="utf-8")
+            raise OSError("disk full")
+        return original_write_text(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_after_partial_write)
+
+    try:
+        write_json_atomic(target, {"status": "ok"})
+    except OSError as exc:
+        assert "disk full" in str(exc)
+    else:
+        raise AssertionError("partial temp write failure should propagate")
+
+    assert not tmp_file.exists()
+    assert not target.exists()
 
 
 def test_comparison_group_summary_ignores_non_numeric_token_count():

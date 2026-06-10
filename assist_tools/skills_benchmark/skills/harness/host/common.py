@@ -35,6 +35,35 @@ PROMPT_FILE_NAME = "benchmark_prompt.txt"
 CONTAINER_PROMPT_DIR = "/workspace/prompts"
 CONTAINER_PROMPT_PATH = f"{CONTAINER_PROMPT_DIR}/{PROMPT_FILE_NAME}"
 OUTPUT_LOCK = threading.Lock()
+__all__ = [
+    "SCRIPT_DIR",
+    "PROMPT_FILE_NAME",
+    "CONTAINER_PROMPT_DIR",
+    "CONTAINER_PROMPT_PATH",
+    "OUTPUT_LOCK",
+    "HostCliOptions",
+    "ImageConfig",
+    "CaseConfig",
+    "absolute_path",
+    "add_agent_auth_mounts",
+    "add_agent_passthrough_env",
+    "benchmark_agent_adapter_from_env",
+    "benchmark_agent_from_env",
+    "case_config",
+    "command_stdout_to_file",
+    "default_results_root",
+    "docker_args_for_case",
+    "docker_env",
+    "emit",
+    "env_bool",
+    "expand_home_path",
+    "optional_int_env",
+    "parse_host_cli_options",
+    "print_usage",
+    "stream_command",
+    "timestamp_slug",
+    "write_runtime_image",
+]
 
 
 def timestamp_slug() -> str:
@@ -161,7 +190,7 @@ def parse_host_cli_options(argv: list[str], command: str) -> HostCliOptions:
         elif arg == "--mode" or arg.startswith("--mode="):
             value, index = _option_value(argv, index, "--mode")
             if command != "run-one":
-                raise SystemExit(f"--mode is only supported for run-one; use pair or scenario for comparisons.")
+                raise SystemExit("--mode is only supported for run-one; use pair or scenario for comparisons.")
             if mode is not None:
                 raise SystemExit("Expected only one --mode")
             mode = value

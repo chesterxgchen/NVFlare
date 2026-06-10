@@ -237,8 +237,10 @@ def _online_summary(args) -> dict:
         return _online_error("AUTHENTICATION_FAILED", "authentication_failed", str(e), startup_kit)
     except NoConnection as e:
         return _online_error("CONNECTION_FAILED", "connection_failed", str(e), startup_kit)
+    except TimeoutError as e:
+        return _online_error("ONLINE_CHECK_TIMEOUT", "timeout", str(e), startup_kit)
     except Exception as e:
-        return _online_error("ONLINE_CHECK_FAILED", "error", str(e), startup_kit)
+        return _online_error(f"ONLINE_CHECK_FAILED_{type(e).__name__.upper()}", "error", str(e), startup_kit)
     finally:
         if session is not None:
             session.close()
