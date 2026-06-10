@@ -54,10 +54,6 @@ auth:
       target: .credentials.json
       read_only: true
       description: Claude credentials
-    - source: settings.json
-      target: settings.json
-      read_only: true
-      description: Claude settings
 
 # Runtime env outputs passed to the agent process.
 runtime_env:
