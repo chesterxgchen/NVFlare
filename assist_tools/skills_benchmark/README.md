@@ -51,27 +51,46 @@ Install or configure these on the host:
 - Docker.
 - Python 3.
 - `uv`, unless the SDK profile provides existing wheel files.
-- Codex authentication through `~/.codex/auth.json` and
-  `~/.codex/config.toml`, or `OPENAI_API_KEY`.
+- Agent authentication for the selected agent (see below).
 
-By default, the harness mounts Codex auth/config files read-only into the
-container. To use an API key instead:
+### Codex authentication
+
+Provide either `~/.codex/auth.json` + `~/.codex/config.toml`, or an API key:
 
 ```bash
-OPENAI_API_KEY="$OPENAI_API_KEY" \
-  ./bin/run.sh pair --prompt /path/to/prompt.txt /path/to/job-folder
+export OPENAI_API_KEY=...
+./bin/run.sh pair --agent codex --prompt /path/to/prompt.txt /path/to/job-folder
 ```
 
-To use a non-default Codex auth/config directory:
+### Claude authentication
+
+The harness accepts any one of these — whichever is present is used:
+
+| Method | How to provide |
+| --- | --- |
+| macOS Keychain | Run `claude login` once; `run.sh` reads the key automatically on macOS. |
+| `ANTHROPIC_API_KEY` | `export ANTHROPIC_API_KEY=sk-ant-...` before running. |
+| `ANTHROPIC_AUTH_TOKEN` | `export ANTHROPIC_AUTH_TOKEN=...` before running. |
+| `ANTHROPIC_BASE_URL` proxy | `export ANTHROPIC_BASE_URL=https://... ANTHROPIC_API_KEY=...` before running. |
+| `~/.claude/.credentials.json` | Created by `claude login` on non-macOS hosts. |
+
+On macOS, `run.sh` automatically extracts `ANTHROPIC_API_KEY` from the
+`"Claude Code"` Keychain entry when the environment variable is not already set.
+No manual `export` is required if Claude Code has been authenticated at least
+once on the host.
+
+### Common options
+
+To use a non-default agent home directory:
 
 ```bash
 ./bin/run.sh pair \
-  --agent-home /path/to/codex-home \
+  --agent-home /path/to/agent-home \
   --prompt /path/to/prompt.txt \
   /path/to/job-folder
 ```
 
-To disable host agent auth/config mounting:
+To disable host auth/config mounting entirely:
 
 ```bash
 ./bin/run.sh pair \
@@ -103,7 +122,8 @@ setup mode.
 Select another supported agent profile:
 
 ```bash
-./bin/build.sh --agent-profile claude
+./bin/build.sh --agent-profile claude   # build Claude images
+./bin/build.sh --agent-profile codex    # build Codex images (default)
 ```
 
 Use a custom profile file:
@@ -199,8 +219,13 @@ docker image ls 'agent-skills-benchmark'
 Verify the default NVFlare SDK and packaged skills in the skills image:
 
 ```bash
+# Codex
 docker run --rm agent-skills-benchmark:codex-skills \
   /bin/bash -lc 'nvflare --version; nvflare --format json agent skills list --agent codex'
+
+# Claude
+docker run --rm agent-skills-benchmark:claude-skills \
+  /bin/bash -lc 'nvflare --version; nvflare --format json agent skills list --agent claude'
 ```
 
 The images do not install job-specific training dependencies. Installing
@@ -329,8 +354,9 @@ Select Claude:
   /path/to/job-folder
 ```
 
-`--agent` defaults to `codex`. Known but unimplemented agents such as Hermes
-and OpenClaw fail during build/run preflight.
+`--agent` defaults to `codex`. Known-pending agents (`hermes`, `openclaw`) are
+registered in the registry but have no adapter or config yet; they fail during
+build/run preflight with an explicit message.
 
 `pair` is a shortcut over the scenario/run-plan execution path. It writes the
 same canonical scenario records as `scenario`.
@@ -553,7 +579,8 @@ with older scripts:
 | --- | --- |
 | `OPENAI_API_KEY` | Optional Codex API key passed through to the container. |
 | `ANTHROPIC_API_KEY` | Optional Claude API key passed through to the container. |
-| `ANTHROPIC_AUTH_TOKEN` | Optional Claude auth token passed through to the container. |
+| `ANTHROPIC_AUTH_TOKEN` | Optional Claude bearer token passed through to the container. |
+| `ANTHROPIC_BASE_URL` | Optional Claude API base URL (proxy/gateway) passed through to the container. |
 
 Compatibility fallbacks such as `BENCHMARK_AGENT`, `BENCHMARK_AGENT_MODEL`,
 `MODE`, `JOB_INPUT_DIR`, `TRAINING_CODE`, `RESULT_ROOT`, and `RESULT_DIR` still
@@ -595,15 +622,28 @@ The '<model>' model is not supported
 Pass `--model` with a model available to the account used by the selected
 agent.
 
-Auth missing:
+Auth missing (Codex):
 
 ```text
 Codex auth not mounted
 Codex config not mounted
 ```
 
-Check `--agent-home`, `~/.codex/auth.json`, and `~/.codex/config.toml`, or pass
+Check `--agent-home`, `~/.codex/auth.json`, and `~/.codex/config.toml`, or set
 `OPENAI_API_KEY`. Use `interactive` to inspect the container environment.
+
+Auth missing (Claude):
+
+```text
+Not logged in · Please run /login
+```
+
+On macOS, `run.sh` reads the API key from the `"Claude Code"` Keychain entry
+automatically — ensure Claude Code has been authenticated on this host at least
+once (`claude login`). On other platforms, set `ANTHROPIC_API_KEY`,
+`ANTHROPIC_AUTH_TOKEN`, or ensure `~/.claude/.credentials.json` exists. Use
+`--no-agent-auth-mount` combined with an exported `ANTHROPIC_API_KEY` to skip
+file mounting entirely.
 
 No report generated:
 
@@ -651,8 +691,11 @@ agent to install job dependencies from available requirements files when needed.
 
 ## Current Limits
 
-- Codex and Claude adapters are implemented. Hermes and OpenClaw are registered
-  as known-pending adapters.
+- Codex and Claude adapters are implemented. `hermes` and `openclaw` are
+  registered as known-pending adapters with no config or Docker support yet.
+- Benchmark containers run as a non-root user (`uid=9999`). Agent CLIs that
+  require root will fail; agent CLIs that block root (e.g. Claude Code
+  `--dangerously-skip-permissions`) work correctly.
 - The harness does not require or validate a structured job schema.
 - The harness does not infer a framework or workflow from the job folder. The
   prompt and job documentation define the requested task.
