@@ -32,6 +32,16 @@ Examples:
 EOF
 }
 
+# On macOS, Claude Code stores its API key in the Keychain rather than a file.
+# Extract it so passthrough_env can forward it into the benchmark container.
+if [[ -z "${ANTHROPIC_API_KEY:-}" ]] && command -v security &>/dev/null; then
+  _keychain_key="$(security find-generic-password -s "Claude Code" -w 2>/dev/null || true)"
+  if [[ -n "${_keychain_key}" ]]; then
+    export ANTHROPIC_API_KEY="${_keychain_key}"
+  fi
+  unset _keychain_key
+fi
+
 if [[ "$#" -eq 0 ]]; then
   usage
   exit 2
