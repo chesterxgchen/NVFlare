@@ -13,5 +13,9 @@
       "ToolSearch(*)",
       "Workflow(*)"
     ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
   }
 }

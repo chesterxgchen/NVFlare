@@ -47,7 +47,14 @@ def run_command(command: str, output_path: Path) -> None:
         raise SystemExit("skills.setup.type=command requires SKILLS_INSTALL_COMMAND")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as stream:
-        subprocess.run(["/bin/bash", "-c", command], check=True, stdout=stream)
+        try:
+            # Developer-trusted: install_command comes from the SDK profile baked into the image at build time.
+            subprocess.run(["/bin/bash", "-c", command], check=True, stdout=stream)
+        except subprocess.CalledProcessError as exc:
+            raise SystemExit(
+                f"skills.setup command failed with exit code {exc.returncode}: {command}. "
+                f"Captured stdout: {output_path}"
+            ) from exc
 
 
 def visible_files(path: Path) -> list[str]:

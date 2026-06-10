@@ -397,6 +397,78 @@ def bash_blocked_diagnostic(run: dict[str, Any]) -> str | None:
     )
 
 
+def job_run_status(run: dict[str, Any]) -> str:
+    """Return one of 'completed', 'started_failed', 'not_started', or 'unknown'."""
+    if not run.get("available"):
+        return "unknown"
+    hint_counts = run.get("activity", {}).get("hint_counts") or {}
+    sim_count = int(hint_counts.get("simulation", 0) or 0)
+    py_count = int(hint_counts.get("python_job_py", 0) or 0)
+    attempted = sim_count > 0 or py_count > 0
+    if not attempted:
+        # Check agent_events_text for any simulation/job command directly
+        events_text = str(run.get("agent_events_text") or "")
+        if re.search(r"\bpython(?:3)?\s+[A-Za-z0-9_./-]*job[A-Za-z0-9_./-]*\.py\b", events_text):
+            attempted = True
+    if not attempted:
+        return "not_started"
+    if last_successful_job_event(run):
+        return "completed"
+    return "started_failed"
+
+
+def job_run_status_reason(run: dict[str, Any]) -> str:
+    """Return a concise human-readable reason string for the job run status."""
+    if not run.get("available"):
+        return "run artifacts not available"
+    status = job_run_status(run)
+    hint_counts = run.get("activity", {}).get("hint_counts") or {}
+    sim_count = int(hint_counts.get("simulation", 0) or 0)
+    py_count = int(hint_counts.get("python_job_py", 0) or 0)
+
+    # Check Bash blocking first — it's the most actionable reason for not_started
+    events_text = str(run.get("agent_events_text") or "")
+    bash_blocked_count = events_text.lower().count("requested permissions to use bash")
+
+    if status == "not_started":
+        if bash_blocked_count > 0:
+            return (
+                f"Bash blocked {bash_blocked_count} time(s) — simulation never ran "
+                f"(permission errors prevented tool use)"
+            )
+        activity = run.get("activity") if isinstance(run.get("activity"), dict) else {}
+        denials = activity.get("permission_denials") or []
+        if denials:
+            denial_summary = "; ".join(str(d) for d in denials[:3])
+            return f"simulation not attempted — permission denials: {denial_summary}"
+        return "simulation not attempted — agent did not run a job.py command"
+
+    if status == "started_failed":
+        if bash_blocked_count > 0:
+            return (
+                f"simulation command ran but Bash was blocked {bash_blocked_count} time(s); "
+                f"simulation did not complete successfully"
+            )
+        # Look for a failed job event
+        events = agent_command_events(run)
+        for event in reversed(events):
+            if command_failed(event) and is_simulation_or_job_command(str(event.get("command") or "")):
+                summary = command_error_summary(str(event.get("output") or ""))
+                return f"simulation command ran but exited with error — {truncate(summary, 200)}"
+        return "simulation command ran but did not complete successfully"
+
+    if status == "completed":
+        event = last_successful_job_event(run)
+        output = str(event.get("output") or "") if event else ""
+        if "Finished" in output:
+            return "simulation completed — FL workflow reached Finished state"
+        if sim_count > 0 or py_count > 0:
+            return f"simulation completed successfully (hint count: simulation={sim_count}, python_job_py={py_count})"
+        return "simulation completed successfully"
+
+    return "status unknown — no simulation hint counts or events found"
+
+
 def command_failure_diagnostics(run: dict[str, Any], limit: int = 3) -> list[str]:
     events = agent_command_events(run)
     failed_events = [event for event in events if command_failed(event)]
@@ -1769,6 +1841,7 @@ def failure_analysis_section(runs: dict[str, dict[str, Any]], modes: list[str]) 
         status_kind = run_status_kind(run)
         lines.append(f"### {label}")
         lines.append("")
+        lines.append(f"- Job run status: {job_run_status(run)} — {job_run_status_reason(run)}")
         if status_kind == "passed":
             metric = metric_display(run, comparable_metric_name(runs))
             label_text = metric_value_label(run, comparable_metric_name(runs))
