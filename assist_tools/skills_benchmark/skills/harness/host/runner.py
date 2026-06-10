@@ -27,6 +27,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterable
 
+from ..agents.parsers import parse_cached_usage_and_activity
 from ..agents.registry import DEFAULT_BENCHMARK_AGENT, load_agent_adapter
 from ..common import load_json, write_json
 from ..modes import PAIR_RUNS, mode_spec
@@ -751,29 +752,32 @@ def write_report_generator_status(result_root: Path, statuses: dict[str, int]) -
 def write_benchmark_reports(result_root: Path, *, logs: Iterable[Path] = ()) -> dict[str, int]:
     statuses: dict[str, int] = {}
     try:
-        metrics_report.write_reports(result_root, BENCHMARK_METRICS_TITLE)
-    except Exception as exc:
-        write_host_error(result_root / "metrics_report_error.json", exc)
-        emit(f"Metrics report failed: {type(exc).__name__}: {exc}", logs=logs, stderr=True)
-        statuses["metrics_report"] = 1
-    else:
-        statuses["metrics_report"] = 0
+        try:
+            metrics_report.write_reports(result_root, BENCHMARK_METRICS_TITLE)
+        except Exception as exc:
+            write_host_error(result_root / "metrics_report_error.json", exc)
+            emit(f"Metrics report failed: {type(exc).__name__}: {exc}", logs=logs, stderr=True)
+            statuses["metrics_report"] = 1
+        else:
+            statuses["metrics_report"] = 0
 
-    try:
-        runs = benchmark_insights.collect_benchmark_runs(result_root)
-        (result_root / "benchmark_insights.md").write_text(
-            benchmark_insights.benchmark_report(result_root, runs),
-            encoding="utf-8",
-        )
-    except Exception as exc:
-        write_host_error(result_root / "benchmark_insights_error.json", exc)
-        emit(f"Benchmark insights report failed: {type(exc).__name__}: {exc}", logs=logs, stderr=True)
-        statuses["benchmark_insights"] = 1
-    else:
-        statuses["benchmark_insights"] = 0
+        try:
+            runs = benchmark_insights.collect_benchmark_runs(result_root)
+            (result_root / "benchmark_insights.md").write_text(
+                benchmark_insights.benchmark_report(result_root, runs),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            write_host_error(result_root / "benchmark_insights_error.json", exc)
+            emit(f"Benchmark insights report failed: {type(exc).__name__}: {exc}", logs=logs, stderr=True)
+            statuses["benchmark_insights"] = 1
+        else:
+            statuses["benchmark_insights"] = 0
 
-    write_report_generator_status(result_root, statuses)
-    return statuses
+        write_report_generator_status(result_root, statuses)
+        return statuses
+    finally:
+        parse_cached_usage_and_activity.cache_clear()
 
 
 def emit_benchmark_report_paths(result_root: Path, *, logs: Iterable[Path] = ()) -> None:

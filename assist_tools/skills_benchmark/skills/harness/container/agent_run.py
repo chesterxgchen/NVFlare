@@ -461,8 +461,8 @@ def prepare_input_workspace(config: AgentRunConfig) -> tuple[int, int]:
     for name in ("input", "generated", "job_config", "workspace"):
         shutil.rmtree(config.run_root / name, ignore_errors=True)
     validate_input_symlinks(config.job_input_dir)
-    shutil.copytree(config.job_input_dir, config.run_input_dir, symlinks=True)
-    shutil.copytree(config.run_input_dir, config.run_workspace_dir, symlinks=True)
+    shutil.copytree(config.job_input_dir, config.run_input_dir, symlinks=False)
+    shutil.copytree(config.run_input_dir, config.run_workspace_dir, symlinks=False)
     for name in ("generated", "job_config"):
         (config.run_root / name).mkdir(parents=True, exist_ok=True)
     return start, epoch_seconds()

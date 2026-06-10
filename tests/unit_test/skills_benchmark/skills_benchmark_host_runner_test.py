@@ -167,6 +167,69 @@ def test_host_docker_args_use_migrated_container_entrypoint(tmp_path):
     assert "RECORDS_DIR=/workspace/results/records" in args
 
 
+def test_add_agent_auth_mounts_rejects_symlinked_optional_file(tmp_path):
+    if not hasattr(os, "symlink"):
+        return
+    from assist_tools.skills_benchmark.skills.harness.agents.base import DockerMount
+    from assist_tools.skills_benchmark.skills.harness.host.common import add_agent_auth_mounts
+
+    real_auth = tmp_path / "real-auth.json"
+    real_auth.write_text("{}\n", encoding="utf-8")
+    linked_auth = tmp_path / "linked-auth.json"
+    linked_auth.symlink_to(real_auth)
+    args = []
+
+    add_agent_auth_mounts(
+        args,
+        mounts=[DockerMount(host_path=linked_auth, container_path="/workspace/.agent/auth.json")],
+    )
+
+    assert args == []
+
+
+def test_add_agent_auth_mounts_rejects_symlinked_required_file(tmp_path):
+    if not hasattr(os, "symlink"):
+        return
+    from assist_tools.skills_benchmark.skills.harness.agents.base import DockerMount
+    from assist_tools.skills_benchmark.skills.harness.host.common import add_agent_auth_mounts
+
+    real_auth = tmp_path / "real-auth.json"
+    real_auth.write_text("{}\n", encoding="utf-8")
+    linked_auth = tmp_path / "linked-auth.json"
+    linked_auth.symlink_to(real_auth)
+
+    try:
+        add_agent_auth_mounts(
+            [],
+            mounts=[DockerMount(host_path=linked_auth, container_path="/workspace/.agent/auth.json", required=True)],
+        )
+    except SystemExit as exc:
+        assert "must not be a symlink" in str(exc)
+    else:
+        raise AssertionError("required symlinked auth file should be rejected")
+
+
+def test_write_benchmark_reports_clears_agent_parser_cache(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness.host import runner
+
+    cleared = {"count": 0}
+
+    class CachedParser:
+        @staticmethod
+        def cache_clear():
+            cleared["count"] += 1
+
+    monkeypatch.setattr(runner, "parse_cached_usage_and_activity", CachedParser)
+    monkeypatch.setattr(runner.metrics_report, "write_reports", lambda _root, _title: None)
+    monkeypatch.setattr(runner.benchmark_insights, "collect_benchmark_runs", lambda _root: {})
+    monkeypatch.setattr(runner.benchmark_insights, "benchmark_report", lambda _root, _runs: "report\n")
+
+    statuses = runner.write_benchmark_reports(tmp_path)
+
+    assert statuses == {"metrics_report": 0, "benchmark_insights": 0}
+    assert cleared["count"] == 1
+
+
 def test_enforce_result_size_budget_reports_oversized_results(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
     from assist_tools.skills_benchmark.skills.harness.host.common import CaseConfig, ImageConfig

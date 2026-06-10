@@ -38,6 +38,7 @@ MAX_JSON_RECORD_FILES = 10000
 MAX_JSON_RECORD_FILE_BYTES = 5 * 1024 * 1024
 MAX_EVENTS_TEXT_BYTES = 20 * 1024 * 1024
 MAX_EVALS_FILE_BYTES = 512 * 1024
+MAX_SKILL_NAME_EVENT_IDENTITY_CANDIDATES = 50
 UNAVAILABLE_STRUCTURE_QUALITY_SIGNAL = {
     "status": "unavailable",
     "reason": "structure quality was not captured for this run",
@@ -358,6 +359,7 @@ def identity_occurrence_count(text: str, candidate: str) -> int:
 def infer_from_events(events_text: str) -> dict[str, Any]:
     scores: dict[str, int] = {}
     source: dict[str, str] = {}
+    parser_warnings: list[str] = []
 
     def add(name: str, points: int, reason: str) -> None:
         if not valid_identity_token(name):
@@ -372,8 +374,15 @@ def infer_from_events(events_text: str) -> dict[str, Any]:
         add(match.group(1), 100, "agent_skill_arg")
 
     skill_names = sorted(
-        (name for name in available_skill_names() if valid_identity_token(name)), key=len, reverse=True
+        (name for name in available_skill_names() if valid_identity_token(name)),
+        key=lambda name: (-len(name), name),
     )
+    if len(skill_names) > MAX_SKILL_NAME_EVENT_IDENTITY_CANDIDATES:
+        parser_warnings.append(
+            "installed skill name event inference was capped at "
+            f"{MAX_SKILL_NAME_EVENT_IDENTITY_CANDIDATES} candidates"
+        )
+        skill_names = skill_names[:MAX_SKILL_NAME_EVENT_IDENTITY_CANDIDATES]
     if skill_names:
         skill_pattern = re.compile("|".join(re.escape(name) for name in skill_names))
         for name, occurrences in Counter(match.group(0) for match in skill_pattern.finditer(events_text)).items():
@@ -409,6 +418,7 @@ def infer_from_events(events_text: str) -> dict[str, Any]:
         "skill_source": source.get(skill, "") if skill else "",
         "case_source": case_source,
         "skill_scores": dict(sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:5]),
+        "parser_warnings": parser_warnings,
         "used_as_fallback": False,
     }
 

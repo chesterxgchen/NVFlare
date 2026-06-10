@@ -70,6 +70,8 @@ launch:
   argv:
     - claude
     - --dangerously-skip-permissions
+    - --allowedTools
+    - "Bash(*) Read Write Edit WebFetch WebSearch Agent Task Skill ToolSearch Workflow"
     - --output-format
     - stream-json
     - --verbose

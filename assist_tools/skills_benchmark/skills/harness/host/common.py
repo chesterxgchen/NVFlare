@@ -441,11 +441,21 @@ def add_agent_auth_mounts(
     prefix: str | None = None,
 ) -> None:
     for mount in mounts:
-        if mount.host_path.is_file():
+        if mount.host_path.is_file() and not mount.host_path.is_symlink():
             suffix = ":ro" if mount.read_only else ""
             args.extend(["-v", f"{mount.host_path}:{mount.container_path}{suffix}"])
             label = mount.description or "agent auth/config"
             emit(f"Mounting {label}: {mount.host_path} -> {mount.container_path}", logs=logs, prefix=prefix)
+        elif mount.host_path.is_symlink():
+            if mount.required:
+                raise SystemExit(f"Required agent auth/config file must not be a symlink: {mount.host_path}")
+            label = mount.description or "agent auth/config"
+            emit(
+                f"{label} not mounted; symlinked path is not allowed: {mount.host_path}",
+                logs=logs,
+                prefix=prefix,
+                stderr=True,
+            )
         elif mount.required:
             raise SystemExit(f"Required agent auth/config file is missing: {mount.host_path}")
         else:

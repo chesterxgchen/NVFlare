@@ -18,6 +18,28 @@ import os
 from pathlib import Path
 
 
+def test_common_write_json_preserves_existing_file_on_replace_failure(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness import common
+
+    target = tmp_path / "record.json"
+    target.write_text('{"status": "old"}', encoding="utf-8")
+
+    def fail_replace(_src, _dst):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(common.os, "replace", fail_replace)
+
+    try:
+        common.write_json(target, {"status": "new"})
+    except OSError as exc:
+        assert "replace failed" in str(exc)
+    else:
+        raise AssertionError("replace failure should propagate")
+
+    assert target.read_text(encoding="utf-8") == '{"status": "old"}'
+    assert list(tmp_path.glob(".record.json.*.tmp")) == []
+
+
 def test_record_identity_prefers_direct_skill_and_case():
     from assist_tools.skills_benchmark.skills.harness.record_identity import record_case, record_skill
 
@@ -211,6 +233,43 @@ def test_prepare_input_workspace_rejects_symlink_escaping_input(tmp_path):
         assert "symlink escapes input directory" in str(exc)
     else:
         raise AssertionError("job input symlinks that escape the input directory should be rejected")
+
+
+def test_prepare_input_workspace_dereferences_safe_symlinks(tmp_path):
+    if not hasattr(os, "symlink"):
+        return
+    from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig, prepare_input_workspace
+
+    job = tmp_path / "job"
+    job.mkdir()
+    job.joinpath("source.txt").write_text("inside\n", encoding="utf-8")
+    job.joinpath("link.txt").symlink_to(job / "source.txt")
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+    config = AgentRunConfig(
+        mode="with_skills",
+        use_preinstalled_skills=True,
+        job_input_dir=job,
+        result_dir=result_dir,
+        records_dir=result_dir / "records",
+        run_root=tmp_path / "run",
+        prompt_source=tmp_path / "prompt.txt",
+        progress_interval_seconds=0,
+        sdk_image_kind="test-skills",
+        agent="test",
+        agent_model="test-model",
+        agent_home=tmp_path / ".agent",
+        agent_model_was_explicit=False,
+    )
+
+    prepare_input_workspace(config)
+
+    copied_input = config.run_input_dir / "link.txt"
+    copied_workspace = config.run_workspace_dir / "link.txt"
+    assert copied_input.read_text(encoding="utf-8") == "inside\n"
+    assert copied_workspace.read_text(encoding="utf-8") == "inside\n"
+    assert not copied_input.is_symlink()
+    assert not copied_workspace.is_symlink()
 
 
 def test_validate_input_symlinks_does_not_traverse_symlinked_directory_loop(tmp_path):
@@ -545,6 +604,18 @@ def test_infer_from_events_scores_installed_skill_names_in_single_pass(monkeypat
 
     assert inferred["skill"] == "nvflare-b"
     assert inferred["skill_source"] == "installed_skill_name_seen_in_events"
+
+
+def test_infer_from_events_caps_installed_skill_name_candidates(monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness import records
+
+    skill_names = {f"nvflare-skill-{index:03d}" for index in range(75)}
+    monkeypatch.setattr(records, "available_skill_names", lambda: skill_names)
+
+    inferred = records.infer_from_events("nvflare-skill-001 did work.")
+
+    assert inferred["parser_warnings"]
+    assert "capped at 50 candidates" in inferred["parser_warnings"][0]
 
 
 def test_infer_from_events_uses_case_id_boundaries(monkeypatch):

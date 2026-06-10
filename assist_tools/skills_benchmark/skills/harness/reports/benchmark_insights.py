@@ -389,10 +389,10 @@ def bash_blocked_diagnostic(run: dict[str, Any]) -> str | None:
         impact = " The simulation step was never run."
     return (
         f"Bash tool was blocked {blocked_count} time(s) with 'requested permissions' errors. "
-        f"--dangerously-skip-permissions is set in the agent launch profile, but the mounted "
-        f"~/.claude/settings.json (specifically its 'sandbox' section) likely overrides it. "
-        f"Fix: remove settings.json from the auth mount in the agent profile, or strip the sandbox "
-        f"section from the container copy.{impact}"
+        f"Despite --dangerously-skip-permissions being set, Claude Code 2.1.x still blocks Bash "
+        f"unless it is also listed in --allowedTools. "
+        f"Fix: add --allowedTools 'Bash(*)' (and other required tools) to the agent launch argv "
+        f"in the agent profile, then rebuild the Docker image.{impact}"
     )
 
 
