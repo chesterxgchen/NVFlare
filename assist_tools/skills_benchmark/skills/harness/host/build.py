@@ -349,6 +349,7 @@ def copy_harness_package(context: Path) -> None:
     package_root.mkdir(parents=True)
     shutil.copy2(REPO_ROOT / "assist_tools" / "__init__.py", context / "assist_tools" / "__init__.py")
     shutil.copy2(SCRIPT_DIR / "__init__.py", context / "assist_tools" / "skills_benchmark" / "__init__.py")
+    copy_harness(SCRIPT_DIR / "config", context / "assist_tools" / "skills_benchmark" / "config")
     shutil.copy2(SCRIPT_DIR / "skills" / "__init__.py", package_root / "__init__.py")
     copy_harness(SCRIPT_DIR / "skills" / "harness", package_root / "harness")
 
