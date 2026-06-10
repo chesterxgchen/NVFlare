@@ -15,8 +15,8 @@ Commands:
   scenario         Run a compiled scenario YAML.
   replay           Rebuild parser artifacts and scenario reports from captured results.
   interactive      Start an interactive benchmark container.
-  with-skills      Shortcut for: one --mode with_skills.
-  without-skills   Shortcut for: one --mode without_skills.
+  with-skills      Shortcut that runs one benchmark case with MODE=with_skills.
+  without-skills   Shortcut that runs one benchmark case with MODE=without_skills.
 
 Examples:
   ./bin/run.sh --prompt /path/to/prompt.txt /path/to/job-folder

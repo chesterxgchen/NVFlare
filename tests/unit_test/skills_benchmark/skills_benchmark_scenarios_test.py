@@ -970,6 +970,39 @@ def test_scenario_summary_replaces_stale_summary_atomically(tmp_path, monkeypatc
     assert not (result_root / ".scenario_summary.json.tmp").exists()
 
 
+def test_scenario_summary_quality_gate_uses_container_exit_fallback(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness import scenario_summaries, scenarios
+    from assist_tools.skills_benchmark.skills.harness.common import write_json
+
+    raw = base_scenario(tmp_path)
+    raw["comparison"] = {"type": "one", "mode": "with_skills"}
+    compilation = scenarios.compile_scenario(raw, base_dir=tmp_path).write(tmp_path / "results")
+    result_root = tmp_path / "results"
+    entry = compilation.run_plan["entries"][0]
+    record_dir = result_root / entry["record_dir"]
+    record_dir.mkdir(parents=True)
+    write_json(record_dir / "container_exit_code.json", {"exit_code": 0})
+    write_json(
+        record_dir / "record_summary.json",
+        {
+            "agent_process_passed": True,
+            "source_input_immutable_policy": {"status": "pass"},
+            "required_validation_metric_status": "not_required",
+        },
+    )
+
+    summary = scenario_summaries.write_scenario_summaries(
+        result_root,
+        {entry["run_id"]: 0},
+        report_writer=lambda *_args, **_kwargs: None,
+    )
+
+    run = summary["runs"][0]
+    assert run["final_container_exit_code"] == 0
+    assert "final_container_exit_code=not_recorded" not in run["quality_gate_failures"]
+    assert run["status"] == "passed"
+
+
 def test_scenario_summary_records_per_entry_summary_exception(tmp_path, monkeypatch):
     from assist_tools.skills_benchmark.skills.harness import scenario_summaries, scenarios
 
@@ -1102,6 +1135,36 @@ def test_comparison_group_summary_ignores_non_numeric_token_count():
     summary = comparison_group_summary(group, runs_by_id)
 
     assert summary["winner"]["run_id"] == "run_00001"
+
+
+def test_comparison_group_summary_sorts_missing_token_count_last():
+    from assist_tools.skills_benchmark.skills.harness.scenarios import comparison_group_summary
+
+    group = {
+        "comparison_group_id": "group_001",
+        "comparison_type": "mode_ablation",
+        "compared_run_ids": ["run_00001", "run_00002"],
+    }
+    runs_by_id = {
+        "run_00001": {
+            "run_id": "run_00001",
+            "mode": "without_skills",
+            "quality_gate_passed": True,
+            "agent_elapsed_seconds": 2,
+            "token_count": None,
+        },
+        "run_00002": {
+            "run_id": "run_00002",
+            "mode": "with_skills",
+            "quality_gate_passed": True,
+            "agent_elapsed_seconds": 2,
+            "token_count": 5,
+        },
+    }
+
+    summary = comparison_group_summary(group, runs_by_id)
+
+    assert summary["winner"]["run_id"] == "run_00002"
 
 
 def test_aggregate_results_sorts_missing_token_median_last():
