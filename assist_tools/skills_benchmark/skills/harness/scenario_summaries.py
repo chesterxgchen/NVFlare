@@ -45,10 +45,6 @@ def number_or_none(value: Any) -> float | None:
     return float(value) if is_number(value) else None
 
 
-def number_or_zero(value: Any) -> float:
-    return float(value) if is_number(value) else 0.0
-
-
 def optional_number_sort_value(value: Any) -> tuple[int, float]:
     return (0, float(value)) if is_number(value) else (1, 0.0)
 
@@ -105,6 +101,8 @@ def quality_gate_failures(
     record: Mapping[str, Any],
     status: int | None,
     quality_gate: Mapping[str, Any] | None = None,
+    *,
+    final_container_exit_code: Any = None,
 ) -> list[str]:
     gate = quality_gate or DEFAULT_QUALITY_GATE
     failures = []
@@ -116,7 +114,9 @@ def quality_gate_failures(
         failures.append(
             "agent_process_passed" if expected_agent_passed is True else f"agent_process_passed={agent_passed}"
         )
-    final_exit = summary.get("final_container_exit_code", record.get("final_container_exit_code"))
+    final_exit = final_container_exit_code
+    if final_exit is None:
+        final_exit = summary.get("final_container_exit_code", record.get("final_container_exit_code"))
     expected_final_exit = gate.get("final_container_exit_code", 0)
     if final_exit is None:
         failures.append("final_container_exit_code=not_recorded")
@@ -192,7 +192,13 @@ def run_summary_for_entry(
     if final_exit is None:
         final_exit = container_exit.get("exit_code")
     effective_quality_gate = quality_gate or DEFAULT_QUALITY_GATE
-    failures = quality_gate_failures(summary, record, status, effective_quality_gate)
+    failures = quality_gate_failures(
+        summary,
+        record,
+        status,
+        effective_quality_gate,
+        final_container_exit_code=final_exit,
+    )
     required_metric_status = (
         record.get("required_validation_metric_status")
         or summary.get("required_validation_metric_status")
@@ -320,7 +326,11 @@ def comparison_group_summary(
     ]
     if candidates:
         winner_run = min(
-            candidates, key=lambda item: (float(item["agent_elapsed_seconds"]), number_or_zero(item.get("token_count")))
+            candidates,
+            key=lambda item: (
+                float(item["agent_elapsed_seconds"]),
+                optional_number_sort_value(item.get("token_count")),
+            ),
         )
         winner = {
             "run_id": winner_run["run_id"],
