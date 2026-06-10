@@ -429,6 +429,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--agent-profile",
+        "--agent",
+        dest="agent_profile",
         default=DEFAULT_BENCHMARK_AGENT,
         help=f"Agent profile name or YAML path. Defaults to {DEFAULT_BENCHMARK_AGENT}.",
     )

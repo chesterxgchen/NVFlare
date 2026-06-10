@@ -122,8 +122,8 @@ setup mode.
 Select another supported agent profile:
 
 ```bash
-./bin/build.sh --agent-profile claude   # build Claude images
-./bin/build.sh --agent-profile codex    # build Codex images (default)
+./bin/build.sh --agent claude   # build Claude images
+./bin/build.sh --agent codex    # build Codex images (default)
 ```
 
 Use a custom profile file:
@@ -131,7 +131,7 @@ Use a custom profile file:
 ```bash
 ./bin/build.sh \
   --sdk-profile /path/to/sdk-profile.yaml \
-  --agent-profile /path/to/agent-profile.yaml
+  --agent /path/to/agent-profile.yaml
 ```
 
 For a repo-backed SDK build, set the SDK profile source:
@@ -570,7 +570,7 @@ Use CLI flags for normal runs:
 | `--results-root` | Parent directory for timestamped result directories. |
 | `--output-dir` | Exact output directory for this run or comparison. |
 | `--sdk-profile` | SDK build profile for `bin/build.sh`. Defaults to `nvflare-profile`. |
-| `--agent-profile` | Agent build profile for `bin/build.sh`. Defaults to `codex`. |
+| `--agent` | Agent profile name or YAML path for `bin/build.sh`. Defaults to `codex`. Also accepted as `--agent-profile`. |
 
 Use environment variables only for provider-native credentials or compatibility
 with older scripts:
