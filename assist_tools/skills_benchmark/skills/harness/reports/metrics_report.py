@@ -30,6 +30,7 @@ from .benchmark_insights import (
     human_readable_status,
     markdown_cell,
     metric_name_for_runs,
+    mode_dir_for_benchmark,
     outcome_metrics_table,
     run_analysis,
     status_summary,
@@ -39,7 +40,7 @@ from .benchmark_insights import (
 def collect_runs(root: Path) -> list[dict[str, Any]]:
     runs = []
     for spec in BENCHMARK_RUNS:
-        mode_dir = root / spec.mode
+        mode_dir = mode_dir_for_benchmark(root, spec.mode)
         summary = load_json(mode_dir / "run_summary.json", {}) if mode_dir.exists() else {}
         record = load_json(final_record_path(root, spec.mode), {}) if mode_dir.exists() else {}
         activity = load_json(mode_dir / "agent_activity.json", {}) if mode_dir.exists() else {}
@@ -91,7 +92,12 @@ def numeric_comparison(rows: list[dict[str, Any]]) -> dict[str, Any]:
     for key in ("elapsed_seconds", "token_count"):
         left = without["summary"].get(key)
         right = with_skills["summary"].get(key)
-        if isinstance(left, (int, float)) and not isinstance(left, bool) and isinstance(right, (int, float)):
+        if (
+            isinstance(left, (int, float))
+            and not isinstance(left, bool)
+            and isinstance(right, (int, float))
+            and not isinstance(right, bool)
+        ):
             result[f"{key}_with_skills_minus_without_skills"] = right - left
     return result
 

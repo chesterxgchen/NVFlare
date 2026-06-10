@@ -209,6 +209,22 @@ def test_run_v1_lints_reports_unknown_nvflare_command(tmp_path):
     _assert_structured_findings(result)
 
 
+def test_run_v1_lints_reports_command_drift_before_unsafe_token(tmp_path):
+    _write_skill(
+        tmp_path / "skills",
+        "nvflare-command-skill",
+        body="Run `nvflare agent unknown $HOME/skills`.\n",
+    )
+    docs_root = _write_design_docs(tmp_path, ["nvflare-command-skill"])
+
+    result = run_v1_lints(tmp_path / "skills", docs_root=docs_root, checks=[LINT_SKILL_COMMAND_DRIFT])
+
+    assert _has_finding(result, LINT_SKILL_COMMAND_DRIFT, "skill-command-drift")
+    finding = _finding(result, LINT_SKILL_COMMAND_DRIFT, "skill-command-drift")
+    assert "unknown nvflare agent command 'unknown'" in finding["message"]
+    _assert_structured_findings(result)
+
+
 def test_run_v1_lints_parses_quoted_nvflare_command_with_shlex(tmp_path):
     _write_skill(
         tmp_path / "skills",
@@ -457,6 +473,32 @@ def test_validate_skills_filters_summary_to_requested_skill(tmp_path):
     assert result["requested_skill"] == "nvflare-valid-skill"
     assert result["summary"]["skill_count"] == 1
     assert result["findings"] == []
+
+
+def test_validate_skills_excludes_unattributed_doc_findings_for_requested_skill(tmp_path):
+    _write_skill(tmp_path / "skills", "nvflare-valid-skill")
+    docs_root = _write_design_docs(tmp_path, ["nvflare-valid-skill"])
+    docs_root.joinpath("agent_implementation_plan.md").write_text(
+        "# Agent Implementation Plan\n\n[Missing](missing.md)\n",
+        encoding="utf-8",
+    )
+
+    all_result = run_v1_lints(tmp_path / "skills", docs_root=docs_root)
+    requested_result = validate_skills(tmp_path / "skills", skill_name="nvflare-valid-skill", docs_root=docs_root)
+
+    assert _has_finding(all_result, LINT_AGENT_DOC_CROSSLINK, "agent-doc-link-missing")
+    assert requested_result["status"] == "ok"
+    assert requested_result["findings"] == []
+
+
+def test_validate_skills_keeps_global_findings_for_requested_skill(tmp_path):
+    result = validate_skills(tmp_path / "missing-skills", skill_name="nvflare-valid-skill", docs_root=tmp_path / "docs")
+
+    assert result["status"] == "failed"
+    assert result["summary"]["error_count"] == 1
+    finding = _finding(result, LINT_SKILL_FRONTMATTER, "skills-root-missing")
+    assert finding["global"] is True
+    assert "skill" not in finding
 
 
 def test_validate_skills_uses_requested_size_limit_without_mutating_default(tmp_path):

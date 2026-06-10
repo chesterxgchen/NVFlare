@@ -151,6 +151,7 @@ class LintFinding:
     line: Optional[int] = None
     code: Optional[str] = None
     skill: Optional[str] = None
+    global_finding: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         data = {
@@ -166,6 +167,8 @@ class LintFinding:
             data["code"] = self.code
         if self.skill is not None:
             data["skill"] = self.skill
+        if self.global_finding:
+            data["global"] = True
         return data
 
 
@@ -288,7 +291,9 @@ def validate_skills(
 
     if skill_name is not None:
         result["requested_skill"] = skill_name
-        result["findings"] = [finding for finding in result["findings"] if finding.get("skill") in {None, skill_name}]
+        result["findings"] = [
+            finding for finding in result["findings"] if _finding_matches_requested_skill(finding, skill_name)
+        ]
         result["summary"] = _summary_from_findings(result["findings"], _matching_skill_count(records, skill_name))
         result["status"] = "failed" if result["summary"]["error_count"] else "ok"
         result["passed"] = result["status"] == "ok"
@@ -300,6 +305,11 @@ def validate_skills(
 def _summary_from_findings(findings: list[dict[str, Any]], skill_count: int) -> dict[str, int]:
     severity_counts = Counter(finding.get("severity", FINDING_ERROR) for finding in findings)
     return _summary_from_counts(severity_counts, len(findings), skill_count)
+
+
+def _finding_matches_requested_skill(finding: dict[str, Any], skill_name: str) -> bool:
+    finding_skill = finding.get("skill")
+    return finding_skill == skill_name or (finding_skill is None and finding.get("global") is True)
 
 
 def _summary_from_lint_findings(findings: list[LintFinding], skill_count: int) -> dict[str, int]:
@@ -327,6 +337,7 @@ def _load_skill_records(skills_root: Path, findings: list[LintFinding]) -> list[
                 "skills root does not exist",
                 "Pass --skills-root pointing at the repository skills/ directory.",
                 code="skills-root-missing",
+                global_finding=True,
             )
         )
         return []
@@ -339,6 +350,7 @@ def _load_skill_records(skills_root: Path, findings: list[LintFinding]) -> list[
                 "skills root is not a directory",
                 "Pass --skills-root pointing at the repository skills/ directory.",
                 code="skills-root-not-directory",
+                global_finding=True,
             )
         )
         return []
@@ -591,6 +603,7 @@ def _lint_catalog_category(context: LintContext) -> None:
                 "product skill catalog could not be parsed",
                 "Keep the catalog markdown table headed by Category, Skill, Tier, and Purpose.",
                 code="skill-catalog-unparseable",
+                global_finding=True,
             )
         )
         return
@@ -1347,7 +1360,7 @@ def _command_tokens(command: str) -> list[str]:
         if token in {"&&", "|", ";"}:
             break
         if not _safe_command_token(token):
-            return []
+            break
         command_tokens.append(token)
     return command_tokens
 
@@ -1531,6 +1544,7 @@ def _finding(
     line: Optional[int] = None,
     code: Optional[str] = None,
     skill: Optional[str] = None,
+    global_finding: bool = False,
 ) -> LintFinding:
     return LintFinding(
         id=lint_id,
@@ -1541,4 +1555,5 @@ def _finding(
         hint=hint,
         code=code,
         skill=skill,
+        global_finding=global_finding,
     )

@@ -663,6 +663,21 @@ def test_iter_json_records_skips_oversized_json_files(tmp_path, monkeypatch):
     assert [record["skill"] for _path, record in loaded] == ["nvflare-test"]
 
 
+def test_iter_json_records_file_count_limit_ignores_oversized_skips(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness import records
+
+    small = tmp_path / "small.json"
+    small.write_text(json.dumps({"skill": "nvflare-test"}), encoding="utf-8")
+    oversized = tmp_path / "oversized.json"
+    oversized.write_text(json.dumps({"skill": "nvflare-oversized", "payload": "too-large"}), encoding="utf-8")
+    monkeypatch.setattr(records, "MAX_JSON_RECORD_FILES", 1)
+    monkeypatch.setattr(records, "MAX_JSON_RECORD_FILE_BYTES", small.stat().st_size)
+
+    loaded = list(records.iter_json_records(tmp_path))
+
+    assert [record["skill"] for _path, record in loaded] == ["nvflare-test"]
+
+
 def test_iter_json_records_does_not_traverse_symlinked_directories(tmp_path):
     if not hasattr(os, "symlink"):
         return
