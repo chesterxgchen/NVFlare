@@ -35,7 +35,7 @@ def env(name: str, default: str = "") -> str:
 
 
 def agent_home() -> Path:
-    return Path(env("BENCHMARK_AGENT_HOME", "/workspace/.codex"))
+    return Path(env("BENCHMARK_AGENT_HOME", "/workspace/agent-home"))
 
 
 def skills_target() -> Path:

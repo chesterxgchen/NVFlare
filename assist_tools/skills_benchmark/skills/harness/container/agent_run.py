@@ -224,7 +224,6 @@ def login_shell_runtime_probe() -> dict[str, Any]:
             "printf 'PATH=%s\\n' \"$PATH\"",
             "printf 'python=%s\\n' \"$(command -v python)\"",
             sdk_import_probe,
-            f"({sdk_version_command}) 2>&1 | sed 's/^/sdk_version_output=/'" if sdk_version_command else "",
         ]
     )
     command = ["/bin/bash", "-lc", script]
@@ -245,6 +244,34 @@ def login_shell_runtime_probe() -> dict[str, Any]:
             "ok": False,
             "reason": "failed_to_start_login_shell_probe",
         }
+
+    sdk_version_output = None
+    sdk_version_exit_code = None
+    sdk_version_error = None
+    if sdk_version_command:
+        try:
+            sdk_version_argv = shlex.split(sdk_version_command)
+        except ValueError as exc:
+            sdk_version_error = f"failed_to_parse_sdk_version_command: {exc}"
+        else:
+            if not sdk_version_argv:
+                sdk_version_error = "empty_sdk_version_command"
+            else:
+                try:
+                    sdk_version_result = subprocess.run(
+                        sdk_version_argv,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                    )
+                except OSError as exc:
+                    sdk_version_exit_code = 127
+                    sdk_version_error = f"{type(exc).__name__}: {exc}"
+                else:
+                    sdk_version_exit_code = sdk_version_result.returncode
+                    sdk_version_output = sdk_version_result.stdout.strip()
 
     values: dict[str, str] = {}
     for line in result.stdout.splitlines():
@@ -270,7 +297,9 @@ def login_shell_runtime_probe() -> dict[str, Any]:
         "sdk_import_name": sdk_import_name,
         "sdk_import_version": values.get("sdk_import_version"),
         "sdk_version_command": sdk_version_command,
-        "sdk_version_output": values.get("sdk_version_output"),
+        "sdk_version_exit_code": sdk_version_exit_code,
+        "sdk_version_output": sdk_version_output,
+        "sdk_version_error": sdk_version_error,
         "expected_python": expected_python,
         "ok": ok,
         "reason": reason,

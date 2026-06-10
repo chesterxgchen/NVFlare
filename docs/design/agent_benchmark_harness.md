@@ -83,12 +83,15 @@ assist_tools/skills_benchmark/
 |-- bin/
 |   |-- build.sh
 |   `-- run.sh
+|-- config/
+|   |-- agents/
+|   |   |-- codex.yaml
+|   |   `-- claude.yaml
+|   `-- sdks/
+|       `-- nvflare-profile.yaml
 |-- docker/
 |   |-- Dockerfile
 |   `-- build_context.dockerignore
-|-- examples/
-|   |-- mode_ablation.yaml
-|   `-- model_comparison.yaml
 `-- skills/
     `-- harness/
         |-- __init__.py
@@ -114,16 +117,11 @@ assist_tools/skills_benchmark/
         |   |-- config.py
         |   |-- registry.py
         |   |-- parsers.py
-        |   |-- classifiers.py
-        |   |-- codex.yaml
-        |   |-- claude.yaml
-        |   |-- hermes.yaml        # illustrative/planned
-        |   `-- openclaw.yaml      # illustrative/planned
+        |   `-- classifiers.py
         |-- sdks/
         |   |-- base.py
         |   |-- config.py
-        |   |-- registry.py
-        |   `-- nvflare-profile.yaml
+        |   `-- registry.py
         `-- reports/
             |-- scenario_report.py
             `-- structure_tree.py
@@ -149,8 +147,8 @@ the canonical destinations for the corresponding responsibilities; runnable
 scenario YAML support requires `skills/harness/scenarios.py` to compile
 the YAML into `run_plan.json` before any Docker execution.
 Future supported agents add an agent config file under
-`skills/harness/agents/`, for example
-`skills/harness/agents/<agent>.yaml`. They do not add a per-agent adapter
+`config/agents/`, for example
+`config/agents/<agent>.yaml`. They do not add a per-agent adapter
 subclass when existing launch, skill-exposure, event-parser, usage-parser,
 final-message, and exit-classifier registries cover the agent.
 
@@ -256,43 +254,28 @@ Docker build args for package name, import name, version check, and skills setup
 metadata files emitted by the SDK setup step
 ```
 
-For NVFlare, `sdks/nvflare-profile.yaml` declares the existing wheel split:
+For NVFlare, `config/sdks/nvflare-profile.yaml` declares the existing wheel split:
 
 ```text
 skills wheel     NVFLARE_PACKAGE_AGENT_SKILLS=1
 baseline wheel   NVFLARE_PACKAGE_AGENT_SKILLS=0
 ```
 
-Those wheels are reused across agent images. Agent-specific Docker stages own
-agent CLI installation, version pinning, auth-home defaults, optional native
+Those wheels are reused across agent images. Agent profiles own agent CLI
+installation, version commands, auth-home defaults, optional native
 dependencies, and CLI availability probes. The shared builder resolves the
 selected `(sdk, agent, variant)` image inputs and passes SDK build arguments
 from the SDK adapter plus agent build arguments from the agent adapter.
 
-The Dockerfile may contain agent-specific stages, but shared stages must not
-encode Codex-specific assumptions such as `CODEX_HOME`, `CODEX_MODEL`, Codex
-auth file names, or `codex exec`. Shared stages also must not hardcode
-NVFlare-specific wheel names or skill install commands. Shared stages expose the
-configured SDK, Python, the benchmark harness, prompt mounts, job mounts, result
-mounts, and generic benchmark environment. Agent stages add the selected agent
+The Docker convention is one shared Dockerfile with generic `base`, `skills`,
+and `baseline` stages. The Dockerfile must not branch on agent names or encode
+Codex-specific assumptions such as `CODEX_HOME`, Codex auth file names, or
+`codex exec`. It must also not hardcode NVFlare-specific wheel names or skill
+install commands. The shared stages expose the configured SDK, Python, the
+benchmark harness, prompt mounts, job mounts, result mounts, and generic
+benchmark environment. Agent profiles provide commands such as
+`AGENT_INSTALL_COMMAND` and `AGENT_VERSION_COMMAND` to add the selected agent
 runtime.
-
-The Docker convention is one shared Dockerfile with a shared `base` stage and
-agent-specific runtime stages:
-
-```text
-base
-agent_<agent>
-skills_<agent>
-baseline_<agent>
-```
-
-`agent_<agent>` installs the agent CLI and native dependencies.
-`skills_<agent>` and `baseline_<agent>` install the appropriate SDK wheel and
-any SDK-declared skill metadata. Separate Dockerfiles are reserved for agents or
-SDKs whose license or runtime constraints make a shared Dockerfile impractical;
-such exceptions must still expose the same `(sdk, agent, variant)` image
-contract.
 
 ### Container Runtime Environment
 
@@ -391,9 +374,9 @@ paths, workflow instructions, or other context beyond the explicit benchmark
 prompt selected by the scenario.
 
 If an adapter cannot provide a stable, benchmark-owned default model, it must
-require an explicit model from scenario configuration or the adapter's model env
-var. A supported adapter must not let the underlying agent CLI select an
-implicit default model for measured runs.
+require an explicit model from direct CLI `--model` or scenario configuration.
+A supported adapter must not let the underlying agent CLI select an implicit
+default model for measured runs.
 
 ```python
 class AgentAdapter:
@@ -585,7 +568,10 @@ records, report filters, source immutability policy, pass/fail normalization,
 metric validity, skill-identity trust decisions, and failure-root
 classification belong to the harness runtime, record layer, and report layer.
 
-Shared host and container modules use generic benchmark names:
+Direct CLI commands select agents and models with `--agent` and `--model`.
+Scenario YAML selects them with `agents[].name` and `agents[].models`.
+After run-plan expansion, shared host and container modules use generic
+benchmark runtime names:
 
 ```text
 BENCHMARK_AGENT
@@ -594,8 +580,8 @@ BENCHMARK_AGENT_HOME
 BENCHMARK_AGENT_CONFIG_DIR
 ```
 
-Agent-specific variables such as `CODEX_MODEL`, `CODEX_HOME`, `CLAUDE_MODEL`,
-or `CLAUDE_CONFIG_DIR` are translated by the adapter at the host boundary. They
+Agent-specific variables such as `CODEX_HOME` or `CLAUDE_CONFIG_DIR` are
+translated by the adapter at the host boundary. They
 must not become required inputs for shared records, reports, modes, or quality
 checks. Shared host, container, record, and report code must not branch on
 provider-specific names except through the adapter registry.
@@ -738,8 +724,8 @@ responsibilities.
 
 Adding a new supported agent should be localized to:
 
-- `harness/agents/<agent>.yaml`;
-- one Docker install stage or install descriptor for that agent;
+- `config/agents/<agent>.yaml`;
+- the agent install descriptor in that config;
 - adapter registry configuration;
 - auth/config README entries;
 - sample event fixtures and adapter contract tests.
@@ -756,7 +742,7 @@ or failure-analysis logic, the adapter boundary is too weak.
 The Codex agent config defines:
 
 - CLI command: `codex exec --json ...`;
-- model environment variable: `CODEX_MODEL`;
+- model input: direct-run `--model` or scenario `agents[].models`;
 - auth/config mounts: `CODEX_HOME`, host `.codex/auth.json`, and
   `.codex/config.toml`;
 - JSONL event normalization;
@@ -887,7 +873,7 @@ exit-code behavior is selected through named parser or classifier IDs in the
 config.
 
 ```yaml
-# harness/agents/codex.yaml
+# config/agents/codex.yaml
 name: codex
 display_name: OpenAI Codex CLI
 default_model: o3
@@ -927,15 +913,19 @@ activity:
   parser: codex_jsonl_activity
 
 exit:
-  classifier: codex_cli
+  classifier: stderr_patterns
+  rules:
+    - category: agent_cli_missing
+      exit_codes: [127]
+    - category: agent_auth_failure
+      any: [auth, "api key", login]
 ```
 
 ```yaml
-# harness/agents/claude.yaml
+# config/agents/claude.yaml
 name: claude
 display_name: Anthropic Claude Code CLI
 default_model: unspecified_default
-model_env: CLAUDE_MODEL
 requires_explicit_model: true
 agent_home_env: CLAUDE_CONFIG_DIR
 container_home: /workspace/.claude
@@ -944,7 +934,9 @@ build:
   args:
     BENCHMARK_DOCKER_AGENT: claude
     BENCHMARK_AGENT_HOME: /workspace/.claude
-    CLAUDE_CLI_VERSION: latest
+    AGENT_CLI_NAME: claude
+    AGENT_INSTALL_COMMAND: npm install -g "@anthropic-ai/claude-code@latest"
+    AGENT_VERSION_COMMAND: claude --version
 
 runtime_env:
   CLAUDE_CONFIG_DIR: "{container_home}"
@@ -982,11 +974,16 @@ activity:
   parser: claude_stream_activity
 
 exit:
-  classifier: claude_cli
+  classifier: stderr_patterns
+  rules:
+    - category: agent_cli_missing
+      exit_codes: [127]
+    - category: agent_sandbox_or_approval_failure
+      any: [permission, approval]
 ```
 
 ```yaml
-# harness/agents/hermes.yaml  (illustrative)
+# config/agents/hermes.yaml  (illustrative)
 name: hermes
 display_name: Hermes Agent CLI
 default_model: hermes-3
@@ -1032,7 +1029,7 @@ exit:
 ```
 
 ```yaml
-# harness/agents/openclaw.yaml  (illustrative)
+# config/agents/openclaw.yaml  (illustrative)
 name: openclaw
 display_name: OpenClaw Agent
 default_model: claw-2

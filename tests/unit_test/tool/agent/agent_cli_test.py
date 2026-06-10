@@ -470,9 +470,13 @@ def test_agent_skills_schema_subcommand_does_not_scan_option_values():
     _parse_for_agent_parser()
 
     assert _schema_agent_skills_sub_cmd(["agent", "skills", "list", "--schema"]) == "list"
+    assert _schema_agent_skills_sub_cmd(["agent", "skills", "--schema", "install"]) == "install"
+    assert _schema_agent_skills_sub_cmd(["agent", "skills", "--schema", "--format", "json", "install"]) == "install"
+    assert _schema_agent_skills_sub_cmd(["agent", "skills", "--schema", "--format=json", "list"]) == "list"
     assert _schema_agent_skills_sub_cmd(["agent", "skills", "benchmark", "--schema"]) is None
     assert _schema_agent_skills_sub_cmd(["agent", "--target", "skills", "skills", "install", "--schema"]) == "install"
     assert _schema_agent_skills_sub_cmd(["agent", "skills", "--skill", "benchmark", "--schema"]) is None
+    assert _schema_agent_skills_sub_cmd(["agent", "skills", "--schema", "--skill", "install"]) is None
 
 
 def test_agent_skills_missing_named_skill_is_structured_json_error(capsys, monkeypatch, tmp_path):

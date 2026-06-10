@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Exit and failure classifier registries for benchmark agent adapters."""
+"""Exit and failure classifiers for benchmark agent adapters."""
 
 from __future__ import annotations
 
@@ -20,14 +20,19 @@ from pathlib import Path
 from typing import Any
 
 
-def generic_cli_exit(exit_code: int, stderr_path: Path) -> dict[str, Any]:
+def stderr_excerpt(stderr_path: Path) -> str:
     stderr_text = ""
     try:
         stderr_text = stderr_path.read_text(encoding="utf-8", errors="replace")[:4000]
     except OSError:
         pass
+    return stderr_text
+
+
+def generic_cli_exit(exit_code: int, stderr_path: Path, classifier_id: str = "generic_cli") -> dict[str, Any]:
+    stderr_text = stderr_excerpt(stderr_path)
     return {
-        "classifier": "generic_cli",
+        "classifier": classifier_id,
         "exit_code": exit_code,
         "passed": exit_code == 0,
         "failure_category": "agent_unknown_failure" if exit_code else None,
@@ -35,39 +40,7 @@ def generic_cli_exit(exit_code: int, stderr_path: Path) -> dict[str, Any]:
     }
 
 
-def codex_cli_exit(exit_code: int, stderr_path: Path) -> dict[str, Any]:
-    summary = generic_cli_exit(exit_code, stderr_path)
-    summary["classifier"] = "codex_cli"
-    stderr_lower = str(summary.get("stderr_excerpt") or "").lower()
-    if exit_code == 127:
-        summary["failure_category"] = "agent_cli_missing"
-    elif "model" in stderr_lower and ("not supported" in stderr_lower or "unsupported" in stderr_lower):
-        summary["failure_category"] = "agent_model_unsupported"
-    elif "auth" in stderr_lower or "api key" in stderr_lower or "login" in stderr_lower:
-        summary["failure_category"] = "agent_auth_failure"
-    return summary
-
-
-def claude_cli_exit(exit_code: int, stderr_path: Path) -> dict[str, Any]:
-    summary = generic_cli_exit(exit_code, stderr_path)
-    summary["classifier"] = "claude_cli"
-    stderr_lower = str(summary.get("stderr_excerpt") or "").lower()
-    if exit_code == 127:
-        summary["failure_category"] = "agent_cli_missing"
-    elif "model" in stderr_lower and ("not supported" in stderr_lower or "unsupported" in stderr_lower):
-        summary["failure_category"] = "agent_model_unsupported"
-    elif "auth" in stderr_lower or "api key" in stderr_lower or "login" in stderr_lower:
-        summary["failure_category"] = "agent_auth_failure"
-    elif "permission" in stderr_lower or "approval" in stderr_lower:
-        summary["failure_category"] = "agent_sandbox_or_approval_failure"
-    return summary
-
-
-EXIT_CLASSIFIERS = {
-    "claude_cli": claude_cli_exit,
-    "generic_cli": generic_cli_exit,
-    "codex_cli": codex_cli_exit,
-}
+EXIT_CLASSIFIERS = {"generic_cli", "stderr_patterns"}
 
 
 def validate_exit_classifier(classifier_id: str) -> None:
@@ -75,7 +48,76 @@ def validate_exit_classifier(classifier_id: str) -> None:
         raise ValueError(f"Unknown agent exit classifier: {classifier_id}")
 
 
-def classify_exit(exit_code: int, stderr_path: Path, classifier_id: str) -> dict[str, Any]:
+def as_string_list(value: Any, field_path: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+        raise ValueError(f"{field_path} must be a list of non-empty strings")
+    return [str(item).lower() for item in value]
+
+
+def as_exit_codes(value: Any, field_path: str) -> set[int]:
+    if value is None:
+        return set()
+    if not isinstance(value, list) or any(isinstance(item, bool) or not isinstance(item, int) for item in value):
+        raise ValueError(f"{field_path} must be a list of integer exit codes")
+    return {int(item) for item in value}
+
+
+def validate_stderr_pattern_rules(config: dict[str, Any]) -> None:
+    rules = config.get("rules") or []
+    if not isinstance(rules, list):
+        raise ValueError("exit.rules must be a list")
+    for index, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            raise ValueError(f"exit.rules[{index}] must be a mapping")
+        category = rule.get("category")
+        if not isinstance(category, str) or not category:
+            raise ValueError(f"exit.rules[{index}].category must be a non-empty string")
+        any_patterns = as_string_list(rule.get("any"), f"exit.rules[{index}].any")
+        all_patterns = as_string_list(rule.get("all"), f"exit.rules[{index}].all")
+        exit_codes = as_exit_codes(rule.get("exit_codes"), f"exit.rules[{index}].exit_codes")
+        if not any_patterns and not all_patterns and not exit_codes:
+            raise ValueError(f"exit.rules[{index}] must define at least one of any, all, or exit_codes")
+
+
+def validate_exit_config(config: dict[str, Any]) -> None:
+    classifier_id = str(config.get("classifier") or "")
     validate_exit_classifier(classifier_id)
-    classifier = EXIT_CLASSIFIERS[classifier_id]
-    return classifier(exit_code, stderr_path)
+    if classifier_id == "stderr_patterns":
+        validate_stderr_pattern_rules(config)
+
+
+def stderr_rule_matches(rule: dict[str, Any], exit_code: int, stderr_lower: str) -> bool:
+    if exit_code == 0:
+        return False
+    exit_codes = as_exit_codes(rule.get("exit_codes"), "exit.rules[].exit_codes")
+    if exit_codes and exit_code not in exit_codes:
+        return False
+    all_patterns = as_string_list(rule.get("all"), "exit.rules[].all")
+    if all_patterns and not all(pattern in stderr_lower for pattern in all_patterns):
+        return False
+    any_patterns = as_string_list(rule.get("any"), "exit.rules[].any")
+    if any_patterns and not any(pattern in stderr_lower for pattern in any_patterns):
+        return False
+    return bool(exit_codes or all_patterns or any_patterns)
+
+
+def stderr_pattern_exit(exit_code: int, stderr_path: Path, config: dict[str, Any]) -> dict[str, Any]:
+    summary = generic_cli_exit(exit_code, stderr_path, classifier_id="stderr_patterns")
+    stderr_lower = str(summary.get("stderr_excerpt") or "").lower()
+    for rule in config.get("rules") or []:
+        if stderr_rule_matches(rule, exit_code, stderr_lower):
+            summary["failure_category"] = str(rule["category"])
+            break
+    return summary
+
+
+def classify_exit(exit_code: int, stderr_path: Path, config: dict[str, Any]) -> dict[str, Any]:
+    validate_exit_config(config)
+    classifier_id = str(config.get("classifier") or "")
+    if classifier_id == "generic_cli":
+        return generic_cli_exit(exit_code, stderr_path)
+    if classifier_id == "stderr_patterns":
+        return stderr_pattern_exit(exit_code, stderr_path, config)
+    raise ValueError(f"Unknown agent exit classifier: {classifier_id}")

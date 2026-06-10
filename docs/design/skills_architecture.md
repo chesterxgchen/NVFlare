@@ -3,7 +3,7 @@
 This is a picture of what is implemented today for the `nvflare agent` skill
 system: the agent-facing CLI, the packaged skills, and the install/list paths.
 The benchmark harness architecture is documented separately in
-`agent_benchmark_harness.md`.
+[skill_benchmark_harness_architecture.md](skill_benchmark_harness_architecture.md).
 
 ## High-Level System View
 
@@ -28,7 +28,7 @@ flowchart TB
 | Python packaging hook | `setup.py`, `nvflare.tool.agent.bundled_skills`, `manifest.json` | Standard wheel-build hook that copies released skills into the NVFLARE package or writes an empty bundle for no-skill builds. |
 | Skill install CLI | `nvflare agent skills install/list`, `skill_manager.py` | CLI copy/install tool that installs managed skills into Codex or Claude target directories with hashes, locks, backups, and symlink checks. |
 | Runtime agent surface | Codex/Claude skill loading, `nvflare agent inspect`, `nvflare agent doctor`, recipe/job CLI | The agent reads skill instructions and uses NVFLARE commands to inspect, convert, validate, or diagnose. |
-| Benchmark harness | `docs/design/agent_benchmark_harness.md` | Separate architecture for measuring skill impact with Docker, SDK profiles, agent plugins, and reporting. |
+| Benchmark harness | [skill_benchmark_harness_architecture.md](skill_benchmark_harness_architecture.md) | Separate architecture for measuring skill impact with Docker, SDK profiles, agent plugins, and reporting. |
 
 ## Implemented Architecture
 
@@ -109,7 +109,7 @@ flowchart LR
 - Static inspection: `/Users/chesterc/projects/NVFlare/nvflare/tool/agent/inspector.py`
 - Readiness checks: `/Users/chesterc/projects/NVFlare/nvflare/tool/agent/doctor.py`
 - Packaging hook: `/Users/chesterc/projects/NVFlare/setup.py:116`
-- Benchmark harness architecture: `/Users/chesterc/projects/NVFlare/docs/design/agent_benchmark_harness.md`
+- Benchmark harness architecture: `/Users/chesterc/projects/NVFlare/docs/design/skill_benchmark_harness_architecture.md`
 
 The important boundary: NVFLARE does not run a custom agent runtime for these
 skills. It packages, installs, validates, and measures skill files that

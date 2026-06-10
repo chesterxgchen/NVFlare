@@ -1,7 +1,9 @@
 # Agent profile contract
 #
 # Inputs:
-# - model_env/default_model select the model unless BENCHMARK_AGENT_MODEL is set.
+# - --model selects the measured model for direct runs; scenarios use
+#   agents[].models. requires_explicit_model=true means the run fails if the
+#   model is not selected explicitly.
 # - auth describes optional host files mounted into the container at runtime.
 # - launch defines the measured agent command. It must not contain prompt text;
 #   the harness supplies the prompt through stdin or a prompt file.
@@ -23,14 +25,12 @@
 # agent-skills-benchmark:{agent}-skills/baseline/report; auth and passthrough
 # env may be omitted; availability_probe may be omitted.
 
-name: codex
-display_name: OpenAI Codex CLI
+name: claude
+display_name: Claude Code
 default_model: unspecified_default
-model_env: CODEX_MODEL
-agent_home_env: CODEX_HOME
-container_home: /workspace/.codex
-legacy_artifact_prefixes:
-  - codex
+requires_explicit_model: true
+agent_home_env: CLAUDE_CONFIG_DIR
+container_home: /workspace/.claude
 
 # Docker image tag outputs.
 images:
@@ -41,84 +41,105 @@ images:
 # Docker build inputs for the agent CLI layer and SDK skills setup target.
 build:
   args:
-    BENCHMARK_DOCKER_AGENT: codex
-    BENCHMARK_AGENT_HOME: /workspace/.codex
-    CODEX_CLI_VERSION: 0.137.0
+    BENCHMARK_DOCKER_AGENT: claude
+    BENCHMARK_AGENT_HOME: /workspace/.claude
+    AGENT_CLI_NAME: claude
+    AGENT_INSTALL_COMMAND: npm install -g "@anthropic-ai/claude-code@latest"
+    AGENT_VERSION_COMMAND: claude --version
 
 # Optional runtime auth inputs from the host.
 auth:
-  host_home_env: HOST_CODEX_HOME
-  mount_env: MOUNT_HOST_CODEX_AUTH
+  default_host_home: ~/.claude
+  mount_by_default: true
   files:
-    - source: auth.json
-      target: auth.json
+    - source: .credentials.json
+      target: .credentials.json
       read_only: true
-      description: Codex auth
-    - source: config.toml
-      target: config.toml
+      description: Claude credentials
+    - source: settings.json
+      target: settings.json
       read_only: true
-      description: Codex config
+      description: Claude settings
 
 # Runtime env outputs passed to the agent process.
 runtime_env:
-  CODEX_HOME: "{container_home}"
+  CLAUDE_CONFIG_DIR: "{container_home}"
 
 passthrough_env:
-  - OPENAI_API_KEY
+  - ANTHROPIC_API_KEY
+  - ANTHROPIC_AUTH_TOKEN
+  - ANTHROPIC_BASE_URL
 
 # Measured agent command input.
 launch:
   prompt_input_mode: stdin
   argv:
-    - codex
-    - exec
-    - --json
-    - --skip-git-repo-check
-    - --dangerously-bypass-approvals-and-sandbox
-    - -C
-    - "{workspace_dir}"
-    - -o
-    - "{final_message_dest}"
-    - "-"
-  model_argv:
-    - -m
+    - claude
+    - --dangerously-skip-permissions
+    - --output-format
+    - stream-json
+    - --verbose
+    - --model
     - "{model}"
-  model_argv_position: before_stdin_sentinel
+    - --print
   sandbox_flags:
-    - --dangerously-bypass-approvals-and-sandbox
+    - --dangerously-skip-permissions
   bypass_reason: "isolated benchmark container; writable state is limited to mounted result/workspace paths"
   environment:
-    CODEX_HOME: "{container_home}"
+    CLAUDE_CONFIG_DIR: "{container_home}"
 
 # Skills exposure input consumed during with_skills runs.
 skill_exposure:
-  mechanism_type: preinstalled_home
+  mechanism_type: launch_flag
   skill_root: "{container_home}/skills"
-  disable_packaged_source: true
-  metadata_files:
-    - "{container_home}/skills_build_install.json"
-    - "{container_home}/skills_list.json"
+  launch_args:
+    - --add-dir
+    - "{skills_dir}"
 
 # Normalized artifact outputs.
 final_message:
-  source_type: file
-  path: "{result_dir}/agent_last_message.txt"
+  source_type: structured_event
+  event_selector:
+    type: result
+    subtype: success
+  parser: generic_structured_event_message
+  parser_warnings:
+    - "final message from last result event; may be truncated at context limit"
 
 events:
-  parser: codex_jsonl
-  format: jsonl
+  parser: claude_stream_json
+  format: stream-json
 
 usage:
-  parser: codex_cumulative_usage
+  parser: claude_stream_usage
   fidelity: parsed
-  is_cumulative: true
+  is_cumulative: false
 
 activity:
-  parser: codex_jsonl_activity
+  parser: claude_stream_activity
 
 exit:
-  classifier: codex_cli
+  classifier: stderr_patterns
+  rules:
+    - category: agent_cli_missing
+      exit_codes:
+        - 127
+    - category: agent_model_unsupported
+      all:
+        - model
+      any:
+        - not supported
+        - unsupported
+    - category: agent_auth_failure
+      any:
+        - auth
+        - api key
+        - login
+    - category: agent_sandbox_or_approval_failure
+      any:
+        - permission
+        - approval
 
 availability_probe:
-  - codex
+  - claude
   - --version

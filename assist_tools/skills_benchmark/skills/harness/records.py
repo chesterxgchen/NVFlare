@@ -37,6 +37,7 @@ ALLOWED_BEHAVIOR_STATUSES = {"pass", "fail", "missing", "not_applicable", "non_s
 MAX_JSON_RECORD_FILES = 10000
 MAX_JSON_RECORD_FILE_BYTES = 5 * 1024 * 1024
 MAX_EVENTS_TEXT_BYTES = 20 * 1024 * 1024
+MAX_EVALS_FILE_BYTES = 512 * 1024
 UNAVAILABLE_STRUCTURE_QUALITY_SIGNAL = {
     "status": "unavailable",
     "reason": "structure quality was not captured for this run",
@@ -314,6 +315,11 @@ def available_skill_names() -> set[str]:
 
 def eval_case_ids_for_skill(skill_name: str) -> list[str]:
     evals_path = agent_home_from_env() / "skills" / skill_name / "evals" / "evals.json"
+    try:
+        if not evals_path.is_file() or evals_path.stat().st_size > MAX_EVALS_FILE_BYTES:
+            return []
+    except OSError:
+        return []
     data = load_json(evals_path)
     if not isinstance(data, dict):
         return []
