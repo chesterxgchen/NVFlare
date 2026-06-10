@@ -38,25 +38,25 @@ shift
 
 case "${command}" in
   one|run-one|single)
-    exec python3 -m assist_tools.skills_benchmark.nvidia.skills.harness.host.runner run-one "$@"
+    exec python3 -m assist_tools.skills_benchmark.skills.harness.host.runner run-one "$@"
     ;;
   pair)
-    exec python3 -m assist_tools.skills_benchmark.nvidia.skills.harness.host.runner pair "$@"
+    exec python3 -m assist_tools.skills_benchmark.skills.harness.host.runner pair "$@"
     ;;
   scenario)
-    exec python3 -m assist_tools.skills_benchmark.nvidia.skills.harness.host.runner scenario "$@"
+    exec python3 -m assist_tools.skills_benchmark.skills.harness.host.runner scenario "$@"
     ;;
   replay)
-    exec python3 -m assist_tools.skills_benchmark.nvidia.skills.harness.host.runner replay "$@"
+    exec python3 -m assist_tools.skills_benchmark.skills.harness.host.runner replay "$@"
     ;;
   interactive|shell)
-    exec python3 -m assist_tools.skills_benchmark.nvidia.skills.harness.host.runner interactive "$@"
+    exec python3 -m assist_tools.skills_benchmark.skills.harness.host.runner interactive "$@"
     ;;
   with-skills)
-    MODE=with_skills USE_PREINSTALLED_SKILLS=true exec python3 -m assist_tools.skills_benchmark.nvidia.skills.harness.host.runner run-one "$@"
+    MODE=with_skills USE_PREINSTALLED_SKILLS=true exec python3 -m assist_tools.skills_benchmark.skills.harness.host.runner run-one "$@"
     ;;
   without-skills)
-    MODE=without_skills USE_PREINSTALLED_SKILLS=false exec python3 -m assist_tools.skills_benchmark.nvidia.skills.harness.host.runner run-one "$@"
+    MODE=without_skills USE_PREINSTALLED_SKILLS=false exec python3 -m assist_tools.skills_benchmark.skills.harness.host.runner run-one "$@"
     ;;
   -h|--help|help)
     usage

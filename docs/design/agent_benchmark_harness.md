@@ -89,41 +89,44 @@ assist_tools/skills_benchmark/
 |-- examples/
 |   |-- mode_ablation.yaml
 |   `-- model_comparison.yaml
-`-- nvidia/
-    `-- skills/
-        `-- harness/
-            |-- __init__.py
-            |-- common.py
-            |-- modes.py
-            |-- artifacts.py
-            |-- events.py
-            |-- quality_signals.py
-            |-- case_metadata.py
-            |-- scenarios.py
-            |-- timing.py
-            |-- records.py
-            |-- record_identity.py
-            |-- host/
-            |   |-- build.py
-            |   |-- common.py
-            |   `-- runner.py
-            |-- container/
-            |   |-- agent_run.py
-            |   |-- progress.py
-            |   `-- skills.py
-            |-- agents/
-            |   |-- base.py
-            |   |-- config.py
-            |   |-- registry.py
-            |   |-- parsers.py
-            |   |-- classifiers.py
-            |   |-- codex.yaml
-            |   |-- claude.yaml
-            |   |-- hermes.yaml        # illustrative/planned
-            |   `-- openclaw.yaml      # illustrative/planned
-            `-- reports/
-                |-- scenario_report.py
-                `-- structure_tree.py
+`-- skills/
+    `-- harness/
+        |-- __init__.py
+        |-- common.py
+        |-- modes.py
+        |-- artifacts.py
+        |-- events.py
+        |-- quality_signals.py
+        |-- scenarios.py
+        |-- timing.py
+        |-- records.py
+        |-- record_identity.py
+        |-- host/
+        |   |-- build.py
+        |   |-- common.py
+        |   `-- runner.py
+        |-- container/
+        |   |-- agent_run.py
+        |   |-- progress.py
+        |   `-- skills.py
+        |-- agents/
+        |   |-- base.py
+        |   |-- config.py
+        |   |-- registry.py
+        |   |-- parsers.py
+        |   |-- classifiers.py
+        |   |-- codex.yaml
+        |   |-- claude.yaml
+        |   |-- hermes.yaml        # illustrative/planned
+        |   `-- openclaw.yaml      # illustrative/planned
+        |-- sdks/
+        |   |-- base.py
+        |   |-- config.py
+        |   |-- registry.py
+        |   `-- nvflare-profile.yaml
+        `-- reports/
+            |-- scenario_report.py
+            `-- structure_tree.py
 ```
 
 This location keeps the harness outside `nvflare/` product packages while
@@ -134,20 +137,20 @@ Docker execution live under `tests/integration_test/skills_benchmark/`.
 `docs/design/agent_benchmark_harness.md` is the architecture document. The
 harness-local README explains how to build and run the tool.
 
-The nested `nvidia/skills/harness/host/`,
-`nvidia/skills/harness/container/`, `nvidia/skills/harness/agents/`, and
-`nvidia/skills/harness/reports/` packages are the canonical implementation
+The nested `skills/harness/host/`,
+`skills/harness/container/`, `skills/harness/agents/`, and
+`skills/harness/reports/` packages are the canonical implementation
 locations. Flat compatibility modules such as
-`nvidia/skills/harness/host_runner.py` or
-`nvidia/skills/harness/agent_run.py` may exist only as explicit re-export shims
+`skills/harness/host_runner.py` or
+`skills/harness/agent_run.py` may exist only as explicit re-export shims
 with deprecation comments. They must not own independent logic.
 The layout is normative for the target architecture. Modules listed here are
 the canonical destinations for the corresponding responsibilities; runnable
-scenario YAML support requires `nvidia/skills/harness/scenarios.py` to compile
+scenario YAML support requires `skills/harness/scenarios.py` to compile
 the YAML into `run_plan.json` before any Docker execution.
 Future supported agents add an agent config file under
-`nvidia/skills/harness/agents/`, for example
-`nvidia/skills/harness/agents/<agent>.yaml`. They do not add a per-agent adapter
+`skills/harness/agents/`, for example
+`skills/harness/agents/<agent>.yaml`. They do not add a per-agent adapter
 subclass when existing launch, skill-exposure, event-parser, usage-parser,
 final-message, and exit-classifier registries cover the agent.
 
@@ -174,13 +177,7 @@ into Python module invocations and do not own benchmark semantics.
 The host runner does not parse agent event streams, infer task success from raw
 logs, derive skill identity from workflow names, or mutate job input folders.
 
-### Case Metadata And Record Identity
-
-`harness/case_metadata.py` owns bounded metadata about the unstructured job
-folder: display name, resolved path, folder hash when affordable, file-count and
-size summaries, documentation-file pointers, and scenario-provided annotations
-such as `job_scale`. It records descriptive context for prompts, run plans, and
-reports. It must not impose a job schema or decide the conversion workflow.
+### Record Identity
 
 `harness/record_identity.py` owns stable identifiers used in run plans, result
 paths, and aggregation keys: slugs, collision handling, prompt hashes, job
@@ -223,27 +220,43 @@ Parallelism applies to independent run-plan entries only. A single run-plan
 entry owns one container, one result directory, and one runtime staging root.
 Modes within the same repeat may run in parallel only when each mode gets its
 own container and staging root. No two concurrent entries may share
-`/tmp/nvflare`, a workspace copy, a record directory, or an agent auth/config
+`/tmp/agent_benchmark`, a workspace copy, a record directory, or an agent auth/config
 write location.
-Isolation is container-boundary isolation. A fixed path such as `/tmp/nvflare`
+Isolation is container-boundary isolation. A fixed path such as `/tmp/agent_benchmark`
 is safe only because each benchmark run gets its own container; if a container
 is reused for multiple concurrent run-plan entries, each entry must receive a
 unique runtime artifact root.
 
 ### Docker Build And Runtime
 
-The Docker layer provides isolated, repeatable execution. The local NVFLARE
-checkout is build input only. Runtime images receive NVFLARE through built
-wheels and explicit metadata, not by copying the working tree into the image.
+The Docker layer provides isolated, repeatable execution. The local SDK
+checkout is build input only. Runtime images receive the selected SDK through
+built wheels and explicit metadata, not by copying the working tree into the
+image.
 
-Image identity is resolved from `(agent, variant)`:
+Image identity is resolved from `(sdk profile, agent profile, variant)`. The
+current default SDK profile is `nvflare-profile` and the default agent profile
+is `codex`, so the default image names remain:
 
 ```text
-nvflare-agent-benchmark:<agent>-baseline
-nvflare-agent-benchmark:<agent>-skills
+agent-skills-benchmark:<agent>-baseline
+agent-skills-benchmark:<agent>-skills
 ```
 
-The builder creates two NVFLARE wheels per source checkout:
+SDK-specific build behavior is pluggable through `harness/sdks/`. An SDK
+profile declares:
+
+```text
+source.type = repo with source.path and markers, or wheels with exact wheel paths
+build.type = uv_wheel for repo builds, or provided_wheels for prebuilt wheels
+skills and baseline wheel variants
+optional build-env toggle used while building each wheel
+skills.setup.type = command, copy, or none
+Docker build args for package name, import name, version check, and skills setup metadata
+metadata files emitted by the SDK setup step
+```
+
+For NVFlare, `sdks/nvflare-profile.yaml` declares the existing wheel split:
 
 ```text
 skills wheel     NVFLARE_PACKAGE_AGENT_SKILLS=1
@@ -253,14 +266,16 @@ baseline wheel   NVFLARE_PACKAGE_AGENT_SKILLS=0
 Those wheels are reused across agent images. Agent-specific Docker stages own
 agent CLI installation, version pinning, auth-home defaults, optional native
 dependencies, and CLI availability probes. The shared builder resolves the
-selected `(agent, variant)` image and passes only namespaced build arguments for
-that agent, for example `CODEX_CLI_VERSION` or `CLAUDE_CLI_VERSION`.
+selected `(sdk, agent, variant)` image inputs and passes SDK build arguments
+from the SDK adapter plus agent build arguments from the agent adapter.
 
 The Dockerfile may contain agent-specific stages, but shared stages must not
 encode Codex-specific assumptions such as `CODEX_HOME`, `CODEX_MODEL`, Codex
-auth file names, or `codex exec`. Shared stages expose NVFLARE, Python, the
-benchmark harness, prompt mounts, job mounts, result mounts, and generic
-benchmark environment. Agent stages add the selected agent runtime.
+auth file names, or `codex exec`. Shared stages also must not hardcode
+NVFlare-specific wheel names or skill install commands. Shared stages expose the
+configured SDK, Python, the benchmark harness, prompt mounts, job mounts, result
+mounts, and generic benchmark environment. Agent stages add the selected agent
+runtime.
 
 The Docker convention is one shared Dockerfile with a shared `base` stage and
 agent-specific runtime stages:
@@ -273,10 +288,10 @@ baseline_<agent>
 ```
 
 `agent_<agent>` installs the agent CLI and native dependencies.
-`skills_<agent>` and `baseline_<agent>` install the appropriate NVFLARE wheel
-and any adapter-declared skill metadata. Separate Dockerfiles are reserved for
-agents whose license or runtime constraints make a shared Dockerfile
-impractical; such exceptions must still expose the same `(agent, variant)` image
+`skills_<agent>` and `baseline_<agent>` install the appropriate SDK wheel and
+any SDK-declared skill metadata. Separate Dockerfiles are reserved for agents or
+SDKs whose license or runtime constraints make a shared Dockerfile impractical;
+such exceptions must still expose the same `(sdk, agent, variant)` image
 contract.
 
 ### Container Runtime Environment
@@ -389,7 +404,7 @@ class AgentAdapter:
     container_home: str
 
     def model_from_env(self, env: Mapping[str, str]) -> str: ...
-    def build_args_from_env(self, env: Mapping[str, str]) -> dict[str, str]: ...
+    def build_args(self) -> dict[str, str]: ...
     def image_targets(self) -> AgentImageTargets: ...
     def auth_mounts(self, host_config) -> list[DockerMount]: ...
     def runtime_env(self, config) -> dict[str, str]: ...
@@ -929,9 +944,7 @@ build:
   args:
     BENCHMARK_DOCKER_AGENT: claude
     BENCHMARK_AGENT_HOME: /workspace/.claude
-    CLAUDE_CLI_VERSION:
-      env: CLAUDE_CLI_VERSION
-      default: latest
+    CLAUDE_CLI_VERSION: latest
 
 runtime_env:
   CLAUDE_CONFIG_DIR: "{container_home}"

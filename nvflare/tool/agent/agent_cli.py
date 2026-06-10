@@ -305,10 +305,23 @@ def _handle_agent_skills_cmd(args, handle_schema_flag, output_error_message, out
     from nvflare.tool.cli_output import is_json_mode, is_jsonl_mode, print_human
 
     skills_sub_cmd = getattr(args, "agent_skills_sub_cmd", None)
-    schema_sub_cmd = _schema_agent_skills_sub_cmd(getattr(args, "_argv", sys.argv[1:]))
+    argv = getattr(args, "_argv", sys.argv[1:])
+    raw_schema_sub_cmd = _raw_schema_agent_skills_sub_cmd(argv)
+    schema_sub_cmd = raw_schema_sub_cmd if raw_schema_sub_cmd in _agent_skills_sub_cmd_parsers else None
 
     if skills_sub_cmd is None and schema_sub_cmd in _agent_skills_sub_cmd_parsers:
         skills_sub_cmd = schema_sub_cmd
+
+    if skills_sub_cmd is None and raw_schema_sub_cmd:
+        output_error_message(
+            "INVALID_ARGS",
+            "Invalid agent skills subcommand.",
+            "Supported agent skills subcommands: install, list.",
+            exit_code=4,
+            data={"choices": sorted(_agent_skills_sub_cmd_parsers)},
+            recovery_category="FIXABLE_BY_CONFIG",
+        )
+        return
 
     if skills_sub_cmd is None:
         handle_schema_flag(
@@ -561,8 +574,8 @@ def _output_agent_skill_target_error(output_error_message, target, error: ValueE
     output_error_message(
         "AGENT_SKILL_TARGET_INVALID",
         "Invalid agent skill target.",
-        "Choose a target directory without symlink components. On macOS, use real paths such as /private/tmp "
-        "instead of /tmp.",
+        "Choose a target directory without user-created symlink components. OS temp aliases such as /tmp are "
+        "normalized automatically.",
         exit_code=4,
         detail=str(error),
         data={"target": target},
@@ -571,6 +584,11 @@ def _output_agent_skill_target_error(output_error_message, target, error: ValueE
 
 
 def _schema_agent_skills_sub_cmd(argv: list[str]) -> Optional[str]:
+    token = _raw_schema_agent_skills_sub_cmd(argv)
+    return token if token in _agent_skills_sub_cmd_parsers else None
+
+
+def _raw_schema_agent_skills_sub_cmd(argv: list[str]) -> Optional[str]:
     # The top-level CLI bypasses nested argparse parsing for --schema, so infer
     # the third-level agent skills command from the first positional token after
     # `skills` until that parser path is generalized. Do not scan later tokens:
@@ -595,5 +613,5 @@ def _schema_agent_skills_sub_cmd(argv: list[str]) -> Optional[str]:
             continue
         if token.startswith("-"):
             return None
-        return token if token in _agent_skills_sub_cmd_parsers else None
+        return token
     return None

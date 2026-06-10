@@ -5,4 +5,4 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 
-exec python3 -m assist_tools.skills_benchmark.nvidia.skills.harness.host.build "$@"
+exec python3 -m assist_tools.skills_benchmark.skills.harness.host.build "$@"

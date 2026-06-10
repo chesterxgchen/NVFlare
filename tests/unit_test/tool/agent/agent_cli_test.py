@@ -15,6 +15,8 @@
 import argparse
 import json
 import os
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -289,6 +291,33 @@ def test_agent_skills_install_dry_run_json_uses_native_source(capsys, monkeypatc
     assert not target.exists()
 
 
+def test_agent_skills_install_accepts_system_temp_alias_target(capsys, monkeypatch, tmp_path):
+    _patch_skill_source(monkeypatch, tmp_path)
+    target = os.path.join(tempfile.gettempdir(), f"nvflare-skill-target-{tmp_path.name}")
+
+    exit_code = _run_main(
+        [
+            "nvflare",
+            "agent",
+            "skills",
+            "install",
+            "--agent",
+            "codex",
+            "--target",
+            target,
+            "--dry-run",
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = _load_single_stdout_json(capsys.readouterr())
+    _assert_envelope_shape(payload, "ok")
+    assert payload["data"]["target_path"] == str(Path(target).resolve(strict=False))
+    assert payload["data"]["applied"] is False
+
+
 def test_agent_skills_install_and_list_json(capsys, monkeypatch, tmp_path):
     _patch_skill_source(monkeypatch, tmp_path)
     target = tmp_path / "target"
@@ -406,6 +435,17 @@ def test_removed_agent_skill_report_commands_are_not_advertised(capsys):
 @pytest.mark.parametrize("subcommand", ["evaluate", "performance", "benchmark"])
 def test_unsupported_agent_skills_commands_are_rejected(capsys, subcommand):
     exit_code = _run_main(["nvflare", "agent", "skills", subcommand, "--format", "json"])
+
+    assert exit_code == 4
+    payload = _load_single_stdout_json(capsys.readouterr())
+    _assert_envelope_shape(payload, "error")
+    assert payload["error_code"] == "INVALID_ARGS"
+    assert payload["data"]["choices"] == ["install", "list"]
+
+
+@pytest.mark.parametrize("subcommand", ["performance", "benchmark"])
+def test_removed_agent_skills_command_schema_is_rejected(capsys, subcommand):
+    exit_code = _run_main(["nvflare", "agent", "skills", subcommand, "--schema", "--format", "json"])
 
     assert exit_code == 4
     payload = _load_single_stdout_json(capsys.readouterr())
@@ -537,7 +577,7 @@ def test_agent_skills_target_symlink_is_structured_json_error(capsys, monkeypatc
     _assert_envelope_shape(payload, "error")
     assert payload["error_code"] == "AGENT_SKILL_TARGET_INVALID"
     assert payload["recovery_category"] == "FIXABLE_BY_CONFIG"
-    assert "/private/tmp" in payload["hint"]
+    assert "user-created symlink" in payload["hint"]
     assert payload["data"]["target"] == str(link_target)
 
 
