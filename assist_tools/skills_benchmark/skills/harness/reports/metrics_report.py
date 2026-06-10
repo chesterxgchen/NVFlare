@@ -25,10 +25,12 @@ from ..common import flatten_numbers, load_json, write_json
 from ..modes import BENCHMARK_RUNS, NO_SKILLS_MODE, WITH_SKILLS_MODE
 from .benchmark_insights import (
     MAX_AGENT_EVENTS_TEXT_BYTES,
+    activity_insights_table,
     embedded_bar_chart,
     filter_mode_console,
     final_record_path,
     human_readable_status,
+    interpretation_section,
     markdown_cell,
     metric_name_for_runs,
     mode_dir_for_benchmark,
@@ -191,7 +193,10 @@ def markdown_report(summary: dict[str, Any], insight_runs: dict[str, dict[str, A
             f"{fmt(run_summary.get('token_count'))} | {fmt(activity.get('command_count'))} | "
             f"{markdown_cell(root_cause)} |"
         )
+    modes = [spec.mode for spec in BENCHMARK_RUNS if spec.mode in insight_runs]
     lines.extend(["", "## Metrics", "", embedded_bar_chart(insight_runs), "", outcome_metrics_table(insight_runs)])
+    lines.extend(["", "## Activity Insights", "", activity_insights_table(insight_runs, modes)])
+    lines.extend(["", interpretation_section(insight_runs, modes)])
     comparison = summary.get("comparison") or {}
     if comparison:
         lines.extend(["", "## Comparison", "", "| Metric | Delta |", "|---|---:|"])
