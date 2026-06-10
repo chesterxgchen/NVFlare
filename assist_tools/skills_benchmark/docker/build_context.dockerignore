@@ -1,9 +1,9 @@
 *
 !Dockerfile
-!harness/
-!harness/**
-harness/**/__pycache__/
-harness/**/*.pyc
+!assist_tools/
+!assist_tools/**
+assist_tools/**/__pycache__/
+assist_tools/**/*.pyc
 !dist/
 !dist/**
 !sdk_skills/

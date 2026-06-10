@@ -50,6 +50,26 @@ def test_prepare_build_context_cleans_temp_dir_on_internal_failure(tmp_path, mon
     assert list(tmp_path.iterdir()) == []
 
 
+def test_prepare_build_context_stages_assist_tools_for_docker_copy(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness.host import build
+
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+
+    context = build.prepare_build_context()
+    try:
+        assert (context / "assist_tools" / "__init__.py").is_file()
+        assert (context / "assist_tools" / "skills_benchmark" / "__init__.py").is_file()
+        assert (context / "assist_tools" / "skills_benchmark" / "config" / "agents" / "codex.yaml").is_file()
+        assert (
+            context / "assist_tools" / "skills_benchmark" / "skills" / "harness" / "container" / "agent_run.py"
+        ).is_file()
+        dockerignore = (context / ".dockerignore").read_text(encoding="utf-8")
+        assert "!assist_tools/" in dockerignore
+        assert "!assist_tools/**" in dockerignore
+    finally:
+        build.shutil.rmtree(context, ignore_errors=True)
+
+
 def test_latest_sdk_wheel_skips_stat_failures(tmp_path, monkeypatch):
     from assist_tools.skills_benchmark.skills.harness.host import build
 
