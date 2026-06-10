@@ -48,8 +48,13 @@ from .parsers import (
 PROMPT_TEXT_PLACEHOLDER = "prompt_text"
 UNSPECIFIED_MODEL = "unspecified_default"
 MODEL_ARGV_POSITION_BEFORE_STDIN_SENTINEL = "before_stdin_sentinel"
+MODEL_ARGV_POSITION_BEFORE_FINAL_ARG = "before_final_arg"
 MODEL_ARGV_POSITION_APPEND = "append"
-MODEL_ARGV_POSITIONS = {MODEL_ARGV_POSITION_BEFORE_STDIN_SENTINEL, MODEL_ARGV_POSITION_APPEND}
+MODEL_ARGV_POSITIONS = {
+    MODEL_ARGV_POSITION_BEFORE_FINAL_ARG,
+    MODEL_ARGV_POSITION_BEFORE_STDIN_SENTINEL,
+    MODEL_ARGV_POSITION_APPEND,
+}
 LAUNCH_CONDITIONS = {"model_was_explicit"}
 SKILL_EXPOSURE_CONDITIONS: set[str] = set()
 SUPPORTED_SKILL_EXPOSURE_MECHANISMS = {"launch_flag", "none", "preinstalled_home"}
@@ -177,6 +182,11 @@ class AgentConfig:
                 raise ValueError(
                     f"{config_path}: launch.model_argv_position={MODEL_ARGV_POSITION_APPEND} is not valid with "
                     "stdin prompt delivery; put model args directly in argv or use before_stdin_sentinel"
+                )
+            if model_position == MODEL_ARGV_POSITION_BEFORE_FINAL_ARG and not launch["argv"]:
+                raise ValueError(
+                    f"{config_path}: launch.model_argv_position={MODEL_ARGV_POSITION_BEFORE_FINAL_ARG} "
+                    "requires launch.argv to contain at least one argument"
                 )
         validate_when_conditions(launch["argv"], LAUNCH_CONDITIONS, "launch.argv", config_path)
         validate_when_conditions(launch.get("model_argv") or [], LAUNCH_CONDITIONS, "launch.model_argv", config_path)
@@ -480,6 +490,8 @@ class ConfigurableAgentAdapter(AgentAdapter):
             model_argv = render_list(list(self._cfg.launch["model_argv"]), render_values)
             model_position = str(self._cfg.launch["model_argv_position"])
             if model_position == MODEL_ARGV_POSITION_BEFORE_STDIN_SENTINEL:
+                argv = [*argv[:-1], *model_argv, argv[-1]]
+            elif model_position == MODEL_ARGV_POSITION_BEFORE_FINAL_ARG:
                 argv = [*argv[:-1], *model_argv, argv[-1]]
             elif model_position == MODEL_ARGV_POSITION_APPEND:
                 argv.extend(model_argv)

@@ -69,14 +69,15 @@ def test_claude_agent_config_uses_config_dir_and_valid_final_message_source():
     config = AgentConfig.load(config_path)
 
     assert config.agent_home_env == "CLAUDE_CONFIG_DIR"
-    assert config.requires_explicit_model is True
+    assert config.requires_explicit_model is False
     assert config.final_message["source_type"] == "structured_event"
     assert config.events.parser == "claude_stream_json"
     assert config.usage.parser == "claude_stream_usage"
     assert config.activity.parser == "claude_stream_activity"
     assert config.exit_classifier == "stderr_patterns"
     assert config.exit_config["rules"]
-    assert "model_argv" not in config.launch
+    assert config.launch["model_argv"] == ["--model", "{model}"]
+    assert config.launch["model_argv_position"] == "before_final_arg"
 
 
 def test_adapter_template_rejects_positional_placeholders():
@@ -133,20 +134,16 @@ def test_claude_adapter_launch_spec_uses_stream_json_without_prompt_text(tmp_pat
     assert "Convert this job" not in rendered_argv
     assert "claude-test" in spec.argv
     assert spec.argv[spec.argv.index("--model") + 1] == "claude-test"
+    assert spec.argv.index("--model") < spec.argv.index("--print")
 
 
-def test_claude_adapter_requires_explicit_model():
+def test_claude_adapter_uses_cli_default_model_when_unspecified():
     from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("claude")
 
-    try:
-        adapter.model_from_env({})
-    except ValueError as exc:
-        assert "requires an explicit benchmark model" in str(exc)
-        assert "BENCHMARK_AGENT_MODEL" in str(exc)
-    else:
-        raise AssertionError("Claude benchmark runs must require an explicit model")
+    assert adapter.model_from_env({}) == "unspecified_default"
+    assert adapter.model_was_explicit({}) is False
 
 
 def test_runtime_env_uses_agent_run_config_model_explicit_field():
@@ -161,23 +158,19 @@ def test_runtime_env_uses_agent_run_config_model_explicit_field():
     assert env["BENCHMARK_AGENT_MODEL"] == "claude-test"
 
 
-def test_runtime_env_rejects_unexplicit_model_for_required_agent():
+def test_runtime_env_omits_agent_model_when_not_explicit():
     from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
     class Config:
         agent_model = "unspecified_default"
         agent_model_was_explicit = False
 
-    try:
-        load_agent_adapter("claude").runtime_env(Config())
-    except ValueError as exc:
-        assert "requires an explicit benchmark model before runtime setup" in str(exc)
-        assert "BENCHMARK_AGENT_MODEL" in str(exc)
-    else:
-        raise AssertionError("availability/runtime setup should enforce required explicit models")
+    env = load_agent_adapter("claude").runtime_env(Config())
+
+    assert "BENCHMARK_AGENT_MODEL" not in env
 
 
-def test_claude_launch_spec_rejects_unexplicit_model_context(tmp_path):
+def test_claude_launch_spec_omits_model_flag_when_not_explicit(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchContext
     from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
 
@@ -198,13 +191,10 @@ def test_claude_launch_spec_rejects_unexplicit_model_context(tmp_path):
         final_message_dest=result_dir / "agent_last_message.txt",
     )
 
-    try:
-        load_agent_adapter("claude").launch_spec(context)
-    except ValueError as exc:
-        assert "requires an explicit benchmark model before launch" in str(exc)
-        assert "BENCHMARK_AGENT_MODEL" in str(exc)
-    else:
-        raise AssertionError("Claude launch spec must reject implicit CLI model defaults")
+    spec = load_agent_adapter("claude").launch_spec(context)
+
+    assert "--model" not in spec.argv
+    assert spec.argv[-1] == "--print"
 
 
 def test_claude_stream_parser_normalizes_event_usage_and_activity(tmp_path):

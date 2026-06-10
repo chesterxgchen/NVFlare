@@ -1,9 +1,8 @@
 # Agent profile contract
 #
 # Inputs:
-# - --model selects the measured model for direct runs; scenarios use
-#   agents[].models. requires_explicit_model=true means the run fails if the
-#   model is not selected explicitly.
+# - --model selects the measured model for direct runs; if omitted, Claude CLI
+#   uses its own default and the harness records default_model metadata.
 # - auth describes optional host files mounted into the container at runtime.
 # - launch defines the measured agent command. It must not contain prompt text;
 #   the harness supplies the prompt through stdin or a prompt file.
@@ -28,7 +27,6 @@
 name: claude
 display_name: Claude Code
 default_model: unspecified_default
-requires_explicit_model: true
 agent_home_env: CLAUDE_CONFIG_DIR
 container_home: /workspace/.claude
 
@@ -79,9 +77,11 @@ launch:
     - --output-format
     - stream-json
     - --verbose
+    - --print
+  model_argv:
     - --model
     - "{model}"
-    - --print
+  model_argv_position: before_final_arg
   sandbox_flags:
     - --dangerously-skip-permissions
   bypass_reason: "isolated benchmark container; writable state is limited to mounted result/workspace paths"

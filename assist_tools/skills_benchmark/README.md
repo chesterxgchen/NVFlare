@@ -5,7 +5,7 @@ NVFLARE job-conversion task with and without packaged NVFLARE agent skills.
 
 Current runnable scope:
 
-- Agents: Codex and Claude. Claude requires an explicit `--model`.
+- Agents: Codex and Claude. Claude uses the CLI default model unless `--model` is supplied.
 - Modes: `without_skills` and `with_skills`.
 - Job input: a folder containing scripts, data, docs, and any local
   requirements files.
