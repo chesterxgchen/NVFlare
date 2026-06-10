@@ -214,8 +214,12 @@ Useful build flags:
 Use `--reuse-wheels` when only agent config or Docker layers changed and you
 want to avoid rebuilding SDK wheels from source. The flag looks for the most
 recently built wheel in `dist/` and copies it into the build context instead
-of running `uv build`. Omit it (or run without the flag) the first time, or
-whenever the SDK source has changed.
+of running `uv build`. Omit it the first time, or whenever the SDK source has
+changed.
+
+`--reuse-wheels` only applies to SDK profiles with `build.type: uv_wheel`
+(repo source). It has no effect for profiles with `build.type: provided_wheels`
+— those always stage the wheels listed in the profile.
 
 Verify the images exist:
 
