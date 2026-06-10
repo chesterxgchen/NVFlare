@@ -372,11 +372,49 @@ def last_successful_job_event(run: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def bash_blocked_diagnostic(run: dict[str, Any]) -> str | None:
-    """Return a diagnostic string if Bash was blocked due to permission approval failures."""
+def result_permission_denial_count(run: dict[str, Any]) -> int:
+    count = 0
+    for line in str(run.get("agent_events_text") or "").splitlines():
+        try:
+            payload = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        denials = payload.get("permission_denials")
+        if isinstance(denials, list):
+            count = max(count, len(denials))
+    return count
+
+
+def bash_permission_denial_count(run: dict[str, Any]) -> int:
     events_text = str(run.get("agent_events_text") or "")
     needle = "requested permissions to use bash"
-    blocked_count = events_text.lower().count(needle)
+    raw_count = events_text.lower().count(needle)
+    tool_result_count = 0
+    for line in events_text.splitlines():
+        try:
+            payload = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        text_parts = [str(payload.get("tool_use_result") or "")]
+        message = payload.get("message")
+        if isinstance(message, dict):
+            for item in message.get("content") or []:
+                if isinstance(item, dict):
+                    text_parts.append(str(item.get("content") or item.get("text") or ""))
+        if any(needle in text.lower() for text in text_parts):
+            tool_result_count += 1
+    if tool_result_count:
+        return max(result_permission_denial_count(run), tool_result_count)
+    return max(result_permission_denial_count(run), raw_count)
+
+
+def bash_blocked_diagnostic(run: dict[str, Any]) -> str | None:
+    """Return a diagnostic string if Bash was blocked due to permission approval failures."""
+    blocked_count = bash_permission_denial_count(run)
     if blocked_count == 0:
         return None
     hint_counts = run.get("activity", {}).get("hint_counts") or {}
@@ -401,15 +439,19 @@ def job_run_status(run: dict[str, Any]) -> str:
     """Return one of 'completed', 'started_failed', 'not_started', or 'unknown'."""
     if not run.get("available"):
         return "unknown"
-    hint_counts = run.get("activity", {}).get("hint_counts") or {}
-    sim_count = int(hint_counts.get("simulation", 0) or 0)
-    py_count = int(hint_counts.get("python_job_py", 0) or 0)
-    attempted = sim_count > 0 or py_count > 0
-    if not attempted:
-        # Check agent_events_text for any simulation/job command directly
-        events_text = str(run.get("agent_events_text") or "")
-        if re.search(r"\bpython(?:3)?\s+[A-Za-z0-9_./-]*job[A-Za-z0-9_./-]*\.py\b", events_text):
-            attempted = True
+    executed_events = [
+        event
+        for event in agent_command_events(run)
+        if is_simulation_or_job_command(str(event.get("command") or ""))
+        and "--help" not in str(event.get("command") or "")
+        and "--export" not in str(event.get("command") or "")
+    ]
+    attempted_commands = [
+        command
+        for command in commands_for_run(run)
+        if is_simulation_or_job_command(command) and "--help" not in command and "--export" not in command
+    ]
+    attempted = bool(executed_events or attempted_commands)
     if not attempted:
         return "not_started"
     if last_successful_job_event(run):
@@ -427,8 +469,7 @@ def job_run_status_reason(run: dict[str, Any]) -> str:
     py_count = int(hint_counts.get("python_job_py", 0) or 0)
 
     # Check Bash blocking first — it's the most actionable reason for not_started
-    events_text = str(run.get("agent_events_text") or "")
-    bash_blocked_count = events_text.lower().count("requested permissions to use bash")
+    bash_blocked_count = bash_permission_denial_count(run)
 
     if status == "not_started":
         if bash_blocked_count > 0:
@@ -467,6 +508,19 @@ def job_run_status_reason(run: dict[str, Any]) -> str:
         return "simulation completed successfully"
 
     return "status unknown — no simulation hint counts or events found"
+
+
+def job_run_action(run: dict[str, Any]) -> str:
+    status = job_run_status(run)
+    if status == "not_started":
+        if bash_permission_denial_count(run):
+            return "Fix agent Bash/tool permissions and rerun; no FL metrics can be trusted until the job executes."
+        return "Require the agent to run the generated job or simulator before reporting benchmark metrics."
+    if status == "started_failed":
+        return "Inspect the failed job command output, fix the generated job, and rerun the benchmark."
+    if status == "completed":
+        return "Use job logs and reported metrics for quality comparison."
+    return "Inspect run artifacts; job execution evidence is unavailable."
 
 
 def command_failure_diagnostics(run: dict[str, Any], limit: int = 3) -> list[str]:
@@ -1833,6 +1887,31 @@ def status_table(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
     return "\n".join(lines)
 
 
+def job_run_status_section(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
+    lines = [
+        "## Job Run Status",
+        "",
+        "This section tracks whether the generated NVFLARE job or simulator actually ran. Agent/container exit code 0 only means the agent process finished; it does not prove the generated job executed.",
+        "",
+        "| Run | Job run status | Evidence | Action |",
+        "|---|---|---|---|",
+    ]
+    for mode in modes:
+        run = runs[mode]
+        lines.append(
+            f"| {markdown_cell(run.get('label') or mode)} | {markdown_cell(job_run_status(run))} | "
+            f"{markdown_cell(job_run_status_reason(run))} | {markdown_cell(job_run_action(run))} |"
+        )
+    return "\n".join(lines)
+
+
+def job_execution_summary(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
+    return "; ".join(
+        f"{runs[mode].get('label') or mode}: {job_run_status(runs[mode])} ({job_run_status_reason(runs[mode])})"
+        for mode in modes
+    )
+
+
 def failure_analysis_section(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
     lines = []
     for mode in modes:
@@ -1924,6 +2003,7 @@ def benchmark_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
         "| Signal | Value |",
         "|---|---|",
         f"| Status | {markdown_cell(status_summary(runs, modes))} |",
+        f"| Job execution | {markdown_cell(job_execution_summary(runs, modes))} |",
         f"| FL result quality gate | {markdown_cell(quality_gate_summary)} |",
         f"| Missing/partial result metrics | {markdown_cell(missing_metric_summary or 'none')} |",
         f"| Source input protection | {markdown_cell(input_protection_summary)} |",
@@ -1932,6 +2012,8 @@ def benchmark_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
         "## Status",
         "",
         status_table(runs, modes),
+        "",
+        job_run_status_section(runs, modes),
         "",
         "## Failure Analysis",
         "",
