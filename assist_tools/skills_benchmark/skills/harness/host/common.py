@@ -80,6 +80,13 @@ def print_usage(command: str) -> None:
         "Options:\n"
         "  --prompt PATH           Prompt file to mount as the measured agent input.\n"
         "  --training-code PATH    Job folder to mount into the benchmark container.\n"
+        "  --agent NAME            Agent profile to run. Defaults to codex.\n"
+        "  --model NAME            Agent model to run. Required by agents without a default.\n"
+        "  --mode NAME             run-one mode: with_skills or without_skills.\n"
+        "  --workflow NAME         Workflow label for pair/run-one records. Defaults to default.\n"
+        "  --job-scale NAME        Job size policy for pair/run-one. small, medium, or large.\n"
+        "  --agent-home PATH       Host auth/config directory for the selected agent.\n"
+        "  --no-agent-auth-mount   Do not mount host agent auth/config files.\n"
         "  --results-root PATH     Parent directory for generated timestamped result directories.\n"
         "  --output-dir PATH       Exact result directory for this run or comparison.\n"
         "  --result-root PATH      Exact result directory for pair comparisons.\n"
@@ -95,6 +102,13 @@ class HostCliOptions:
     results_root: Path | None = None
     result_root: Path | None = None
     result_dir: Path | None = None
+    agent: str | None = None
+    model: str | None = None
+    mode: str | None = None
+    workflow: str | None = None
+    job_scale: str | None = None
+    agent_home: Path | None = None
+    mount_agent_auth: bool | None = None
 
 
 def _option_value(argv: list[str], index: int, option: str) -> tuple[str, int]:
@@ -113,6 +127,13 @@ def parse_host_cli_options(argv: list[str], command: str) -> HostCliOptions:
     results_root: Path | None = None
     result_root: Path | None = None
     result_dir: Path | None = None
+    agent: str | None = None
+    model: str | None = None
+    mode: str | None = None
+    workflow: str | None = None
+    job_scale: str | None = None
+    agent_home: Path | None = None
+    mount_agent_auth: bool | None = None
     index = 0
     while index < len(argv):
         arg = argv[index]
@@ -127,6 +148,43 @@ def parse_host_cli_options(argv: list[str], command: str) -> HostCliOptions:
             if prompt_input:
                 raise SystemExit("Expected only one --prompt")
             prompt_input = value
+        elif arg == "--agent" or arg.startswith("--agent="):
+            value, index = _option_value(argv, index, "--agent")
+            if agent is not None:
+                raise SystemExit("Expected only one --agent")
+            agent = value
+        elif arg == "--model" or arg.startswith("--model="):
+            value, index = _option_value(argv, index, "--model")
+            if model is not None:
+                raise SystemExit("Expected only one --model")
+            model = value
+        elif arg == "--mode" or arg.startswith("--mode="):
+            value, index = _option_value(argv, index, "--mode")
+            if command != "run-one":
+                raise SystemExit(f"--mode is only supported for run-one; use pair or scenario for comparisons.")
+            if mode is not None:
+                raise SystemExit("Expected only one --mode")
+            mode = value
+        elif arg == "--workflow" or arg.startswith("--workflow="):
+            value, index = _option_value(argv, index, "--workflow")
+            if workflow is not None:
+                raise SystemExit("Expected only one --workflow")
+            workflow = value
+        elif arg == "--job-scale" or arg.startswith("--job-scale="):
+            value, index = _option_value(argv, index, "--job-scale")
+            if job_scale is not None:
+                raise SystemExit("Expected only one --job-scale")
+            job_scale = value
+        elif arg == "--agent-home" or arg.startswith("--agent-home="):
+            value, index = _option_value(argv, index, "--agent-home")
+            if agent_home is not None:
+                raise SystemExit("Expected only one --agent-home")
+            agent_home = absolute_path(value)
+        elif arg == "--no-agent-auth-mount":
+            if mount_agent_auth is False:
+                raise SystemExit("Expected only one --no-agent-auth-mount")
+            mount_agent_auth = False
+            index += 1
         elif arg == "--results-root" or arg.startswith("--results-root="):
             value, index = _option_value(argv, index, "--results-root")
             if results_root is not None:
@@ -182,6 +240,15 @@ def parse_host_cli_options(argv: list[str], command: str) -> HostCliOptions:
     if not prompt_input:
         print_usage(command)
         raise SystemExit("Prompt file is required. Pass --prompt PATH.")
+    for name, value in (
+        ("--agent", agent),
+        ("--model", model),
+        ("--mode", mode),
+        ("--workflow", workflow),
+        ("--job-scale", job_scale),
+    ):
+        if value is not None and not value.strip():
+            raise SystemExit(f"{name} requires a non-empty value")
     path = absolute_path(job_input)
     if not path.is_dir():
         raise SystemExit(f"Job input must be an existing folder: {path}")
@@ -202,6 +269,13 @@ def parse_host_cli_options(argv: list[str], command: str) -> HostCliOptions:
         results_root=results_root,
         result_root=result_root,
         result_dir=result_dir,
+        agent=agent,
+        model=model,
+        mode=mode,
+        workflow=workflow,
+        job_scale=job_scale,
+        agent_home=agent_home,
+        mount_agent_auth=mount_agent_auth,
     )
 
 

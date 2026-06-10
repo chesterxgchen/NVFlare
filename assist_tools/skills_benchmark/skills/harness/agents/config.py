@@ -34,7 +34,7 @@ from .base import (
     SkillExposureContext,
     SkillExposureSpec,
 )
-from .classifiers import classify_exit, validate_exit_classifier
+from .classifiers import classify_exit, validate_exit_config
 from .parsers import (
     normalize_event_with_parser,
     parse_activity_from_events,
@@ -122,6 +122,7 @@ class AgentConfig:
     events: ParserConfig
     usage: ParserConfig
     activity: ParserConfig
+    exit_config: dict[str, Any]
     exit_classifier: str
     availability_probe: list[str] = field(default_factory=list)
 
@@ -197,14 +198,15 @@ class AgentConfig:
         events = parser_config(data, "events", config_path)
         usage = parser_config(data, "usage", config_path)
         activity = parser_config(data, "activity", config_path)
-        exit_classifier = str(required_mapping(data, "exit", config_path).get("classifier") or "")
+        exit_config = required_mapping(data, "exit", config_path)
+        exit_classifier = str(exit_config.get("classifier") or "")
         final_message = required_mapping(data, "final_message", config_path)
         final_message_source_type = str(final_message.get("source_type") or "file")
         final_message_parser = str(final_message["parser"]) if final_message.get("parser") else None
         validate_event_parser(events.parser)
         validate_usage_parser(usage.parser)
         validate_activity_parser(activity.parser)
-        validate_exit_classifier(exit_classifier)
+        validate_exit_config(exit_config)
         validate_final_message_config(final_message_source_type, final_message_parser)
 
         return cls(
@@ -227,6 +229,7 @@ class AgentConfig:
             events=events,
             usage=usage,
             activity=activity,
+            exit_config=exit_config,
             exit_classifier=exit_classifier,
             availability_probe=[str(item) for item in data.get("availability_probe") or []],
         )
@@ -405,16 +408,21 @@ class ConfigurableAgentAdapter(AgentAdapter):
         return mounts
 
     def host_home_from_env(self, env: Mapping[str, str]) -> Path:
-        host_home_env = self._cfg.auth.get("host_home_env") if self._cfg.auth else None
+        auth = self._cfg.auth if self._cfg.auth else {}
+        host_home_env = auth.get("host_home_env")
         if host_home_env and env.get(str(host_home_env)):
             return Path(str(env[str(host_home_env)])).expanduser()
+        default_host_home = auth.get("default_host_home")
+        if default_host_home:
+            return Path(str(default_host_home)).expanduser()
         return Path.home() / f".{self.name}"
 
     def mount_auth_from_env(self, env: Mapping[str, str]) -> bool:
-        mount_env = self._cfg.auth.get("mount_env") if self._cfg.auth else None
-        if not mount_env:
-            return True
-        value = env.get(str(mount_env), "true")
+        auth = self._cfg.auth if self._cfg.auth else {}
+        mount_env = auth.get("mount_env")
+        if not mount_env or str(mount_env) not in env:
+            return bool(auth.get("mount_by_default", True))
+        value = env[str(mount_env)]
         if value not in {"true", "false"}:
             raise ValueError(f"{mount_env} must be true or false; got {value}")
         return value == "true"
@@ -572,7 +580,7 @@ class ConfigurableAgentAdapter(AgentAdapter):
         }
 
     def exit_summary(self, exit_code: int, stderr_path: Path) -> dict[str, Any]:
-        return classify_exit(exit_code, stderr_path, self._cfg.exit_classifier)
+        return classify_exit(exit_code, stderr_path, self._cfg.exit_config)
 
     def artifact_alias_prefixes(self) -> tuple[str, ...]:
         return self._cfg.legacy_artifact_prefixes

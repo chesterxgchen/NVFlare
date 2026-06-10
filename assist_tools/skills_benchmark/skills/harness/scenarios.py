@@ -997,7 +997,11 @@ def scenario_reproducibility_metadata(
             "report": targets.report,
         }
         build_args[agent_name] = args
-        agent_versions[agent_name] = {key: value for key, value in sorted(args.items()) if key.endswith("_CLI_VERSION")}
+        agent_versions[agent_name] = {
+            key: value
+            for key, value in sorted(args.items())
+            if key in {"AGENT_CLI_NAME", "AGENT_INSTALL_COMMAND", "AGENT_VERSION_COMMAND"}
+        }
     modes = []
     comparison_type = comparison.get("type")
     if comparison_type == COMPARISON_MODE_ABLATION:

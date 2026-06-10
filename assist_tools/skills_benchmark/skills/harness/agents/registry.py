@@ -23,7 +23,8 @@ from pathlib import Path
 from .base import AgentAdapter
 from .config import ConfigurableAgentAdapter
 
-AGENTS_DIR = Path(__file__).resolve().parent
+BENCHMARK_ROOT = Path(__file__).resolve().parents[3]
+AGENT_CONFIG_DIR = BENCHMARK_ROOT / "config" / "agents"
 DEFAULT_BENCHMARK_AGENT = "codex"
 
 
@@ -69,7 +70,7 @@ def get_agent_adapter(agent: str) -> AgentAdapter:
     registration = AGENT_REGISTRY[name]
     if not registration.config_name:
         raise ValueError(f"BENCHMARK_AGENT={name!r} is missing an agent config file")
-    return ConfigurableAgentAdapter(AGENTS_DIR / registration.config_name)
+    return ConfigurableAgentAdapter(AGENT_CONFIG_DIR / registration.config_name)
 
 
 def load_agent_adapter(agent: str) -> AgentAdapter:

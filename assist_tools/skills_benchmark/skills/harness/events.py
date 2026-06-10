@@ -24,6 +24,9 @@ from pathlib import Path
 from typing import Any, Iterable
 
 MAX_ACTIVITY_COMMANDS = 200
+MAX_TRACKED_EVENT_TYPES = 500
+MAX_TRACKED_COMMAND_PREFIXES = 500
+MAX_TRACKED_UNIQUE_COMMANDS = 10000
 
 
 def walk(obj: Any, depth: int = 20) -> Iterable[dict[str, Any]]:
@@ -56,6 +59,13 @@ def normalize_command(value: Any) -> str | None:
     return None
 
 
+def increment_bounded_counter(counter: Counter[str], key: str, max_keys: int) -> bool:
+    if key in counter or len(counter) < max_keys:
+        counter[key] += 1
+        return False
+    return True
+
+
 def parse_usage_and_activity_data(events_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     # Usage and activity are derived in one pass so large event streams are only
     # decoded once; keep output-specific normalization below clearly separated.
@@ -63,9 +73,9 @@ def parse_usage_and_activity_data(events_path: Path) -> tuple[dict[str, Any], di
     max_total_tokens: float | None = None
     last_input_tokens: float | None = None
     last_output_tokens: float | None = None
-    input_candidates: list[float] = []
-    output_candidates: list[float] = []
-    raw_usage_objects: list[dict[str, Any]] = []
+    max_input_tokens: float | None = None
+    max_output_tokens: float | None = None
+    raw_usage_object_count = 0
     token_parser_warnings: list[str] = []
     event_count = 0
     decode_errors = 0
@@ -75,6 +85,9 @@ def parse_usage_and_activity_data(events_path: Path) -> tuple[dict[str, Any], di
     unique_commands_seen: set[str] = set()
     command_count = 0
     commands_truncated = False
+    unique_commands_truncated = False
+    event_types_truncated = False
+    command_prefixes_truncated = False
     hint_counts: Counter[str] = Counter()
     first_event_dt = None
     first_event_timestamp = None
@@ -99,7 +112,7 @@ def parse_usage_and_activity_data(events_path: Path) -> tuple[dict[str, Any], di
     }
 
     def maybe_add_command(key: str, value: Any) -> None:
-        nonlocal command_count, commands_truncated
+        nonlocal command_count, command_prefixes_truncated, commands_truncated, unique_commands_truncated
         if str(key).lower() not in {"cmd", "command", "shell_command"}:
             return
         command = normalize_command(value)
@@ -109,12 +122,16 @@ def parse_usage_and_activity_data(events_path: Path) -> tuple[dict[str, Any], di
         if not command:
             return
         command_count += 1
-        unique_commands_seen.add(command)
+        if command in unique_commands_seen or len(unique_commands_seen) < MAX_TRACKED_UNIQUE_COMMANDS:
+            unique_commands_seen.add(command)
+        else:
+            unique_commands_truncated = True
         if len(commands) < MAX_ACTIVITY_COMMANDS:
             commands.append(command)
         else:
             commands_truncated = True
-        command_prefixes[command.split()[0]] += 1
+        if increment_bounded_counter(command_prefixes, command.split()[0], MAX_TRACKED_COMMAND_PREFIXES):
+            command_prefixes_truncated = True
 
     def add_text_hints(text: str) -> None:
         lowered = text.lower()
@@ -152,17 +169,19 @@ def parse_usage_and_activity_data(events_path: Path) -> tuple[dict[str, Any], di
                     for key in ("type", "event", "name"):
                         value = event.get(key)
                         if isinstance(value, str):
-                            event_types[value] += 1
+                            if increment_bounded_counter(event_types, value, MAX_TRACKED_EVENT_TYPES):
+                                event_types_truncated = True
                     for container_key in ("msg", "item", "delta"):
                         container = event.get(container_key)
                         if isinstance(container, dict):
                             value = container.get("type") or container.get("name")
                             if isinstance(value, str):
-                                event_types[value] += 1
+                                if increment_bounded_counter(event_types, value, MAX_TRACKED_EVENT_TYPES):
+                                    event_types_truncated = True
                 for item in walk(event):
                     lowered = {str(k).lower(): v for k, v in item.items()}
                     if any(k in lowered for k in ("usage", "token_usage")):
-                        raw_usage_objects.append(item)
+                        raw_usage_object_count += 1
                     for key, value in item.items():
                         maybe_add_command(key, value)
                     for key, value in lowered.items():
@@ -173,10 +192,10 @@ def parse_usage_and_activity_data(events_path: Path) -> tuple[dict[str, Any], di
                             last_total_tokens = value
                             max_total_tokens = value if max_total_tokens is None else max(max_total_tokens, value)
                         elif normalized in {"input_tokens", "prompt_tokens", "input_token_count"}:
-                            input_candidates.append(value)
+                            max_input_tokens = value if max_input_tokens is None else max(max_input_tokens, value)
                             last_input_tokens = value
                         elif normalized in {"output_tokens", "completion_tokens", "output_token_count"}:
-                            output_candidates.append(value)
+                            max_output_tokens = value if max_output_tokens is None else max(max_output_tokens, value)
                             last_output_tokens = value
 
     total_tokens = last_total_tokens
@@ -195,14 +214,14 @@ def parse_usage_and_activity_data(events_path: Path) -> tuple[dict[str, Any], di
 
     usage = {
         "total_tokens": total_tokens,
-        "max_input_tokens": max(input_candidates) if input_candidates else None,
-        "max_output_tokens": max(output_candidates) if output_candidates else None,
+        "max_input_tokens": max_input_tokens,
+        "max_output_tokens": max_output_tokens,
         "last_input_tokens": last_input_tokens,
         "last_output_tokens": last_output_tokens,
         "max_total_tokens_seen": max_total_tokens,
         "token_parser": "last cumulative total_tokens from agent JSON events; fallback is last input_tokens plus last output_tokens",
         "token_parser_warnings": token_parser_warnings,
-        "usage_objects_seen": len(raw_usage_objects),
+        "usage_objects_seen": raw_usage_object_count,
     }
     activity = {
         "event_count": event_count,
@@ -219,9 +238,12 @@ def parse_usage_and_activity_data(events_path: Path) -> tuple[dict[str, Any], di
             round(max_inter_event_gap_seconds, 3) if max_inter_event_gap_seconds is not None else None
         ),
         "event_types": dict(event_types.most_common()),
+        "event_types_truncated": event_types_truncated,
         "command_count": command_count,
         "unique_command_count": len(unique_commands_seen),
+        "unique_commands_truncated": unique_commands_truncated,
         "command_prefix_counts": dict(command_prefixes.most_common()),
+        "command_prefix_counts_truncated": command_prefixes_truncated,
         "hint_counts": dict(hint_counts.most_common()),
         "commands": commands,
         "commands_truncated": commands_truncated,

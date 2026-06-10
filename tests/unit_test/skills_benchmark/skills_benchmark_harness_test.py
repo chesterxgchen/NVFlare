@@ -46,13 +46,7 @@ def test_codex_agent_config_loads_parser_and_classifier_ids():
     from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     config_path = (
-        Path(__file__).resolve().parents[3]
-        / "assist_tools"
-        / "skills_benchmark"
-        / "skills"
-        / "harness"
-        / "agents"
-        / "codex.yaml"
+        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "config" / "agents" / "codex.yaml"
     )
 
     config = AgentConfig.load(config_path)
@@ -61,7 +55,8 @@ def test_codex_agent_config_loads_parser_and_classifier_ids():
     assert config.events.parser == "codex_jsonl"
     assert config.usage.parser == "codex_cumulative_usage"
     assert config.activity.parser == "codex_jsonl_activity"
-    assert config.exit_classifier == "codex_cli"
+    assert config.exit_classifier == "stderr_patterns"
+    assert config.exit_config["rules"]
     assert "{prompt_text}" not in json.dumps(config.raw)
 
 
@@ -69,13 +64,7 @@ def test_claude_agent_config_uses_config_dir_and_valid_final_message_source():
     from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     config_path = (
-        Path(__file__).resolve().parents[3]
-        / "assist_tools"
-        / "skills_benchmark"
-        / "skills"
-        / "harness"
-        / "agents"
-        / "claude.yaml"
+        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "config" / "agents" / "claude.yaml"
     )
 
     config = AgentConfig.load(config_path)
@@ -86,7 +75,8 @@ def test_claude_agent_config_uses_config_dir_and_valid_final_message_source():
     assert config.events.parser == "claude_stream_json"
     assert config.usage.parser == "claude_stream_usage"
     assert config.activity.parser == "claude_stream_activity"
-    assert config.exit_classifier == "claude_cli"
+    assert config.exit_classifier == "stderr_patterns"
+    assert config.exit_config["rules"]
     assert "model_argv" not in config.launch
 
 
@@ -155,7 +145,7 @@ def test_claude_adapter_requires_explicit_model():
         adapter.model_from_env({})
     except ValueError as exc:
         assert "requires an explicit benchmark model" in str(exc)
-        assert "CLAUDE_MODEL" in str(exc)
+        assert "BENCHMARK_AGENT_MODEL" in str(exc)
     else:
         raise AssertionError("Claude benchmark runs must require an explicit model")
 
@@ -183,7 +173,7 @@ def test_runtime_env_rejects_unexplicit_model_for_required_agent():
         load_agent_adapter("claude").runtime_env(Config())
     except ValueError as exc:
         assert "requires an explicit benchmark model before runtime setup" in str(exc)
-        assert "CLAUDE_MODEL" in str(exc)
+        assert "BENCHMARK_AGENT_MODEL" in str(exc)
     else:
         raise AssertionError("availability/runtime setup should enforce required explicit models")
 
@@ -213,7 +203,7 @@ def test_claude_launch_spec_rejects_unexplicit_model_context(tmp_path):
         load_agent_adapter("claude").launch_spec(context)
     except ValueError as exc:
         assert "requires an explicit benchmark model before launch" in str(exc)
-        assert "CLAUDE_MODEL" in str(exc)
+        assert "BENCHMARK_AGENT_MODEL" in str(exc)
     else:
         raise AssertionError("Claude launch spec must reject implicit CLI model defaults")
 
@@ -601,7 +591,7 @@ def test_claude_exit_classifier_detects_auth_and_model_failures(tmp_path):
     stderr.write_text("Permission approval is required.\n", encoding="utf-8")
     permission_summary = adapter.exit_summary(1, stderr)
 
-    assert auth_summary["classifier"] == "claude_cli"
+    assert auth_summary["classifier"] == "stderr_patterns"
     assert auth_summary["failure_category"] == "agent_auth_failure"
     assert model_summary["failure_category"] == "agent_model_unsupported"
     assert permission_summary["failure_category"] == "agent_sandbox_or_approval_failure"
@@ -623,13 +613,7 @@ def test_agent_config_rejects_unknown_parser_id(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     source_path = (
-        Path(__file__).resolve().parents[3]
-        / "assist_tools"
-        / "skills_benchmark"
-        / "skills"
-        / "harness"
-        / "agents"
-        / "codex.yaml"
+        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "config" / "agents" / "codex.yaml"
     )
     config_path = tmp_path / "bad_parser.yaml"
     config_path.write_text(source_path.read_text(encoding="utf-8").replace("codex_jsonl", "missing_parser", 1))
@@ -646,16 +630,12 @@ def test_agent_config_rejects_unknown_exit_classifier(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     source_path = (
-        Path(__file__).resolve().parents[3]
-        / "assist_tools"
-        / "skills_benchmark"
-        / "skills"
-        / "harness"
-        / "agents"
-        / "codex.yaml"
+        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "config" / "agents" / "codex.yaml"
     )
     config_path = tmp_path / "bad_exit.yaml"
-    config_path.write_text(source_path.read_text(encoding="utf-8").replace("classifier: codex_cli", "classifier: bad"))
+    config_path.write_text(
+        source_path.read_text(encoding="utf-8").replace("classifier: stderr_patterns", "classifier: bad")
+    )
 
     try:
         AgentConfig.load(config_path)
@@ -669,13 +649,7 @@ def test_agent_config_rejects_unknown_final_message_source_type(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     source_path = (
-        Path(__file__).resolve().parents[3]
-        / "assist_tools"
-        / "skills_benchmark"
-        / "skills"
-        / "harness"
-        / "agents"
-        / "codex.yaml"
+        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "config" / "agents" / "codex.yaml"
     )
     config_path = tmp_path / "bad_final_source.yaml"
     config_path.write_text(source_path.read_text(encoding="utf-8").replace("source_type: file", "source_type: bad"))
@@ -692,13 +666,7 @@ def test_agent_config_rejects_unknown_final_message_parser(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     source_path = (
-        Path(__file__).resolve().parents[3]
-        / "assist_tools"
-        / "skills_benchmark"
-        / "skills"
-        / "harness"
-        / "agents"
-        / "claude.yaml"
+        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "config" / "agents" / "claude.yaml"
     )
     config_path = tmp_path / "bad_final_parser.yaml"
     config_path.write_text(
@@ -719,13 +687,7 @@ def test_agent_config_rejects_model_argv_without_explicit_position(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     source_path = (
-        Path(__file__).resolve().parents[3]
-        / "assist_tools"
-        / "skills_benchmark"
-        / "skills"
-        / "harness"
-        / "agents"
-        / "codex.yaml"
+        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "config" / "agents" / "codex.yaml"
     )
     config_path = tmp_path / "bad_model_argv.yaml"
     config_path.write_text(
@@ -745,13 +707,7 @@ def test_agent_config_rejects_append_model_argv_for_stdin_prompt(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     source_path = (
-        Path(__file__).resolve().parents[3]
-        / "assist_tools"
-        / "skills_benchmark"
-        / "skills"
-        / "harness"
-        / "agents"
-        / "codex.yaml"
+        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "config" / "agents" / "codex.yaml"
     )
     config_path = tmp_path / "bad_model_argv_position.yaml"
     config_path.write_text(
@@ -773,13 +729,7 @@ def test_agent_config_rejects_unknown_when_condition(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
 
     source_path = (
-        Path(__file__).resolve().parents[3]
-        / "assist_tools"
-        / "skills_benchmark"
-        / "skills"
-        / "harness"
-        / "agents"
-        / "codex.yaml"
+        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "config" / "agents" / "codex.yaml"
     )
     config_path = tmp_path / "bad_when.yaml"
     config_path.write_text(
@@ -818,7 +768,9 @@ def test_codex_adapter_build_args_come_from_profile():
     build_args = adapter.build_args()
     assert build_args["BENCHMARK_DOCKER_AGENT"] == "codex"
     assert build_args["BENCHMARK_AGENT_HOME"] == "/workspace/.codex"
-    assert build_args["CODEX_CLI_VERSION"] == "0.137.0"
+    assert build_args["AGENT_CLI_NAME"] == "codex"
+    assert build_args["AGENT_INSTALL_COMMAND"] == 'npm install -g "@openai/codex@0.137.0"'
+    assert build_args["AGENT_VERSION_COMMAND"] == "codex --version"
 
 
 def test_claude_adapter_build_auth_and_skill_exposure_contract(tmp_path):
@@ -832,7 +784,9 @@ def test_claude_adapter_build_auth_and_skill_exposure_contract(tmp_path):
 
     assert build_args["BENCHMARK_DOCKER_AGENT"] == "claude"
     assert build_args["BENCHMARK_AGENT_HOME"] == "/workspace/.claude"
-    assert build_args["CLAUDE_CLI_VERSION"] == "latest"
+    assert build_args["AGENT_CLI_NAME"] == "claude"
+    assert build_args["AGENT_INSTALL_COMMAND"] == 'npm install -g "@anthropic-ai/claude-code@latest"'
+    assert build_args["AGENT_VERSION_COMMAND"] == "claude --version"
     assert "ANTHROPIC_API_KEY" in adapter.passthrough_env_names()
 
     host_home = tmp_path / ".claude"
@@ -853,6 +807,27 @@ def test_claude_adapter_build_auth_and_skill_exposure_contract(tmp_path):
     assert spec.mechanism_type == "launch_flag"
     assert spec.launch_args == ["--add-dir", str(tmp_path / ".claude-container" / "skills")]
     assert spec.metadata_files == []
+
+
+def test_shared_dockerfile_uses_profile_agent_install_commands():
+    dockerfile = (
+        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "docker" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    assert "AGENT_INSTALL_COMMAND" in dockerfile
+    assert "AGENT_VERSION_COMMAND" in dockerfile
+    assert 'BENCHMARK_DOCKER_AGENT}" = "codex"' not in dockerfile
+    assert "@openai/codex" not in dockerfile
+    assert "@anthropic-ai/claude-code" not in dockerfile
+    assert "/workspace/.codex /workspace/.claude" not in dockerfile
+
+
+def test_sdk_skills_setup_default_agent_home_is_neutral(monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness.container import sdk_skills_setup
+
+    monkeypatch.delenv("BENCHMARK_AGENT_HOME", raising=False)
+
+    assert sdk_skills_setup.agent_home() == Path("/workspace/agent-home")
 
 
 def test_adapter_auth_mounts_reject_path_components(tmp_path):
@@ -1416,7 +1391,6 @@ def test_codex_adapter_runtime_env_sets_generic_agent_model_and_home(tmp_path):
 def test_container_config_uses_generic_agent_model_and_home(monkeypatch):
     from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig
 
-    monkeypatch.delenv("CODEX_MODEL", raising=False)
     monkeypatch.delenv("CODEX_HOME", raising=False)
     monkeypatch.setenv("BENCHMARK_AGENT", "codex")
     monkeypatch.setenv("BENCHMARK_AGENT_MODEL", "generic-model")
@@ -1457,15 +1431,16 @@ def test_container_config_rejects_invalid_progress_interval(monkeypatch):
 
 
 def test_agent_subprocess_env_hides_harness_controls_and_adapter_model_env(monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from types import SimpleNamespace
+
     from assist_tools.skills_benchmark.skills.harness.container.agent_run import agent_subprocess_env
 
-    adapter = load_agent_adapter("codex")
+    adapter = SimpleNamespace(model_env_names=lambda: ("CUSTOM_AGENT_MODEL",))
     monkeypatch.setenv("MODE", "with_skills")
     monkeypatch.setenv("JOB_INPUT_DIR", "/workspace/input")
     monkeypatch.setenv("BENCHMARK_AGENT", "codex")
     monkeypatch.setenv("BENCHMARK_AGENT_MODEL", "generic-model")
-    monkeypatch.setenv("CODEX_MODEL", "legacy-model")
+    monkeypatch.setenv("CUSTOM_AGENT_MODEL", "custom-model")
     monkeypatch.setenv("AGENT_TIMEOUT_SECONDS", "120")
     monkeypatch.setenv("OPENAI_API_KEY", "kept-for-agent-auth")
 
@@ -1475,7 +1450,7 @@ def test_agent_subprocess_env_hides_harness_controls_and_adapter_model_env(monke
     assert "JOB_INPUT_DIR" not in env
     assert "BENCHMARK_AGENT" not in env
     assert "BENCHMARK_AGENT_MODEL" not in env
-    assert "CODEX_MODEL" not in env
+    assert "CUSTOM_AGENT_MODEL" not in env
     assert "AGENT_TIMEOUT_SECONDS" not in env
     assert env["OPENAI_API_KEY"] == "kept-for-agent-auth"
     assert env["CODEX_HOME"] == "/workspace/.codex"
@@ -1976,6 +1951,52 @@ def test_parse_usage_activity_caps_command_list(tmp_path):
     assert activity["commands_truncated"] is True
 
 
+def test_parse_usage_activity_counts_usage_objects_without_retaining_them(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness import events
+
+    events_path = tmp_path / "events.jsonl"
+    with events_path.open("w", encoding="utf-8") as stream:
+        for index in range(1205):
+            stream.write(json.dumps({"type": "turn", "usage": {"total_tokens": index}}) + "\n")
+
+    usage, _activity = events.parse_usage_and_activity_data(events_path)
+
+    assert usage["usage_objects_seen"] == 1205
+
+
+def test_parse_usage_activity_bounds_distinct_tracking_structures(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness import events
+
+    monkeypatch.setattr(events, "MAX_TRACKED_EVENT_TYPES", 2)
+    monkeypatch.setattr(events, "MAX_TRACKED_COMMAND_PREFIXES", 2)
+    monkeypatch.setattr(events, "MAX_TRACKED_UNIQUE_COMMANDS", 2)
+    events_path = tmp_path / "events.jsonl"
+    with events_path.open("w", encoding="utf-8") as stream:
+        for index in range(5):
+            stream.write(
+                json.dumps(
+                    {
+                        "type": f"event-{index}",
+                        "cmd": f"tool-{index} --arg",
+                        "input_tokens": index,
+                        "output_tokens": index + 10,
+                    }
+                )
+                + "\n"
+            )
+
+    usage, activity = events.parse_usage_and_activity_data(events_path)
+
+    assert usage["max_input_tokens"] == 4
+    assert usage["max_output_tokens"] == 14
+    assert len(activity["event_types"]) == 2
+    assert activity["event_types_truncated"] is True
+    assert len(activity["command_prefix_counts"]) == 2
+    assert activity["command_prefix_counts_truncated"] is True
+    assert activity["unique_command_count"] == 2
+    assert activity["unique_commands_truncated"] is True
+
+
 def test_prepare_input_workspace_rejects_symlink_escaping_input(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig, prepare_input_workspace
 
@@ -2254,6 +2275,7 @@ def test_positive_int_resource_value_accepts_float_values():
     from assist_tools.skills_benchmark.skills.harness.host.runner import positive_int_resource_value
 
     assert positive_int_resource_value(1800.0) == 1800
+    assert positive_int_resource_value(0.5) is None
     assert positive_int_resource_value(0.0) is None
     assert positive_int_resource_value(True) is None
 
@@ -2316,6 +2338,148 @@ def test_host_cli_accepts_results_root(tmp_path):
     assert options.result_dir is None
 
 
+def test_host_cli_accepts_direct_run_selection_flags(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.host.common import parse_host_cli_options
+
+    job_input = tmp_path / "job"
+    prompt = tmp_path / "prompt.txt"
+    agent_home = tmp_path / "agent-home"
+    job_input.mkdir()
+    agent_home.mkdir()
+    prompt.write_text("convert this job\n", encoding="utf-8")
+
+    options = parse_host_cli_options(
+        [
+            "--prompt",
+            str(prompt),
+            "--agent",
+            "claude",
+            "--model",
+            "claude-test",
+            "--mode",
+            "without_skills",
+            "--workflow",
+            "fedavg",
+            "--job-scale",
+            "medium",
+            "--agent-home",
+            str(agent_home),
+            "--no-agent-auth-mount",
+            str(job_input),
+        ],
+        "run-one",
+    )
+
+    assert options.agent == "claude"
+    assert options.model == "claude-test"
+    assert options.mode == "without_skills"
+    assert options.workflow == "fedavg"
+    assert options.job_scale == "medium"
+    assert options.agent_home == agent_home
+    assert options.mount_agent_auth is False
+
+
+def test_scenario_cli_accepts_generic_auth_flags(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.host.runner import parse_scenario_cli_options
+
+    scenario = tmp_path / "scenario.yaml"
+    output_dir = tmp_path / "results"
+    agent_home = tmp_path / "agent-home"
+    scenario.write_text("name: test\n", encoding="utf-8")
+    agent_home.mkdir()
+
+    options = parse_scenario_cli_options(
+        [
+            str(scenario),
+            "--output-dir",
+            str(output_dir),
+            "--agent-home",
+            str(agent_home),
+            "--no-agent-auth-mount",
+        ]
+    )
+
+    assert options.scenario_path == scenario
+    assert options.result_root == output_dir
+    assert options.agent_home == agent_home
+    assert options.mount_agent_auth is False
+
+
+def test_run_scenario_passes_generic_auth_flags_to_execution(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness.host import runner
+
+    job_input = tmp_path / "job"
+    prompt = tmp_path / "prompt.txt"
+    scenario = tmp_path / "scenario.yaml"
+    output_dir = tmp_path / "results"
+    agent_home = tmp_path / "agent-home"
+    job_input.mkdir()
+    agent_home.mkdir()
+    prompt.write_text("convert this job\n", encoding="utf-8")
+    scenario.write_text(
+        "\n".join(
+            [
+                "name: scenario auth",
+                f"prompt: {prompt}",
+                "agents:",
+                "  - name: codex",
+                "    models: [codex-test]",
+                "workflows:",
+                "  - name: default",
+                "jobs:",
+                "  - name: job",
+                f"    path: {job_input}",
+                "    scale: small",
+                "comparison:",
+                "  type: one",
+                "  mode: with_skills",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    captured = {}
+
+    def fake_execute(compilation, *, result_root, logs=(), runtime_auth_options=None):
+        captured["result_root"] = result_root
+        captured["runtime_auth_options"] = runtime_auth_options
+        return {"run_00001": 0}, {"status": "passed"}
+
+    monkeypatch.setattr(runner, "execute_run_plan", fake_execute)
+
+    status = runner.run_scenario(
+        [
+            str(scenario),
+            "--output-dir",
+            str(output_dir),
+            "--agent-home",
+            str(agent_home),
+            "--no-agent-auth-mount",
+        ]
+    )
+
+    assert status == 0
+    assert captured["result_root"] == output_dir
+    assert captured["runtime_auth_options"].agent_home == agent_home
+    assert captured["runtime_auth_options"].mount_agent_auth is False
+
+
+def test_host_cli_rejects_mode_for_pair(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.host.common import parse_host_cli_options
+
+    job_input = tmp_path / "job"
+    prompt = tmp_path / "prompt.txt"
+    job_input.mkdir()
+    prompt.write_text("convert this job\n", encoding="utf-8")
+
+    try:
+        parse_host_cli_options(["--prompt", str(prompt), "--mode", "with_skills", str(job_input)], "pair")
+    except SystemExit as exc:
+        assert "--mode is only supported for run-one" in str(exc)
+    else:
+        raise AssertionError("--mode should be rejected for pair")
+
+
 def test_default_results_root_uses_codex_compat_alias(monkeypatch, tmp_path):
     from assist_tools.skills_benchmark.skills.harness.host.common import default_results_root
 
@@ -2343,6 +2507,79 @@ def test_pair_compilation_accepts_explicit_absolute_prompt_path(tmp_path):
     compilation = pair_compilation_from_options(options)
 
     assert compilation.scenario["prompt"]["path"] == str(prompt.resolve())
+
+
+def test_pair_compilation_uses_direct_run_selection_flags(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness.host.common import parse_host_cli_options
+    from assist_tools.skills_benchmark.skills.harness.host.runner import pair_compilation_from_options
+
+    job_input = tmp_path / "job"
+    prompt = tmp_path / "prompt.txt"
+    job_input.mkdir()
+    prompt.write_text("convert this job\n", encoding="utf-8")
+    monkeypatch.delenv("BENCHMARK_AGENT", raising=False)
+    monkeypatch.delenv("BENCHMARK_AGENT_MODEL", raising=False)
+
+    options = parse_host_cli_options(
+        [
+            "--prompt",
+            str(prompt),
+            "--agent",
+            "codex",
+            "--model",
+            "codex-test",
+            "--workflow",
+            "fedavg",
+            "--job-scale",
+            "medium",
+            str(job_input),
+        ],
+        "pair",
+    )
+
+    compilation = pair_compilation_from_options(options)
+    entries = compilation.run_plan["entries"]
+
+    assert entries
+    assert {entry["agent"] for entry in entries} == {"codex"}
+    assert {entry["agent_model"] for entry in entries} == {"codex-test"}
+    assert {entry["workflow"] for entry in entries} == {"fedavg"}
+    assert {entry["job_scale"] for entry in entries} == {"medium"}
+
+
+def test_case_config_uses_generic_runtime_auth_overrides(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness.host.common import parse_host_cli_options
+    from assist_tools.skills_benchmark.skills.harness.host.runner import (
+        RuntimeAuthOptions,
+        case_config_for_entry,
+        pair_compilation_from_options,
+    )
+
+    job_input = tmp_path / "job"
+    prompt = tmp_path / "prompt.txt"
+    agent_home = tmp_path / "custom-agent-home"
+    result_root = tmp_path / "results"
+    job_input.mkdir()
+    agent_home.mkdir()
+    prompt.write_text("convert this job\n", encoding="utf-8")
+    monkeypatch.delenv("BENCHMARK_AGENT", raising=False)
+    monkeypatch.delenv("BENCHMARK_AGENT_MODEL", raising=False)
+
+    options = parse_host_cli_options(
+        ["--prompt", str(prompt), "--agent", "codex", "--model", "codex-test", str(job_input)],
+        "pair",
+    )
+    compilation = pair_compilation_from_options(options)
+    entry = compilation.run_plan["entries"][0]
+
+    config = case_config_for_entry(
+        entry,
+        result_root,
+        RuntimeAuthOptions(agent_home=agent_home, mount_agent_auth=False),
+    )
+
+    assert config.host_agent_home == agent_home
+    assert config.mount_host_agent_auth is False
 
 
 def test_run_one_executes_compiled_one_scenario(tmp_path, monkeypatch):
@@ -2860,6 +3097,24 @@ def test_infer_from_events_uses_case_id_boundaries(monkeypatch):
     assert inferred["case_id"] == "basic-v2"
 
 
+def test_eval_case_ids_for_skill_skips_oversized_evals_json(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness import records
+
+    agent_home = tmp_path / "agent-home"
+    evals_dir = agent_home / "skills" / "nvflare-a" / "evals"
+    evals_dir.mkdir(parents=True)
+    with evals_dir.joinpath("evals.json").open("wb") as stream:
+        stream.truncate(records.MAX_EVALS_FILE_BYTES + 1)
+    monkeypatch.setenv("BENCHMARK_AGENT_HOME", str(agent_home))
+    monkeypatch.setattr(
+        records,
+        "load_json",
+        lambda _path, default=None: (_ for _ in ()).throw(AssertionError("oversized evals should not load")),
+    )
+
+    assert records.eval_case_ids_for_skill("nvflare-a") == []
+
+
 def test_load_text_caps_bytes(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.records import load_text
 
@@ -2968,7 +3223,7 @@ def test_iter_json_records_does_not_traverse_symlinked_directories(tmp_path):
 def test_login_shell_runtime_probe_uses_configured_venv_path(monkeypatch):
     from assist_tools.skills_benchmark.skills.harness.container import agent_run
 
-    class Result:
+    class ProbeResult:
         returncode = 0
         stdout = "\n".join(
             [
@@ -2976,14 +3231,23 @@ def test_login_shell_runtime_probe_uses_configured_venv_path(monkeypatch):
                 "python=/custom/venv/bin/python",
                 "sdk_import_name=example_sdk",
                 "sdk_import_version=9.9",
-                "sdk_version_output=Example SDK 9.9",
             ]
         )
+
+    class VersionResult:
+        returncode = 0
+        stdout = "Example SDK 9.9\n"
+
+    calls = []
+
+    def fake_run(command, *args, **kwargs):
+        calls.append(command)
+        return ProbeResult() if len(calls) == 1 else VersionResult()
 
     monkeypatch.setenv("BENCHMARK_CONTAINER_VENV_DIR", "/custom/venv")
     monkeypatch.setenv("SDK_IMPORT_NAME", "example_sdk")
     monkeypatch.setenv("SDK_VERSION_COMMAND", "example-sdk --version")
-    monkeypatch.setattr(agent_run.subprocess, "run", lambda *args, **kwargs: Result())
+    monkeypatch.setattr(agent_run.subprocess, "run", fake_run)
 
     probe = agent_run.login_shell_runtime_probe()
 
@@ -2991,7 +3255,38 @@ def test_login_shell_runtime_probe_uses_configured_venv_path(monkeypatch):
     assert probe["expected_python"] == "/custom/venv/bin/python"
     assert probe["sdk_import_name"] == "example_sdk"
     assert probe["sdk_import_version"] == "9.9"
+    assert calls[1] == ["example-sdk", "--version"]
+    assert probe["sdk_version_exit_code"] == 0
     assert probe["sdk_version_output"] == "Example SDK 9.9"
+
+
+def test_login_shell_runtime_probe_does_not_shell_interpolate_sdk_version_command(monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness.container import agent_run
+
+    class ProbeResult:
+        returncode = 0
+        stdout = "\n".join(["PATH=/custom/venv/bin:/usr/bin", "python=/custom/venv/bin/python"])
+
+    class VersionResult:
+        returncode = 0
+        stdout = "version output\n"
+
+    calls = []
+
+    def fake_run(command, *args, **kwargs):
+        calls.append(command)
+        return ProbeResult() if len(calls) == 1 else VersionResult()
+
+    monkeypatch.setenv("BENCHMARK_CONTAINER_VENV_DIR", "/custom/venv")
+    monkeypatch.setenv("SDK_VERSION_COMMAND", "example-sdk --version; rm -rf /workspace")
+    monkeypatch.setattr(agent_run.subprocess, "run", fake_run)
+
+    probe = agent_run.login_shell_runtime_probe()
+
+    assert calls[0] == ["/bin/bash", "-lc", calls[0][2]]
+    assert "rm -rf" not in calls[0][2]
+    assert calls[1] == ["example-sdk", "--version;", "rm", "-rf", "/workspace"]
+    assert probe["sdk_version_output"] == "version output"
 
 
 def test_runtime_metadata_skips_login_shell_probe_when_launch_does_not_require_it(tmp_path, monkeypatch):

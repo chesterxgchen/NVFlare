@@ -27,7 +27,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterable
 
-from ..agents.registry import load_agent_adapter
+from ..agents.registry import DEFAULT_BENCHMARK_AGENT, load_agent_adapter
 from ..common import load_json, write_json
 from ..modes import PAIR_RUNS, mode_spec
 from ..scenarios import (
@@ -46,7 +46,6 @@ from .common import (
     absolute_path,
     add_agent_auth_mounts,
     add_agent_passthrough_env,
-    benchmark_agent_adapter_from_env,
     default_results_root,
     docker_args_for_case,
     docker_env,
@@ -100,11 +99,23 @@ class ScenarioCliOptions:
     scenario_path: Path
     results_root: Path | None = None
     result_root: Path | None = None
+    agent_home: Path | None = None
+    mount_agent_auth: bool | None = None
 
 
 @dataclass(frozen=True)
 class ReplayCliOptions:
     result_root: Path
+
+
+@dataclass(frozen=True)
+class RuntimeAuthOptions:
+    agent_home: Path | None = None
+    mount_agent_auth: bool | None = None
+
+    @property
+    def has_overrides(self) -> bool:
+        return self.agent_home is not None or self.mount_agent_auth is not None
 
 
 def run_one_case(config: CaseConfig, *, logs: Iterable[Path] = (), prefix: str | None = None) -> int:
@@ -193,8 +204,9 @@ def run_case_safely(config: CaseConfig, *, logs: Iterable[Path] = (), prefix: st
 
 def run_one(argv: list[str]) -> int:
     options = parse_host_cli_options(argv, "run-one")
-    images = ImageConfig.from_env()
     try:
+        adapter = agent_adapter_from_options(options)
+        images = ImageConfig.for_adapter(adapter)
         compilation = one_compilation_from_options(options)
     except ScenarioValidationError as exc:
         return emit_scenario_validation_error(exc)
@@ -214,7 +226,12 @@ def run_one(argv: list[str]) -> int:
     emit(f"Prompt file: {options.prompt_path} -> {CONTAINER_PROMPT_PATH}", logs=logs)
 
     try:
-        run_statuses, scenario_summary = execute_run_plan(compilation, result_root=result_root, logs=logs)
+        run_statuses, scenario_summary = execute_run_plan(
+            compilation,
+            result_root=result_root,
+            logs=logs,
+            **execute_auth_kwargs(options),
+        )
     except ScenarioValidationError as exc:
         status = emit_scenario_validation_error(exc, logs=logs)
         write_host_report_status(result_root)
@@ -265,6 +282,8 @@ def parse_scenario_cli_options(argv: list[str]) -> ScenarioCliOptions:
     scenario_path: Path | None = None
     results_root: Path | None = None
     result_root: Path | None = None
+    agent_home: Path | None = None
+    mount_agent_auth: bool | None = None
     index = 0
     while index < len(argv):
         arg = argv[index]
@@ -283,8 +302,21 @@ def parse_scenario_cli_options(argv: list[str]) -> ScenarioCliOptions:
             if result_root is not None:
                 raise SystemExit("Expected only one exact output directory")
             result_root = absolute_path(value)
+        elif arg == "--agent-home" or arg.startswith("--agent-home="):
+            value, index = _scenario_option_value(argv, index, "--agent-home")
+            if agent_home is not None:
+                raise SystemExit("Expected only one --agent-home")
+            agent_home = absolute_path(value)
+        elif arg == "--no-agent-auth-mount":
+            if mount_agent_auth is False:
+                raise SystemExit("Expected only one --no-agent-auth-mount")
+            mount_agent_auth = False
+            index += 1
         elif arg in {"-h", "--help"}:
-            print("Usage: run.sh scenario SCENARIO.yaml [--results-root PATH|--output-dir PATH]")
+            print(
+                "Usage: run.sh scenario SCENARIO.yaml "
+                "[--results-root PATH|--output-dir PATH] [--agent-home PATH] [--no-agent-auth-mount]"
+            )
             raise SystemExit(0)
         elif arg.startswith("-"):
             raise SystemExit(f"Unknown scenario option: {arg}")
@@ -299,7 +331,13 @@ def parse_scenario_cli_options(argv: list[str]) -> ScenarioCliOptions:
         raise SystemExit(f"Scenario YAML file must exist: {scenario_path}")
     if results_root is not None and result_root is not None:
         raise SystemExit("Use --results-root or --output-dir, not both.")
-    return ScenarioCliOptions(scenario_path=scenario_path, results_root=results_root, result_root=result_root)
+    return ScenarioCliOptions(
+        scenario_path=scenario_path,
+        results_root=results_root,
+        result_root=result_root,
+        agent_home=agent_home,
+        mount_agent_auth=mount_agent_auth,
+    )
 
 
 def parse_replay_cli_options(argv: list[str]) -> ReplayCliOptions:
@@ -382,9 +420,8 @@ def clean_pair_result_root(result_root: Path) -> None:
 
 
 def pair_compilation_from_options(options) -> ScenarioCompilation:
-    adapter = benchmark_agent_adapter_from_env()
-    agent_model = agent_model_from_env(adapter)
-    model_was_explicit = adapter.model_was_explicit(os.environ)
+    adapter = agent_adapter_from_options(options)
+    agent_model, model_was_explicit = agent_model_from_options(adapter, options)
     agent_entry: dict[str, object] = {"name": adapter.name}
     if model_was_explicit:
         agent_entry["models"] = [agent_model]
@@ -393,12 +430,13 @@ def pair_compilation_from_options(options) -> ScenarioCompilation:
         "prompt": str(options.prompt_path),
         "agents": [agent_entry],
         "comparison": {"type": "mode_ablation", "modes": [spec.mode for spec in PAIR_RUNS]},
-        "workflows": [{"name": os.environ.get("BENCHMARK_WORKFLOW", "default")}],
+        "workflows": [{"name": options.workflow or os.environ.get("BENCHMARK_WORKFLOW", "default")}],
         "jobs": [
             {
                 "name": options.job_input.name,
                 "path": str(options.job_input),
-                "scale": os.environ.get("BENCHMARK_JOB_SCALE", os.environ.get("JOB_SCALE", "small")),
+                "scale": options.job_scale
+                or os.environ.get("BENCHMARK_JOB_SCALE", os.environ.get("JOB_SCALE", "small")),
             }
         ],
         "repeat_count": 1,
@@ -407,8 +445,8 @@ def pair_compilation_from_options(options) -> ScenarioCompilation:
 
 
 def one_compilation_from_options(options) -> ScenarioCompilation:
-    adapter = benchmark_agent_adapter_from_env()
-    mode = os.environ.get("MODE", "with_skills")
+    adapter = agent_adapter_from_options(options)
+    mode = options.mode or os.environ.get("MODE", "with_skills")
     try:
         spec = mode_spec(mode)
     except ValueError as exc:
@@ -418,8 +456,7 @@ def one_compilation_from_options(options) -> ScenarioCompilation:
         spec.skills_enabled,
         mode,
     )
-    agent_model = agent_model_from_env(adapter)
-    model_was_explicit = adapter.model_was_explicit(os.environ)
+    agent_model, model_was_explicit = agent_model_from_options(adapter, options)
     agent_entry: dict[str, object] = {"name": adapter.name}
     if model_was_explicit:
         agent_entry["models"] = [agent_model]
@@ -428,12 +465,13 @@ def one_compilation_from_options(options) -> ScenarioCompilation:
         "prompt": str(options.prompt_path),
         "agents": [agent_entry],
         "comparison": {"type": "one", "mode": mode},
-        "workflows": [{"name": os.environ.get("BENCHMARK_WORKFLOW", "default")}],
+        "workflows": [{"name": options.workflow or os.environ.get("BENCHMARK_WORKFLOW", "default")}],
         "jobs": [
             {
                 "name": options.job_input.name,
                 "path": str(options.job_input),
-                "scale": os.environ.get("BENCHMARK_JOB_SCALE", os.environ.get("JOB_SCALE", "small")),
+                "scale": options.job_scale
+                or os.environ.get("BENCHMARK_JOB_SCALE", os.environ.get("JOB_SCALE", "small")),
             }
         ],
         "repeat_count": 1,
@@ -452,12 +490,24 @@ def model_was_explicit_for_entry(entry: dict[str, object]) -> bool:
 def positive_int_resource_value(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         return None
-    return int(value)
+    parsed = int(value)
+    return parsed if parsed > 0 else None
 
 
-def case_config_for_entry(entry: dict[str, object], result_root: Path) -> CaseConfig:
+def case_config_for_entry(
+    entry: dict[str, object],
+    result_root: Path,
+    runtime_auth_options: RuntimeAuthOptions | None = None,
+) -> CaseConfig:
     adapter = load_agent_adapter(str(entry["agent"]))
     resource_policy = entry.get("resource_policy") if isinstance(entry.get("resource_policy"), dict) else {}
+    runtime_auth_options = runtime_auth_options or RuntimeAuthOptions()
+    host_agent_home = runtime_auth_options.agent_home or absolute_path(str(adapter.host_home_from_env(os.environ)))
+    mount_host_agent_auth = (
+        runtime_auth_options.mount_agent_auth
+        if runtime_auth_options.mount_agent_auth is not None
+        else adapter.mount_auth_from_env(os.environ)
+    )
     return CaseConfig(
         mode=str(entry["mode"]),
         use_preinstalled_skills=bool(entry["skills_enabled"]),
@@ -470,8 +520,8 @@ def case_config_for_entry(entry: dict[str, object], result_root: Path) -> CaseCo
         agent_model=str(entry["agent_model"]),
         model_was_explicit=model_was_explicit_for_entry(entry),
         adapter=adapter,
-        host_agent_home=absolute_path(str(adapter.host_home_from_env(os.environ))),
-        mount_host_agent_auth=adapter.mount_auth_from_env(os.environ),
+        host_agent_home=host_agent_home,
+        mount_host_agent_auth=mount_host_agent_auth,
         agent_timeout_seconds=positive_int_resource_value(resource_policy.get("agent_timeout_seconds")),
         container_timeout_seconds=positive_int_resource_value(resource_policy.get("container_timeout_seconds")),
         result_size_budget_bytes=positive_int_resource_value(resource_policy.get("result_size_budget_bytes")),
@@ -499,11 +549,12 @@ def preflight_docker_images(
     *,
     result_root: Path,
     logs: Iterable[Path] = (),
+    runtime_auth_options: RuntimeAuthOptions | None = None,
 ) -> None:
     images_by_run: dict[str, list[str]] = {}
     inspect_results: dict[str, dict[str, object]] = {}
     for entry in entries:
-        config = case_config_for_entry(entry, result_root)
+        config = case_config_for_entry(entry, result_root, runtime_auth_options)
         images_by_run.setdefault(config.run_image, []).append(str(entry.get("run_id")))
     for image in sorted(images_by_run):
         available, detail = inspect_docker_image(image)
@@ -592,6 +643,7 @@ def execute_run_plan(
     *,
     result_root: Path,
     logs: Iterable[Path] = (),
+    runtime_auth_options: RuntimeAuthOptions | None = None,
 ) -> tuple[dict[str, int], dict[str, object]]:
     path_budget = compilation.scenario.get("path_budget")
     if isinstance(path_budget, int):
@@ -605,7 +657,12 @@ def execute_run_plan(
     run_plan = execution.run_plan
     entries = run_plan.get("entries") if isinstance(run_plan.get("entries"), list) else []
     try:
-        preflight_docker_images(entries, result_root=result_root, logs=logs)
+        preflight_docker_images(
+            entries,
+            result_root=result_root,
+            logs=logs,
+            runtime_auth_options=runtime_auth_options,
+        )
     except ScenarioValidationError as exc:
         write_scenario_summaries(
             result_root,
@@ -634,7 +691,7 @@ def execute_run_plan(
             logs=logs,
             prefix=prefix,
         )
-        config = case_config_for_entry(entry, result_root)
+        config = case_config_for_entry(entry, result_root, runtime_auth_options)
         status = run_case_safely(config, logs=logs, prefix=prefix)
         statuses[str(entry["run_id"])] = status
         canonicalize_entry_artifacts(result_root, entry, status)
@@ -708,10 +765,11 @@ def run_pair(argv: list[str]) -> int:
     console_log.write_text("", encoding="utf-8")
     logs = (console_log,)
     try:
+        adapter = agent_adapter_from_options(options)
         compilation = pair_compilation_from_options(options)
     except ScenarioValidationError as exc:
         return emit_scenario_validation_error(exc, logs=logs)
-    images = ImageConfig.from_env()
+    images = ImageConfig.for_adapter(adapter)
 
     emit(f"Result root: {result_root}", logs=logs)
     emit(f"Console log: {console_log}", logs=logs)
@@ -722,7 +780,12 @@ def run_pair(argv: list[str]) -> int:
     emit(f"Prompt file: {options.prompt_path} -> {CONTAINER_PROMPT_PATH}", logs=logs)
 
     try:
-        run_statuses, scenario_summary = execute_run_plan(compilation, result_root=result_root, logs=logs)
+        run_statuses, scenario_summary = execute_run_plan(
+            compilation,
+            result_root=result_root,
+            logs=logs,
+            **execute_auth_kwargs(options),
+        )
     except ScenarioValidationError as exc:
         status = emit_scenario_validation_error(exc, logs=logs)
         write_host_report_status(result_root)
@@ -758,7 +821,12 @@ def run_scenario(argv: list[str]) -> int:
     emit(f"Run count: {compilation.run_plan.get('run_count')}", logs=logs)
 
     try:
-        statuses, summary = execute_run_plan(compilation, result_root=result_root, logs=logs)
+        statuses, summary = execute_run_plan(
+            compilation,
+            result_root=result_root,
+            logs=logs,
+            **execute_auth_kwargs(options),
+        )
     except ScenarioValidationError as exc:
         status = emit_scenario_validation_error(exc, logs=logs)
         write_host_report_status(result_root)
@@ -788,9 +856,19 @@ def run_replay(argv: list[str]) -> int:
 
 def run_interactive(argv: list[str]) -> int:
     options = parse_host_cli_options(argv, "interactive")
-    images = ImageConfig.from_env()
-    adapter = benchmark_agent_adapter_from_env()
-    host_agent_home = absolute_path(str(adapter.host_home_from_env(os.environ)))
+    try:
+        adapter = agent_adapter_from_options(options)
+        agent_model, model_was_explicit = agent_model_from_options(adapter, options)
+    except ScenarioValidationError as exc:
+        return emit_scenario_validation_error(exc)
+    images = ImageConfig.for_adapter(adapter)
+    runtime_auth_options = runtime_auth_options_from_host_cli(options)
+    host_agent_home = runtime_auth_options.agent_home or absolute_path(str(adapter.host_home_from_env(os.environ)))
+    mount_agent_auth = (
+        runtime_auth_options.mount_agent_auth
+        if runtime_auth_options.mount_agent_auth is not None
+        else adapter.mount_auth_from_env(os.environ)
+    )
     container_records = os.environ.get("CONTAINER_RECORDS", "/tmp/agent_benchmark/records")
     args = [
         "docker",
@@ -810,14 +888,14 @@ def run_interactive(argv: list[str]) -> int:
         adapter.runtime_env(
             InteractiveRuntimeConfig(
                 agent=adapter.name,
-                agent_model=agent_model_from_env(adapter),
-                model_was_explicit=adapter.model_was_explicit(os.environ),
+                agent_model=agent_model,
+                model_was_explicit=model_was_explicit,
             )
         ).items()
     ):
         args.extend(docker_env(name, value))
     add_agent_passthrough_env(args, adapter)
-    if adapter.mount_auth_from_env(os.environ):
+    if mount_agent_auth:
         interactive_config = SimpleNamespace(host_agent_home=host_agent_home)
         add_agent_auth_mounts(args, mounts=adapter.auth_mounts(interactive_config))
     emit(f"Mounting job folder: {options.job_input} -> /workspace/input")
@@ -829,11 +907,32 @@ def run_interactive(argv: list[str]) -> int:
         return 127
 
 
-def agent_model_from_env(adapter) -> str:
+def agent_adapter_from_options(options):
+    agent_name = getattr(options, "agent", None) or os.environ.get("BENCHMARK_AGENT", DEFAULT_BENCHMARK_AGENT)
     try:
-        return adapter.model_from_env(os.environ)
+        return load_agent_adapter(agent_name)
     except ValueError as exc:
-        raise SystemExit(str(exc)) from exc
+        raise ScenarioValidationError(str(exc)) from exc
+
+
+def runtime_auth_options_from_host_cli(options) -> RuntimeAuthOptions:
+    return RuntimeAuthOptions(
+        agent_home=getattr(options, "agent_home", None),
+        mount_agent_auth=getattr(options, "mount_agent_auth", None),
+    )
+
+
+def execute_auth_kwargs(options) -> dict[str, RuntimeAuthOptions]:
+    runtime_auth_options = runtime_auth_options_from_host_cli(options)
+    return {"runtime_auth_options": runtime_auth_options} if runtime_auth_options.has_overrides else {}
+
+
+def agent_model_from_options(adapter, options) -> tuple[str, bool]:
+    env = os.environ if not getattr(options, "model", None) else {**os.environ, "BENCHMARK_AGENT_MODEL": options.model}
+    try:
+        return adapter.model_from_env(env), adapter.model_was_explicit(env)
+    except ValueError as exc:
+        raise ScenarioValidationError(str(exc)) from exc
 
 
 def main() -> None:

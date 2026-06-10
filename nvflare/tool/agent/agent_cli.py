@@ -47,6 +47,8 @@ _AGENT_SKILLS_EXAMPLES = [
 _agent_parser: Optional[argparse.ArgumentParser] = None
 _agent_sub_cmd_parsers = {}
 _agent_skills_sub_cmd_parsers = {}
+_AGENT_SKILLS_SCHEMA_VALUE_OPTIONS = {"--agent", "--format", "--skill", "--target"}
+_AGENT_SKILLS_SCHEMA_FLAG_OPTIONS = {"--dry-run", "--schema"}
 
 
 def def_agent_cli_parser(sub_cmd) -> dict:
@@ -590,9 +592,9 @@ def _schema_agent_skills_sub_cmd(argv: list[str]) -> Optional[str]:
 
 def _raw_schema_agent_skills_sub_cmd(argv: list[str]) -> Optional[str]:
     # The top-level CLI bypasses nested argparse parsing for --schema, so infer
-    # the third-level agent skills command from the first positional token after
-    # `skills` until that parser path is generalized. Do not scan later tokens:
-    # option values can legitimately equal a subcommand name.
+    # the third-level agent skills command until that parser path is generalized.
+    # While scanning, skip known option values so e.g. `--skill install` is not
+    # treated as the `install` subcommand.
     if "--schema" not in argv or CMD_AGENT_SKILLS not in argv:
         return None
     skills_index = None
@@ -608,10 +610,17 @@ def _raw_schema_agent_skills_sub_cmd(argv: list[str]) -> Optional[str]:
     index = skills_index + 1
     while index < len(argv):
         token = argv[index]
-        if token == "--schema":
+        if token in _agent_skills_sub_cmd_parsers:
+            return token
+        option = token.split("=", 1)[0]
+        if option in _AGENT_SKILLS_SCHEMA_FLAG_OPTIONS:
             index += 1
             continue
+        if option in _AGENT_SKILLS_SCHEMA_VALUE_OPTIONS:
+            index += 1 if "=" in token else 2
+            continue
         if token.startswith("-"):
-            return None
+            index += 2
+            continue
         return token
     return None

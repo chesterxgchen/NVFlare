@@ -55,7 +55,8 @@ def test_mode_ablation_expands_repeats_modes_and_target_record_paths(tmp_path):
     assert scenario["prompt"]["sha256"] == expected_prompt_hash
     assert scenario["reproducibility"]["prompt_hash"] == expected_prompt_hash
     assert scenario["reproducibility"]["image_targets"]["codex"]["skills"] == "agent-skills-benchmark:codex-skills"
-    assert scenario["reproducibility"]["agent_versions"]["codex"]["CODEX_CLI_VERSION"]
+    assert scenario["reproducibility"]["agent_versions"]["codex"]["AGENT_CLI_NAME"] == "codex"
+    assert scenario["reproducibility"]["agent_versions"]["codex"]["AGENT_VERSION_COMMAND"] == "codex --version"
     assert scenario["reproducibility"]["wheel_variants"] == [
         "local_wheel_with_preinstalled_skills",
         "local_wheel_without_packaged_skills",
@@ -640,7 +641,7 @@ def test_claude_scenario_requires_explicit_model(tmp_path):
         compile_scenario(raw, base_dir=tmp_path)
     except ScenarioValidationError as exc:
         assert "requires an explicit benchmark model" in str(exc)
-        assert "CLAUDE_MODEL" in str(exc)
+        assert "BENCHMARK_AGENT_MODEL" in str(exc)
     else:
         raise AssertionError("Claude scenarios must require an explicit model")
 

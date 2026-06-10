@@ -22,18 +22,19 @@ from pathlib import Path
 from .base import SdkAdapter
 from .config import ConfigurableSdkAdapter
 
-SDKS_DIR = Path(__file__).resolve().parent
+BENCHMARK_ROOT = Path(__file__).resolve().parents[3]
+SDK_CONFIG_DIR = BENCHMARK_ROOT / "config" / "sdks"
 DEFAULT_BENCHMARK_SDK = "nvflare-profile"
 
 
 def sdk_config_path(sdk: str) -> Path:
     if Path(sdk).name != sdk or sdk.startswith("."):
         raise ValueError(f"SDK profile must be a config name, got {sdk!r}")
-    return SDKS_DIR / f"{sdk}.yaml"
+    return SDK_CONFIG_DIR / f"{sdk}.yaml"
 
 
 def supported_sdk_names() -> tuple[str, ...]:
-    return tuple(sorted(path.stem for path in SDKS_DIR.glob("*.yaml") if not path.name.startswith(".")))
+    return tuple(sorted(path.stem for path in SDK_CONFIG_DIR.glob("*.yaml") if not path.name.startswith(".")))
 
 
 def validate_benchmark_sdk(sdk: str) -> str:

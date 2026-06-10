@@ -1075,6 +1075,8 @@ def _skill_body(text: str) -> str:
 def _load_evals(evals_path: Path) -> tuple[list[dict[str, Any]], Optional[str]]:
     if not evals_path.is_file():
         return [], None
+    if _is_oversized_text_file(evals_path):
+        return [], f"evals/evals.json exceeds size limit ({MAX_SKILL_TEXT_FILE_BYTES} bytes)"
     try:
         raw = json.loads(evals_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
@@ -1501,6 +1503,8 @@ def _line_for_frontmatter_issue(skill_file: Path, code: str, message: str) -> Op
 def _line_for_field(skill_file: Path, field: str) -> Optional[int]:
     if not skill_file.is_file():
         return None
+    if _is_oversized_text_file(skill_file):
+        return 1
     prefix = f"{field}:"
     for line_no, line in enumerate(skill_file.read_text(encoding="utf-8-sig", errors="replace").splitlines(), start=1):
         if line.strip().startswith(prefix):

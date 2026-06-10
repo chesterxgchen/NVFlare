@@ -5,8 +5,7 @@ NVFLARE job-conversion task with and without packaged NVFLARE agent skills.
 
 Current runnable scope:
 
-- Agents: Codex and Claude. Claude requires an explicit `CLAUDE_MODEL` or
-  `BENCHMARK_AGENT_MODEL`.
+- Agents: Codex and Claude. Claude requires an explicit `--model`.
 - Modes: `without_skills` and `with_skills`.
 - Job input: a folder containing scripts, data, docs, and any local
   requirements files.
@@ -63,11 +62,22 @@ OPENAI_API_KEY="$OPENAI_API_KEY" \
   ./bin/run.sh pair --prompt /path/to/prompt.txt /path/to/job-folder
 ```
 
-To disable host Codex auth mounting:
+To use a non-default Codex auth/config directory:
 
 ```bash
-MOUNT_HOST_CODEX_AUTH=false \
-  ./bin/run.sh pair --prompt /path/to/prompt.txt /path/to/job-folder
+./bin/run.sh pair \
+  --agent-home /path/to/codex-home \
+  --prompt /path/to/prompt.txt \
+  /path/to/job-folder
+```
+
+To disable host agent auth/config mounting:
+
+```bash
+./bin/run.sh pair \
+  --no-agent-auth-mount \
+  --prompt /path/to/prompt.txt \
+  /path/to/job-folder
 ```
 
 ## Build Images
@@ -165,7 +175,9 @@ build:
   args:
     BENCHMARK_DOCKER_AGENT: codex
     BENCHMARK_AGENT_HOME: /workspace/.codex
-    CODEX_CLI_VERSION: 0.137.0
+    AGENT_CLI_NAME: codex
+    AGENT_INSTALL_COMMAND: npm install -g "@openai/codex@0.137.0"
+    AGENT_VERSION_COMMAND: codex --version
 ```
 
 Useful build flags:
@@ -199,7 +211,7 @@ requirements from the job folder is part of the measured agent behavior.
 Add one SDK profile file:
 
 ```text
-assist_tools/skills_benchmark/skills/harness/sdks/<sdk-profile>.yaml
+assist_tools/skills_benchmark/config/sdks/<sdk-profile>.yaml
 ```
 
 The YAML declares the SDK package/import names, source, skills and baseline
@@ -301,19 +313,24 @@ Write a comparison to an exact directory:
 Select a Codex model:
 
 ```bash
-CODEX_MODEL=<model-name> \
-  ./bin/run.sh pair --prompt ./prompt.txt /path/to/job-folder
+./bin/run.sh pair \
+  --model <model-name> \
+  --prompt ./prompt.txt \
+  /path/to/job-folder
 ```
 
 Select Claude:
 
 ```bash
-BENCHMARK_AGENT=claude CLAUDE_MODEL=<model-name> \
-  ./bin/run.sh pair --prompt ./prompt.txt /path/to/job-folder
+./bin/run.sh pair \
+  --agent claude \
+  --model <model-name> \
+  --prompt ./prompt.txt \
+  /path/to/job-folder
 ```
 
-`BENCHMARK_AGENT` defaults to `codex`. Known but unimplemented agents such as
-Hermes and OpenClaw fail during build/run preflight.
+`--agent` defaults to `codex`. Known but unimplemented agents such as Hermes
+and OpenClaw fail during build/run preflight.
 
 `pair` is a shortcut over the scenario/run-plan execution path. It writes the
 same canonical scenario records as `scenario`.
@@ -328,12 +345,41 @@ and repeat count. The harness compiles them into `scenario.json` and
 ./bin/run.sh scenario /path/to/scenario.yaml --output-dir /path/to/result-root
 ```
 
-Runnable starting points are in `examples/` (`mode_ablation.yaml`,
-`model_comparison.yaml`). Edit the `prompt` and `jobs[].path` values, then:
+Minimal skills-vs-baseline scenario:
 
-```bash
-./bin/run.sh scenario examples/mode_ablation.yaml --output-dir /path/to/result-root
+```yaml
+name: ames mode ablation
+
+prompt: ./prompt.txt
+repeat_count: 1
+fail_fast: false
+
+agents:
+  - name: codex
+    models:
+      - "<model-name>"
+
+workflows:
+  - name: fedavg
+
+jobs:
+  - name: ames
+    path: /path/to/job-folder
+    scale: small
+
+comparison:
+  type: mode_ablation
+  modes:
+    - without_skills
+    - with_skills
 ```
+
+For Claude, set `agents[0].name` to `claude` and provide a model. For a model
+comparison, keep one agent and use `comparison.type: model_comparison` with a
+`comparison.models` list.
+
+Save the YAML above as a local scenario file, edit `prompt` and `jobs[].path`,
+then pass it to `scenario`.
 
 The scenario command writes:
 
@@ -376,25 +422,24 @@ Use the shortcuts:
 ./bin/run.sh with-skills --prompt ./prompt.txt /path/to/job-folder
 ```
 
-Or use `one` with `MODE`:
+Or use `one` with an explicit mode:
 
 ```bash
-MODE=without_skills ./bin/run.sh one --prompt ./prompt.txt /path/to/job-folder
-MODE=with_skills ./bin/run.sh one --prompt ./prompt.txt /path/to/job-folder
+./bin/run.sh one --mode without_skills --prompt ./prompt.txt /path/to/job-folder
+./bin/run.sh one --mode with_skills --prompt ./prompt.txt /path/to/job-folder
 ```
 
 For a single run, `--output-dir` maps to the exact mode result directory:
 
 ```bash
-MODE=with_skills \
-  ./bin/run.sh one \
+./bin/run.sh one \
+  --mode with_skills \
   --prompt ./prompt.txt \
   --output-dir /path/to/exact-mode-result \
   /path/to/job-folder
 ```
 
-The harness derives skill exposure from `MODE` and rejects contradictory
-`USE_PREINSTALLED_SKILLS` overrides.
+The harness derives skill exposure from the selected mode.
 
 ## Interactive Container
 
@@ -485,30 +530,38 @@ When a case fails, look for:
 - `records/.../mode=<mode>/agent_stderr.txt`
 - `records/.../mode=<mode>/agent_last_message.txt`
 
-## Environment Reference
+## Configuration Inputs
+
+Use CLI flags for normal runs:
+
+| Input | Purpose |
+| --- | --- |
+| `--agent` | Agent profile to run. Defaults to `codex`. |
+| `--model` | Agent model to run. Required for agents without a default model. |
+| `--workflow` | Workflow label written into scenario records. Defaults to `default`. |
+| `--job-scale` | Resource policy size for direct `pair`/`one` runs: `small`, `medium`, or `large`. |
+| `--agent-home` | Host auth/config directory for the selected agent. Defaults come from the agent profile. |
+| `--no-agent-auth-mount` | Disable mounting host auth/config files for the selected agent. |
+| `--results-root` | Parent directory for timestamped result directories. |
+| `--output-dir` | Exact output directory for this run or comparison. |
+| `--sdk-profile` | SDK build profile for `bin/build.sh`. Defaults to `nvflare-profile`. |
+| `--agent-profile` | Agent build profile for `bin/build.sh`. Defaults to `codex`. |
+
+Use environment variables only for provider-native credentials or compatibility
+with older scripts:
 
 | Variable | Purpose |
 | --- | --- |
-| `AGENT_BENCHMARK_RESULTS_ROOT` | Parent directory for timestamped results. Defaults to `./results`. |
-| `CODEX_DOCKER_RESULTS_ROOT` | Compatibility alias used only when `AGENT_BENCHMARK_RESULTS_ROOT` is unset. |
-| `CODEX_MODEL` | Codex model name passed to `codex exec`. |
-| `CLAUDE_MODEL` | Claude model name passed to Claude Code. Required for Claude runs unless `BENCHMARK_AGENT_MODEL` is set. |
-| `BENCHMARK_AGENT_MODEL` | Agent-neutral model override used by scenario and direct runs. |
-| `BENCHMARK_AGENT` | Agent name. Supported values are `codex` and `claude`; unsupported values fail early. |
-| `BENCHMARK_JOB_SCALE` | Job scale used by `pair` compatibility scenarios. Defaults to `small`. |
-| `OPENAI_API_KEY` | Optional API key passed through to the container. |
-| `ANTHROPIC_API_KEY` | Optional Anthropic API key passed through to the container. |
-| `ANTHROPIC_AUTH_TOKEN` | Optional Anthropic auth token passed through to the container. |
-| `HOST_CODEX_HOME` | Host Codex config directory. Defaults to `~/.codex`. |
-| `MOUNT_HOST_CODEX_AUTH` | Mount host Codex auth/config files. Defaults to `true`. |
-| `HOST_CLAUDE_HOME` | Host Claude config directory. Defaults to `~/.claude`. |
-| `MOUNT_HOST_CLAUDE_AUTH` | Mount host Claude auth/config files. Defaults to `true`. |
-| `PROGRESS_INTERVAL_SECONDS` | Agent progress heartbeat interval. Defaults to `60`. |
-| `MODE` | Single-run mode: `with_skills` or `without_skills`. |
-| `JOB_INPUT_DIR` | Job folder fallback when no CLI path is provided. |
-| `TRAINING_CODE` | Compatibility alias for `JOB_INPUT_DIR`. |
-| `RESULT_ROOT` | Exact pair output directory fallback when `--output-dir` is not provided. |
-| `RESULT_DIR` | Exact single-run output directory fallback when `--output-dir` is not provided. |
+| `OPENAI_API_KEY` | Optional Codex API key passed through to the container. |
+| `ANTHROPIC_API_KEY` | Optional Claude API key passed through to the container. |
+| `ANTHROPIC_AUTH_TOKEN` | Optional Claude auth token passed through to the container. |
+
+Compatibility fallbacks such as `BENCHMARK_AGENT`, `BENCHMARK_AGENT_MODEL`,
+`MODE`, `JOB_INPUT_DIR`, `TRAINING_CODE`, `RESULT_ROOT`, and `RESULT_DIR` still
+exist for existing automation. Prefer the CLI flags above for new usage.
+New agent profiles should add provider-native credential passthrough names only
+when the agent CLI requires them; they should not introduce new harness
+variables for auth directory or auth mounting.
 
 ## Troubleshooting
 
@@ -540,7 +593,8 @@ Unsupported model:
 The '<model>' model is not supported
 ```
 
-Set `CODEX_MODEL` to a model available to the account used by Codex.
+Pass `--model` with a model available to the account used by the selected
+agent.
 
 Auth missing:
 
@@ -549,8 +603,8 @@ Codex auth not mounted
 Codex config not mounted
 ```
 
-Check `HOST_CODEX_HOME`, `~/.codex/auth.json`, and `~/.codex/config.toml`, or
-pass `OPENAI_API_KEY`. Use `interactive` to inspect the container environment.
+Check `--agent-home`, `~/.codex/auth.json`, and `~/.codex/config.toml`, or pass
+`OPENAI_API_KEY`. Use `interactive` to inspect the container environment.
 
 No report generated:
 
@@ -584,12 +638,14 @@ agent to install job dependencies from available requirements files when needed.
 - `bin/build.sh`: thin wrapper around `assist_tools.skills_benchmark.skills.harness.host.build`.
 - `bin/run.sh`: thin wrapper around `assist_tools.skills_benchmark.skills.harness.host.runner`.
 - `docker/Dockerfile`: runtime image with the selected agent CLI and SDK wheel.
+- `config/agents/`: built-in editable agent CLI configs.
+- `config/sdks/`: built-in editable SDK build/install configs.
 - `skills/harness/scenarios.py`: scenario validation, run-plan expansion, repeat
   aggregation, and scenario reports.
 - `skills/harness/host/`: Docker orchestration, path handling, image selection, and
   scenario execution.
 - `skills/harness/container/`: in-container agent execution and artifact capture.
-- `skills/harness/sdks/`: pluggable SDK build/install adapters.
+- `skills/harness/sdks/`: SDK config loader and adapter interfaces.
 - `skills/harness/artifacts.py`, `events.py`, `records.py`, `timing.py`, and
   `quality_signals.py`: normalized measurement semantics.
 - `skills/harness/reports/`: scenario report helpers and structure rendering.

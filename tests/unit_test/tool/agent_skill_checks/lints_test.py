@@ -117,6 +117,25 @@ def test_run_v1_lints_does_not_parse_oversized_skill_md(monkeypatch, tmp_path):
     assert _has_finding(result, LINT_SKILL_MD_SIZE, "skill-md-too-large")
 
 
+def test_load_evals_rejects_oversized_evals_json(tmp_path):
+    evals_path = tmp_path / "evals.json"
+    with evals_path.open("wb") as stream:
+        stream.truncate(MAX_SKILL_TEXT_FILE_BYTES + 1)
+
+    evals, error = lints_module._load_evals(evals_path)
+
+    assert evals == []
+    assert error == f"evals/evals.json exceeds size limit ({MAX_SKILL_TEXT_FILE_BYTES} bytes)"
+
+
+def test_line_for_field_does_not_read_oversized_skill_md(tmp_path):
+    skill_file = tmp_path / "SKILL.md"
+    with skill_file.open("wb") as stream:
+        stream.truncate(MAX_SKILL_TEXT_FILE_BYTES + 1)
+
+    assert lints_module._line_for_field(skill_file, "name") == 1
+
+
 def test_run_v1_lints_reports_missing_trigger_evals(tmp_path):
     _write_skill(tmp_path / "skills", "nvflare-trigger-skill", evals={"evals": []})
     docs_root = _write_design_docs(tmp_path, ["nvflare-trigger-skill"])
