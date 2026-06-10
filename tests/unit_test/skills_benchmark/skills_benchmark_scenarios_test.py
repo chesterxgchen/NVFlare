@@ -602,6 +602,16 @@ def test_validate_path_budget_can_use_actual_result_root():
         raise AssertionError("path budget validation should include the actual result root when provided")
 
 
+def test_validate_path_budget_allows_empty_artifact_paths():
+    from assist_tools.skills_benchmark.skills.harness.scenarios import validate_path_budget
+
+    validate_path_budget(
+        "path budget",
+        [{"artifact_paths": {}}, {}],
+        100,
+    )
+
+
 def test_quality_gate_failures_reports_missing_final_exit_as_not_recorded():
     from assist_tools.skills_benchmark.skills.harness.scenarios import quality_gate_failures
 

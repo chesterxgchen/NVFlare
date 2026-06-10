@@ -534,6 +534,26 @@ def test_container_sdk_skills_setup_run_command_uses_non_login_shell(tmp_path, m
     assert calls[0][1]["check"] is True
 
 
+def test_container_sdk_skills_setup_run_command_reports_failures(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness.container import sdk_skills_setup
+
+    def fake_run(command, **_kwargs):
+        raise sdk_skills_setup.subprocess.CalledProcessError(returncode=17, cmd=command)
+
+    monkeypatch.setattr(sdk_skills_setup.subprocess, "run", fake_run)
+
+    try:
+        sdk_skills_setup.run_command("example-sdk skills install", tmp_path / "install.json")
+    except SystemExit as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("failed setup command should raise SystemExit")
+
+    assert "skills.setup command failed with exit code 17" in message
+    assert "example-sdk skills install" in message
+    assert str(tmp_path / "install.json") in message
+
+
 def test_host_common_compat_exports_are_explicit():
     from assist_tools.skills_benchmark.skills.harness import host_common
     from assist_tools.skills_benchmark.skills.harness.host import common

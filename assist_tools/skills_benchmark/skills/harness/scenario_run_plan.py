@@ -696,7 +696,8 @@ def validate_path_budget(
 ) -> None:
     prefix = Path(result_root) if result_root is not None else Path("results") / slugify(scenario_name)
     for entry in entries:
-        longest = max((str(Path(path)) for path in entry["artifact_paths"].values()), key=len)
+        artifact_values = list((entry.get("artifact_paths") or {}).values())
+        longest = max((str(Path(path)) for path in artifact_values), key=len) if artifact_values else ""
         candidate = prefix / longest
         if len(str(candidate)) > path_budget:
             raise ScenarioValidationError(f"Expanded artifact path exceeds path_budget={path_budget}: {candidate}")

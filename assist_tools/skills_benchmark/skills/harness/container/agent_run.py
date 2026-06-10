@@ -721,6 +721,34 @@ def terminate_timed_out_process(process: subprocess.Popen, stderr, timeout: int 
         process.wait()
 
 
+def _write_agent_home_diagnostic(config: AgentRunConfig, launch_env: dict) -> None:
+    """Dump CLAUDE_CONFIG_DIR contents to a diagnostic file before launching the agent."""
+    import os
+
+    diag: dict = {}
+    agent_home = launch_env.get("CLAUDE_CONFIG_DIR") or os.environ.get("CLAUDE_CONFIG_DIR") or ""
+    diag["claude_config_dir"] = agent_home
+    if agent_home:
+        home_path = Path(agent_home)
+        try:
+            diag["files"] = sorted(str(p.relative_to(home_path)) for p in home_path.rglob("*") if p.is_file())
+        except Exception as e:
+            diag["files_error"] = str(e)
+        settings_path = home_path / "settings.json"
+        try:
+            diag["settings_json"] = json.loads(settings_path.read_text()) if settings_path.exists() else None
+        except Exception as e:
+            diag["settings_json_error"] = str(e)
+        etc_managed = Path("/etc/claude-code/managed-settings.json")
+        try:
+            diag["etc_managed_settings"] = json.loads(etc_managed.read_text()) if etc_managed.exists() else None
+        except Exception as e:
+            diag["etc_managed_settings_error"] = str(e)
+    config.result_dir.joinpath("agent_home_diagnostic.json").write_text(
+        json.dumps(diag, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
 def run_agent(
     config: AgentRunConfig,
     progress: ProgressWriter,
@@ -744,6 +772,7 @@ def run_agent(
         launch_env.update(skill_exposure.environment)
     process_argv = launch_subprocess_argv(launch_argv, login_shell=launch.login_shell)
     write_launch_spec_metadata(config, process_argv, launch_env, launch, skill_exposure)
+    _write_agent_home_diagnostic(config, launch_env)
 
     try:
         try:
