@@ -372,6 +372,30 @@ def last_successful_job_event(run: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def bash_blocked_diagnostic(run: dict[str, Any]) -> str | None:
+    """Return a diagnostic string if Bash was blocked due to permission approval failures."""
+    events_text = str(run.get("agent_events_text") or "")
+    needle = "requested permissions to use bash"
+    blocked_count = events_text.lower().count(needle)
+    if blocked_count == 0:
+        return None
+    hint_counts = run.get("activity", {}).get("hint_counts") or {}
+    sim_count = hint_counts.get("simulation", 0)
+    py_count = hint_counts.get("python_job_py", 0)
+    impact = ""
+    if sim_count == 0 and py_count == 0:
+        impact = " The simulation was never run as a result."
+    elif sim_count == 0:
+        impact = " The simulation step was never run."
+    return (
+        f"Bash tool was blocked {blocked_count} time(s) with 'requested permissions' errors. "
+        f"--dangerously-skip-permissions is set in the agent launch profile, but the mounted "
+        f"~/.claude/settings.json (specifically its 'sandbox' section) likely overrides it. "
+        f"Fix: remove settings.json from the auth mount in the agent profile, or strip the sandbox "
+        f"section from the container copy.{impact}"
+    )
+
+
 def command_failure_diagnostics(run: dict[str, Any], limit: int = 3) -> list[str]:
     events = agent_command_events(run)
     failed_events = [event for event in events if command_failed(event)]
@@ -1195,13 +1219,25 @@ def missing_result_metrics_section(runs: dict[str, dict[str, Any]], modes: list[
 
 def activity_insights_table(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
     rows = [
-        ("File reads (`cat`/`sed`/Read tool)", "shell_cat_or_sed", "Direct file-read behavior; includes shell cat/sed and Read tool calls."),
+        (
+            "File reads (`cat`/`sed`/Read tool)",
+            "shell_cat_or_sed",
+            "Direct file-read behavior; includes shell cat/sed and Read tool calls.",
+        ),
         ("`find` commands", "shell_find", "Filesystem discovery proxy."),
         ("`rg`/`grep` search commands", "shell_search", "Search use proxy; covers rg and grep."),
         ("Simulation references", "simulation", "Shows validation effort against generated jobs."),
         ("Python compile checks", "py_compile", "Shows syntax validation effort."),
-        ("Skill calls / skill references", "skill_references", "Only skills-enabled runs should usually show these; includes Skill tool calls."),
-        ("Agent / inspect calls", "agent_inspect", "Shows use of agent inspection commands; includes Agent tool calls."),
+        (
+            "Skill calls / skill references",
+            "skill_references",
+            "Only skills-enabled runs should usually show these; includes Skill tool calls.",
+        ),
+        (
+            "Agent / inspect calls",
+            "agent_inspect",
+            "Shows use of agent inspection commands; includes Agent tool calls.",
+        ),
         ("Python job.py references", "python_job_py", "Shows repeated exercise of generated job entry points."),
     ]
     lines = [
@@ -1306,49 +1342,158 @@ def cost_comparison_section(runs: dict[str, dict[str, Any]], modes: list[str]) -
     return "\n".join(lines)
 
 
+def _run_usage(run: dict[str, Any]) -> dict[str, Any]:
+    usage = run.get("usage")
+    return usage if isinstance(usage, dict) else {}
+
+
 def _thinking_token_events(run: dict[str, Any]) -> int:
     return event_type_count(run, "system.thinking_tokens")
 
 
-def _slower_run_analysis(slower_run: dict[str, Any], faster_run: dict[str, Any]) -> str:
-    parts = []
-    slower_think = _thinking_token_events(slower_run)
-    faster_think = _thinking_token_events(faster_run)
-    if slower_think > faster_think:
-        parts.append(f"{slower_think - faster_think} more thinking-token events ({slower_think} vs {faster_think})")
-    slower_events = run_activity(slower_run).get("event_count") or 0
-    faster_events = run_activity(faster_run).get("event_count") or 0
-    if slower_events > faster_events:
-        parts.append(f"{slower_events - faster_events} more total events ({slower_events} vs {faster_events})")
-    slower_tools = count_map(slower_run, "tool_counts")
-    faster_tools = count_map(faster_run, "tool_counts")
-    overhead_tools = ["Skill", "Agent", "ToolSearch"]
-    for tool in overhead_tools:
-        s = slower_tools.get(tool, 0)
-        f = faster_tools.get(tool, 0)
-        if s > f:
-            parts.append(f"{s - f} more {tool} call(s) ({s} vs {f})")
-    return ("; ".join(parts) + ".") if parts else "cause not resolved from available activity signals."
+def _assistant_turns(run: dict[str, Any]) -> int:
+    return event_type_count(run, "assistant")
 
 
-def _higher_token_analysis(costlier_run: dict[str, Any], cheaper_run: dict[str, Any]) -> str:
-    parts = []
-    c_think = _thinking_token_events(costlier_run)
-    ch_think = _thinking_token_events(cheaper_run)
-    if c_think > ch_think:
-        parts.append(
-            f"{c_think - ch_think} more thinking-token events ({c_think} vs {ch_think}), "
-            "each adding extended reasoning context"
+def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]:
+    with_label = with_run.get("label") or "With skills"
+    base_label = base_run.get("label") or "No skills baseline"
+    with_time = as_number(run_summary(with_run).get("elapsed_seconds")) or 0
+    base_time = as_number(run_summary(base_run).get("elapsed_seconds")) or 0
+    time_delta = with_time - base_time
+    pct = round(time_delta / base_time * 100) if base_time > 0 else 0
+
+    with_turns = _assistant_turns(with_run)
+    base_turns = _assistant_turns(base_run)
+    with_think = _thinking_token_events(with_run)
+    base_think = _thinking_token_events(base_run)
+    with_tools = count_map(with_run, "tool_counts")
+    base_tools = count_map(base_run, "tool_counts")
+    skill_delta = with_tools.get("Skill", 0) - base_tools.get("Skill", 0)
+    agent_delta = with_tools.get("Agent", 0) - base_tools.get("Agent", 0)
+    search_delta = with_tools.get("ToolSearch", 0) - base_tools.get("ToolSearch", 0)
+
+    lines = [f"**Why {with_label} is slower** (+{fmt_number(time_delta)}s / +{pct}% vs {base_label}):", ""]
+    if with_turns != base_turns:
+        turns_delta = with_turns - base_turns
+        lines.append(
+            f"- **More conversation turns** ({with_turns} vs {base_turns}, +{turns_delta}): "
+            f"each turn is an API round-trip to the model. {turns_delta} extra turns account for most of the "
+            f"wall-clock overhead; the per-turn latency itself is largely unchanged."
         )
-    c_tools = count_map(costlier_run, "tool_counts")
-    ch_tools = count_map(cheaper_run, "tool_counts")
-    overhead_tools = ["Skill", "Agent", "ToolSearch"]
-    for tool in overhead_tools:
-        c = c_tools.get(tool, 0)
-        ch = ch_tools.get(tool, 0)
-        if c > ch:
-            parts.append(f"{c - ch} more {tool} call(s) ({c} vs {ch}) adding prompt context")
-    return ("; ".join(parts) + ".") if parts else "cause not resolved from available activity signals."
+    if with_think != base_think:
+        think_delta = with_think - base_think
+        lines.append(
+            f"- **More extended reasoning** ({with_think} vs {base_think} thinking-token events, +{think_delta}): "
+            f"the model engaged extended chain-of-thought significantly more often, "
+            f"likely while interpreting skill documentation and planning how to apply it."
+        )
+    if skill_delta > 0:
+        lines.append(
+            f"- **Skill invocation overhead** ({with_tools.get('Skill', 0)} Skill call(s) vs {base_tools.get('Skill', 0)}): "
+            f"each Skill call fetches and runs a skill, injecting documentation into context "
+            f"and adding a round-trip before the agent can proceed."
+        )
+    if agent_delta > 0:
+        lines.append(
+            f"- **Subagent spawning** ({with_tools.get('Agent', 0)} Agent call(s) vs {base_tools.get('Agent', 0)}): "
+            f"Agent tool calls launch child sessions with their own initialization overhead."
+        )
+    if search_delta > 0:
+        lines.append(
+            f"- **Tool schema lookups** ({with_tools.get('ToolSearch', 0)} ToolSearch call(s) vs {base_tools.get('ToolSearch', 0)}): "
+            f"ToolSearch fetches tool definitions on demand, adding schema-loading latency."
+        )
+    if len(lines) == 2:
+        lines.append("- Cause not resolved from available activity signals.")
+    return lines
+
+
+def _why_more_tokens(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]:
+    with_label = with_run.get("label") or "With skills"
+    base_label = base_run.get("label") or "No skills baseline"
+    with_tokens = as_number(run_summary(with_run).get("token_count")) or 0
+    base_tokens = as_number(run_summary(base_run).get("token_count")) or 0
+    token_delta = with_tokens - base_tokens
+    pct = round(token_delta / base_tokens * 100) if base_tokens > 0 else 0
+
+    with_usage = _run_usage(with_run)
+    base_usage = _run_usage(base_run)
+    with_cache_read = as_number(with_usage.get("cache_read_input_tokens")) or 0
+    base_cache_read = as_number(base_usage.get("cache_read_input_tokens")) or 0
+    with_cache_create = as_number(with_usage.get("cache_creation_input_tokens")) or 0
+    base_cache_create = as_number(base_usage.get("cache_creation_input_tokens")) or 0
+    with_output = as_number(with_usage.get("output_tokens")) or 0
+    base_output = as_number(base_usage.get("output_tokens")) or 0
+    with_cost = as_number(with_usage.get("total_cost_usd"))
+    base_cost = as_number(base_usage.get("total_cost_usd"))
+    with_turns = _assistant_turns(with_run)
+    base_turns = _assistant_turns(base_run)
+    with_tools = count_map(with_run, "tool_counts")
+    base_tools = count_map(base_run, "tool_counts")
+    skill_calls = with_tools.get("Skill", 0)
+    base_skill_calls = base_tools.get("Skill", 0)
+
+    lines = [f"**Why {with_label} uses more tokens** (+{fmt_short(token_delta)} / +{pct}% vs {base_label}):", ""]
+
+    cache_read_delta = with_cache_read - base_cache_read
+    if cache_read_delta > 0 and with_cache_read > 0 and token_delta > 0:
+        cache_pct = round(cache_read_delta / token_delta * 100)
+        lines.append(
+            f"- **Prompt cache re-reads are the dominant driver** "
+            f"({fmt_short(with_cache_read)} vs {fmt_short(base_cache_read)}, "
+            f"+{fmt_short(cache_read_delta)}, {cache_pct}% of the total token delta): "
+            f"cache-read tokens represent context cached from previous turns being re-read on each "
+            f"new turn. The {with_label} run accumulated a larger cached context window — primarily "
+            f"skill documentation injected via {skill_calls} Skill call(s) — and then re-read that "
+            f"context across all {with_turns} turns (vs {base_turns} turns in the {base_label} run)."
+        )
+    if skill_calls > base_skill_calls:
+        lines.append(
+            f"- **Skill documentation injected into context** ({skill_calls} Skill call(s) vs {base_skill_calls}): "
+            f"each Skill invocation adds skill documentation to the context window. "
+            f"That content is written into the prompt cache on first use, then re-read as cached context "
+            f"on every subsequent turn — compounding the cache-read cost with each additional turn."
+        )
+    cache_create_delta = with_cache_create - base_cache_create
+    if abs(cache_create_delta) > 1000:
+        if cache_create_delta > 0:
+            lines.append(
+                f"- **New context written to cache** (+{fmt_short(cache_create_delta)} cache-creation tokens): "
+                f"the {with_label} run wrote more new content into the prompt cache "
+                f"(skill docs, tool schemas, or conversation history not present in the {base_label} run)."
+            )
+        else:
+            lines.append(
+                f"- **Less new context cached** ({fmt_short(abs(cache_create_delta))} fewer cache-creation tokens): "
+                f"the {base_label} run actually wrote more fresh content into the cache."
+            )
+    output_delta = with_output - base_output
+    if abs(output_delta) > 500:
+        if output_delta < 0:
+            lines.append(
+                f"- **Output tokens decreased** ({fmt_short(with_output)} vs {fmt_short(base_output)}, "
+                f"{fmt_short(abs(output_delta))} fewer): "
+                f"the {with_label} run generated less text overall — skill guidance focused the agent's "
+                f"responses, reducing exploratory output even as context consumption grew."
+            )
+        else:
+            lines.append(
+                f"- **Output tokens increased** ({fmt_short(with_output)} vs {fmt_short(base_output)}, "
+                f"+{fmt_short(output_delta)}): "
+                f"the {with_label} run generated more text, contributing directly to the token delta."
+            )
+    if with_cost is not None and base_cost is not None:
+        cost_delta = with_cost - base_cost
+        cost_pct = round(cost_delta / base_cost * 100) if base_cost > 0 else 0
+        lines.append(
+            f"- **Effective cost** (${with_cost:.4f} vs ${base_cost:.4f}, +${cost_delta:.4f} / +{cost_pct}%): "
+            f"despite {pct}% more total tokens, the cost premium is much smaller because "
+            f"cache-read tokens are priced significantly lower than regular input tokens."
+        )
+    if len(lines) == 2:
+        lines.append("- Cause not resolved from available activity or usage signals.")
+    return lines
 
 
 def interpretation_section(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
@@ -1380,12 +1525,16 @@ def interpretation_section(runs: dict[str, dict[str, Any]], modes: list[str]) ->
             slower_mode = right if left_time <= right_time else left
             faster = runs[faster_mode].get("label") or faster_mode
             time_delta = abs((right_time or 0) - (left_time or 0))
-            lines.append(f"Runtime winner by wall-clock seconds: {faster} ({fmt_number(min(left_time, right_time))}s vs {fmt_number(max(left_time, right_time))}s, delta {fmt_number(time_delta)}s).")
+            lines.append(
+                f"Runtime winner by wall-clock seconds: {faster} ({fmt_number(min(left_time, right_time))}s vs {fmt_number(max(left_time, right_time))}s, delta {fmt_number(time_delta)}s)."
+            )
         if left_tokens is not None and right_tokens is not None:
             cheaper_mode = left if left_tokens <= right_tokens else right
             cheaper = runs[cheaper_mode].get("label") or cheaper_mode
             token_delta = abs((right_tokens or 0) - (left_tokens or 0))
-            lines.append(f"Token-use winner: {cheaper} ({fmt_short(min(left_tokens, right_tokens))} vs {fmt_short(max(left_tokens, right_tokens))}, delta {fmt_short(token_delta)}).")
+            lines.append(
+                f"Token-use winner: {cheaper} ({fmt_short(min(left_tokens, right_tokens))} vs {fmt_short(max(left_tokens, right_tokens))}, delta {fmt_short(token_delta)})."
+            )
     lines.append(
         "Read cost winners only after checking the quality gates; a cheaper run that does not report the requested FL result is not a successful benchmark winner."
     )
@@ -1393,36 +1542,36 @@ def interpretation_section(runs: dict[str, dict[str, Any]], modes: list[str]) ->
 
 
 def why_section(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
+    """Explain why the with-skills run is slower or uses more tokens.
+
+    Only rendered when with_skills is actually worse than the baseline on a
+    given dimension — if skills help, there is nothing to explain here.
+    """
+    from ..modes import WITH_SKILLS_MODE
+
     if len(modes) != 2:
         return ""
-    left, right = modes
-    left_time = as_number(run_summary(runs[left]).get("elapsed_seconds"))
-    right_time = as_number(run_summary(runs[right]).get("elapsed_seconds"))
-    left_tokens = as_number(run_summary(runs[left]).get("token_count"))
-    right_tokens = as_number(run_summary(runs[right]).get("token_count"))
+    if WITH_SKILLS_MODE not in modes:
+        return ""
+    base_mode = next(m for m in modes if m != WITH_SKILLS_MODE)
+    with_run = runs.get(WITH_SKILLS_MODE, {})
+    base_run = runs.get(base_mode, {})
+    with_time = as_number(run_summary(with_run).get("elapsed_seconds"))
+    base_time = as_number(run_summary(base_run).get("elapsed_seconds"))
+    with_tokens = as_number(run_summary(with_run).get("token_count"))
+    base_tokens = as_number(run_summary(base_run).get("token_count"))
+    sections: list[list[str]] = []
+    if with_time is not None and base_time is not None and with_time > base_time:
+        sections.append(_why_slower(with_run, base_run))
+    if with_tokens is not None and base_tokens is not None and with_tokens > base_tokens:
+        sections.append(_why_more_tokens(with_run, base_run))
+    if not sections:
+        return ""
     lines = ["## Why", ""]
-    has_content = False
-    if left_time is not None and right_time is not None:
-        time_delta = abs((right_time or 0) - (left_time or 0))
-        if time_delta > 0:
-            slower_mode = right if left_time <= right_time else left
-            faster_mode = left if left_time <= right_time else right
-            slower = runs[slower_mode].get("label") or slower_mode
-            analysis = _slower_run_analysis(runs[slower_mode], runs[faster_mode])
-            lines.append(f"**Why {slower} is slower:** {analysis}")
-            lines.append("")
-            has_content = True
-    if left_tokens is not None and right_tokens is not None:
-        token_delta = abs((right_tokens or 0) - (left_tokens or 0))
-        if token_delta > 0:
-            costlier_mode = right if left_tokens <= right_tokens else left
-            cheaper_mode = left if left_tokens <= right_tokens else right
-            costlier = runs[costlier_mode].get("label") or costlier_mode
-            analysis = _higher_token_analysis(runs[costlier_mode], runs[cheaper_mode])
-            lines.append(f"**Why {costlier} uses more tokens:** {analysis}")
-            lines.append("")
-            has_content = True
-    return "\n".join(lines) if has_content else ""
+    for section_lines in sections:
+        lines.extend(section_lines)
+        lines.append("")
+    return "\n".join(lines)
 
 
 def mixed_metric_note(runs: dict[str, dict[str, Any]]) -> str:
@@ -1643,6 +1792,9 @@ def failure_analysis_section(runs: dict[str, dict[str, Any]], modes: list[str]) 
         if signal.get("evidence"):
             lines.append(f"- Metric evidence: {signal['evidence']}")
         if status_kind != "passed":
+            bash_blocked = bash_blocked_diagnostic(run)
+            if bash_blocked:
+                lines.append(f"- Bash blocking: {bash_blocked}")
             for diagnostic in command_failure_diagnostics(run):
                 lines.append(f"- Command evidence: {diagnostic}")
             success_evidence = successful_job_evidence(run)
@@ -1754,6 +1906,9 @@ def benchmark_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
     )
     if cost_comparison:
         lines.extend([cost_comparison, ""])
+    why = why_section(runs, modes)
+    if why:
+        lines.extend([why, ""])
     lines.extend(
         [
             "## Runtime",
@@ -1761,8 +1916,6 @@ def benchmark_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
             runtime_table(runs, modes),
             "",
             interpretation_section(runs, modes),
-            "",
-            why_section(runs, modes),
             "",
             "## Artifacts",
             "",
