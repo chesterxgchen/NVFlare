@@ -776,6 +776,9 @@ def additional_or_observed_metric_values_display(run: dict[str, Any], metric_nam
     metric_lines = metric_log_lines(str((last_successful_job_event(run) or {}).get("output") or ""))
     if metric_lines:
         return "Final site metrics=NA; log/per-site evidence: " + "; ".join(metric_lines)
+    simulation_refs = count_map(run, "hint_counts").get("simulation", 0)
+    if simulation_refs == 0:
+        return "NA (no simulation run detected; per-round/per-site values require the agent to run nvflare simulator)"
     return "NA"
 
 
@@ -1303,6 +1306,51 @@ def cost_comparison_section(runs: dict[str, dict[str, Any]], modes: list[str]) -
     return "\n".join(lines)
 
 
+def _thinking_token_events(run: dict[str, Any]) -> int:
+    return event_type_count(run, "system.thinking_tokens")
+
+
+def _slower_run_analysis(slower_run: dict[str, Any], faster_run: dict[str, Any]) -> str:
+    parts = []
+    slower_think = _thinking_token_events(slower_run)
+    faster_think = _thinking_token_events(faster_run)
+    if slower_think > faster_think:
+        parts.append(f"{slower_think - faster_think} more thinking-token events ({slower_think} vs {faster_think})")
+    slower_events = run_activity(slower_run).get("event_count") or 0
+    faster_events = run_activity(faster_run).get("event_count") or 0
+    if slower_events > faster_events:
+        parts.append(f"{slower_events - faster_events} more total events ({slower_events} vs {faster_events})")
+    slower_tools = count_map(slower_run, "tool_counts")
+    faster_tools = count_map(faster_run, "tool_counts")
+    overhead_tools = ["Skill", "Agent", "ToolSearch"]
+    for tool in overhead_tools:
+        s = slower_tools.get(tool, 0)
+        f = faster_tools.get(tool, 0)
+        if s > f:
+            parts.append(f"{s - f} more {tool} call(s) ({s} vs {f})")
+    return ("; ".join(parts) + ".") if parts else "cause not resolved from available activity signals."
+
+
+def _higher_token_analysis(costlier_run: dict[str, Any], cheaper_run: dict[str, Any]) -> str:
+    parts = []
+    c_think = _thinking_token_events(costlier_run)
+    ch_think = _thinking_token_events(cheaper_run)
+    if c_think > ch_think:
+        parts.append(
+            f"{c_think - ch_think} more thinking-token events ({c_think} vs {ch_think}), "
+            "each adding extended reasoning context"
+        )
+    c_tools = count_map(costlier_run, "tool_counts")
+    ch_tools = count_map(cheaper_run, "tool_counts")
+    overhead_tools = ["Skill", "Agent", "ToolSearch"]
+    for tool in overhead_tools:
+        c = c_tools.get(tool, 0)
+        ch = ch_tools.get(tool, 0)
+        if c > ch:
+            parts.append(f"{c - ch} more {tool} call(s) ({c} vs {ch}) adding prompt context")
+    return ("; ".join(parts) + ".") if parts else "cause not resolved from available activity signals."
+
+
 def interpretation_section(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
     failed_quality = [runs[mode].get("label") or mode for mode in modes if run_quality_issues(runs[mode])]
     metric_name = comparable_metric_name(runs) or metric_name_for_runs(runs)
@@ -1328,11 +1376,25 @@ def interpretation_section(runs: dict[str, dict[str, Any]], modes: list[str]) ->
         left_tokens = as_number(run_summary(runs[left]).get("token_count"))
         right_tokens = as_number(run_summary(runs[right]).get("token_count"))
         if left_time is not None and right_time is not None:
-            faster = runs[left].get("label") if left_time <= right_time else runs[right].get("label")
-            lines.append(f"Runtime winner by wall-clock seconds: {faster}.")
+            faster_mode = left if left_time <= right_time else right
+            slower_mode = right if left_time <= right_time else left
+            faster = runs[faster_mode].get("label") or faster_mode
+            slower = runs[slower_mode].get("label") or slower_mode
+            time_delta = abs((right_time or 0) - (left_time or 0))
+            lines.append(f"Runtime winner by wall-clock seconds: {faster} ({fmt_number(min(left_time, right_time))}s vs {fmt_number(max(left_time, right_time))}s, delta {fmt_number(time_delta)}s).")
+            if time_delta > 0:
+                analysis = _slower_run_analysis(runs[slower_mode], runs[faster_mode])
+                lines.append(f"Why {slower} is slower: {analysis}")
         if left_tokens is not None and right_tokens is not None:
-            cheaper = runs[left].get("label") if left_tokens <= right_tokens else runs[right].get("label")
-            lines.append(f"Token-use winner: {cheaper}.")
+            cheaper_mode = left if left_tokens <= right_tokens else right
+            costlier_mode = right if left_tokens <= right_tokens else left
+            cheaper = runs[cheaper_mode].get("label") or cheaper_mode
+            costlier = runs[costlier_mode].get("label") or costlier_mode
+            token_delta = abs((right_tokens or 0) - (left_tokens or 0))
+            lines.append(f"Token-use winner: {cheaper} ({fmt_short(min(left_tokens, right_tokens))} vs {fmt_short(max(left_tokens, right_tokens))}, delta {fmt_short(token_delta)}).")
+            if token_delta > 0:
+                analysis = _higher_token_analysis(runs[costlier_mode], runs[cheaper_mode])
+                lines.append(f"Why {costlier} uses more tokens: {analysis}")
     lines.append(
         "Read cost winners only after checking the quality gates; a cheaper run that does not report the requested FL result is not a successful benchmark winner."
     )

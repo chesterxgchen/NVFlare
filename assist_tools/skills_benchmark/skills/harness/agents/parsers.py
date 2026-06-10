@@ -258,11 +258,28 @@ def parse_claude_stream_usage(events_path: Path) -> dict[str, Any]:
     }
 
 
+ACTIVITY_HINTS = {
+    "skill_md": ["skill.md"],
+    "skill_references": ["/references/", " references/"],
+    "skill_metadata": ["evals/evals.json", "/evals/"],
+    "benchmark_md": ["benchmark.md"],
+    "agent_inspect": ["agent inspect"],
+    "agent_skill_setup": ["skills install", "skills list"],
+    "py_compile": ["py_compile"],
+    "python_job_py": ["python job.py", "python3 job.py"],
+    "simulation": ["simulator", "simulate", "--workspace-root"],
+    "shell_find": ["find "],
+    "shell_rg": ["rg "],
+    "shell_cat_or_sed": ["cat ", "sed ", "nl -ba"],
+}
+
+
 def parse_claude_stream_activity(events_path: Path) -> dict[str, Any]:
     events, decode_errors = iter_json_events(events_path)
     event_types: Counter[str] = Counter()
     tool_counts: Counter[str] = Counter()
     command_prefixes: Counter[str] = Counter()
+    hint_counts: Counter[str] = Counter()
     commands: list[str] = []
     unique_commands_seen: set[str] = set()
     first_event_dt = None
@@ -297,6 +314,10 @@ def parse_claude_stream_activity(events_path: Path) -> dict[str, Any]:
                 commands.append(command)
             unique_commands_seen.add(command)
             command_prefixes[command.split()[0]] += 1
+            lowered = command.lower()
+            for name, needles in ACTIVITY_HINTS.items():
+                if any(needle in lowered for needle in needles):
+                    hint_counts[name] += 1
 
     return {
         "event_count": len(events),
@@ -314,6 +335,7 @@ def parse_claude_stream_activity(events_path: Path) -> dict[str, Any]:
         ),
         "event_types": dict(event_types.most_common()),
         "tool_counts": dict(tool_counts.most_common()),
+        "hint_counts": dict(hint_counts.most_common()),
         "command_count": sum(command_prefixes.values()),
         "unique_command_count": len(unique_commands_seen),
         "command_prefix_counts": dict(command_prefixes.most_common()),
