@@ -264,7 +264,22 @@ def build_sdk_wheel_from_repo(
     sdk: SdkAdapter,
     variant: SdkWheelVariant,
     out_dir: Path,
+    reuse_wheels: bool = False,
 ) -> PreparedSdkWheel:
+    if reuse_wheels:
+        dist_dir = repo / "dist"
+        wheel = latest_sdk_wheel(dist_dir, variant.wheel_globs, variant.wheel_exclude_globs)
+        if wheel is None:
+            raise SystemExit(
+                f"--reuse-wheels: no {sdk.package_name} {variant.label} wheel found under {dist_dir}. "
+                f"Run without --reuse-wheels to build fresh wheels first."
+            )
+        emit(f"=== Reusing {sdk.package_name} {variant.label} wheel (skipping uv build) ===")
+        clean_wheels(out_dir)
+        staged = out_dir / wheel.name
+        shutil.copy2(wheel, staged)
+        return PreparedSdkWheel(wheel=staged, source_type="repo", source_path=repo)
+
     clean_wheels(out_dir)
     uv = shutil.which("uv")
     if uv is None:
@@ -297,11 +312,14 @@ def prepare_sdk_wheel(
     sdk: SdkAdapter,
     variant: SdkWheelVariant,
     out_dir: Path,
+    reuse_wheels: bool = False,
 ) -> PreparedSdkWheel:
     if wheel_build.build_type == "uv_wheel":
         if source.repo_path is None:
             raise SystemExit(f"{sdk.display_name} SDK profile build.type=uv_wheel requires source.type=repo")
-        return build_sdk_wheel_from_repo(repo=source.repo_path, sdk=sdk, variant=variant, out_dir=out_dir)
+        return build_sdk_wheel_from_repo(
+            repo=source.repo_path, sdk=sdk, variant=variant, out_dir=out_dir, reuse_wheels=reuse_wheels
+        )
     if wheel_build.build_type == "provided_wheels":
         wheel_paths = source.wheel_paths or {}
         wheel = wheel_paths.get(variant.name)
@@ -436,6 +454,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--skip-skills-image", action="store_true", help="Do not build the skills image.")
     parser.add_argument("--skip-baseline-image", action="store_true", help="Do not build the baseline image.")
+    parser.add_argument(
+        "--reuse-wheels",
+        action="store_true",
+        help="Skip uv build and reuse the latest wheels already in dist/. Useful when only agent config or Docker layers changed.",
+    )
     parser.add_argument("--no-cache", action="store_true", help="Pass --no-cache to docker build.")
     parser.add_argument("--uv-image", default=DEFAULT_UV_IMAGE, help="uv image used as the Docker uv source stage.")
     parser.add_argument("--node-image", default=DEFAULT_NODE_IMAGE, help="Node runtime image used as the Docker base.")
@@ -484,6 +507,7 @@ def main(argv: list[str] | None = None) -> int:
                     sdk=sdk,
                     variant=skills_variant,
                     out_dir=context / "dist" / "skills",
+                    reuse_wheels=args.reuse_wheels,
                 )
                 emit(f"Using skills wheel: {skills_prepared.wheel.name}")
                 write_wheel_metadata(
@@ -501,6 +525,7 @@ def main(argv: list[str] | None = None) -> int:
                     sdk=sdk,
                     variant=baseline_variant,
                     out_dir=context / "dist" / "baseline",
+                    reuse_wheels=args.reuse_wheels,
                 )
                 emit(f"Using baseline wheel: {baseline_prepared.wheel.name}")
                 write_wheel_metadata(
