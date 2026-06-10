@@ -95,6 +95,13 @@ RUN python --version && \
 
 COPY assist_tools/ /workspace/assist_tools/
 
+# Bake agent settings before switching to non-root. Claude Code merges settings.json
+# from CLAUDE_CONFIG_DIR; placing an explicit allow list here ensures Bash and other
+# required tools are approved even when launched non-interactively (--print mode).
+RUN if [ -f "/workspace/assist_tools/skills_benchmark/config/agents/${BENCHMARK_DOCKER_AGENT}-settings.json" ]; then \
+        cp "/workspace/assist_tools/skills_benchmark/config/agents/${BENCHMARK_DOCKER_AGENT}-settings.json" "${BENCHMARK_AGENT_HOME}/settings.json"; \
+    fi
+
 # Claude Code refuses --dangerously-skip-permissions when running as root.
 # Create a non-root user that owns the workspace so the agent can run normally.
 RUN useradd -m -u 9999 -s /bin/bash agent && \
