@@ -54,6 +54,7 @@ def _write_json_files_atomic(payloads: dict[Path, Any]) -> None:
     staged_paths: list[tuple[Path, Path]] = []
     try:
         for path, value in payloads.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as stream:
                 temp_path = Path(stream.name)
                 staged_paths.append((temp_path, path))

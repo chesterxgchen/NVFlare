@@ -976,49 +976,43 @@ def test_finalize_timing_uses_named_lifecycle_epochs(tmp_path):
     assert record["process_metrics"]["phase_seconds"]["agent_elapsed_seconds"] == 10
 
 
-def test_finalize_timing_does_not_partially_replace_when_staging_fails(tmp_path):
+def test_finalize_timing_creates_missing_output_parents(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.common import write_json
     from assist_tools.skills_benchmark.skills.harness.timing import LifecycleEpochs, finalize_timing
 
     summary_path = tmp_path / "run_summary.json"
     timing_path = tmp_path / "timing.json"
     activity_path = tmp_path / "agent_activity.json"
     record_path = tmp_path / "missing_parent" / "record.json"
-    summary_text = '{"old_summary": true}\n'
-    timing_text = '{"old_timing": true}\n'
-    summary_path.write_text(summary_text, encoding="utf-8")
-    timing_path.write_text(timing_text, encoding="utf-8")
-    activity_path.write_text("{}\n", encoding="utf-8")
+    write_json(summary_path, {"process_metrics": {}})
+    write_json(activity_path, {})
 
-    try:
-        finalize_timing(
-            summary_path,
-            record_path,
-            timing_path,
-            activity_path,
-            LifecycleEpochs(
-                script_start=10,
-                skill_availability_start=11,
-                skill_availability_end=13,
-                input_copy_start=13,
-                input_copy_end=17,
-                prompt_prep_start=18,
-                prompt_prep_end=20,
-                agent_start=21,
-                agent_end=31,
-                post_process_start=31,
-                post_process_end=35,
-                report_outcome_start=36,
-                report_outcome_end=37,
-                script_end=40,
-            ),
-        )
-    except OSError:
-        pass
-    else:
-        raise AssertionError("missing record parent should fail before replacing timing artifacts")
+    finalize_timing(
+        summary_path,
+        record_path,
+        timing_path,
+        activity_path,
+        LifecycleEpochs(
+            script_start=10,
+            skill_availability_start=11,
+            skill_availability_end=13,
+            input_copy_start=13,
+            input_copy_end=17,
+            prompt_prep_start=18,
+            prompt_prep_end=20,
+            agent_start=21,
+            agent_end=31,
+            post_process_start=31,
+            post_process_end=35,
+            report_outcome_start=36,
+            report_outcome_end=37,
+            script_end=40,
+        ),
+    )
 
-    assert summary_path.read_text(encoding="utf-8") == summary_text
-    assert timing_path.read_text(encoding="utf-8") == timing_text
+    assert record_path.is_file()
+    assert json.loads(record_path.read_text(encoding="utf-8"))["process_metrics"]["agent_elapsed_seconds"] == 10
+    assert json.loads(timing_path.read_text(encoding="utf-8"))["phase_seconds"]["agent_elapsed_seconds"] == 10
 
 
 def test_atomic_json_writer_cleans_staged_temp_file_when_dump_fails(tmp_path, monkeypatch):
