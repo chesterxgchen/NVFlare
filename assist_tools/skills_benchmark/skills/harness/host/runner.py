@@ -439,7 +439,6 @@ def pair_compilation_from_options(options) -> ScenarioCompilation:
                 or os.environ.get("BENCHMARK_JOB_SCALE", os.environ.get("JOB_SCALE", "small")),
             }
         ],
-        "repeat_count": 1,
     }
     return compile_scenario(raw, base_dir=Path.cwd(), allow_external_prompt=True)
 
@@ -474,7 +473,6 @@ def one_compilation_from_options(options) -> ScenarioCompilation:
                 or os.environ.get("BENCHMARK_JOB_SCALE", os.environ.get("JOB_SCALE", "small")),
             }
         ],
-        "repeat_count": 1,
     }
     return compile_scenario(raw, base_dir=Path.cwd(), allow_external_prompt=True)
 
@@ -629,7 +627,6 @@ def canonicalize_entry_artifacts(result_root: Path, entry: dict[str, object], st
                 "job_slug",
                 "job_path",
                 "job_scale",
-                "repeat_index",
                 "mode",
                 "skills_enabled",
                 "prompt_hash",
@@ -687,12 +684,11 @@ def execute_run_plan(
             continue
         prefix = str(entry["run_id"])
         emit(
-            "Starting run_id={} agent={} model={} mode={} repeat={} record_dir={}".format(
+            "Starting run_id={} agent={} model={} mode={} record_dir={}".format(
                 entry["run_id"],
                 entry["agent"],
                 entry["agent_model"],
                 entry["mode"],
-                entry["repeat_index"],
                 entry["record_dir"],
             ),
             logs=logs,

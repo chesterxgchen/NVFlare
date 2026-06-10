@@ -125,6 +125,16 @@ def rendered_prompt_filename(source_path: Path, rendered_bytes: bytes) -> str:
     return f"{slugify(source_path.stem)}_{rendered_hash[:12]}.txt"
 
 
+def contains_inline_template_placeholder(value: str) -> bool:
+    try:
+        return any(
+            field_name is not None and PROMPT_TEMPLATE_VARIABLE_PATTERN.match(field_name)
+            for _literal, field_name, _format_spec, _conversion in string.Formatter().parse(value)
+        )
+    except ValueError:
+        return False
+
+
 def materialize_prompt_for_output(scenario: dict[str, Any], run_plan: dict[str, Any], output_dir: Path) -> None:
     prompt = scenario.get("prompt")
     if not isinstance(prompt, dict) or prompt.get("source_type") != "template":
@@ -163,6 +173,11 @@ def resolve_prompt(raw: Mapping[str, Any], base_dir: Path, *, allow_external_pro
         else:
             raise ScenarioValidationError("prompt mapping must contain path or template")
     prompt_text = require_non_empty_string(value, "prompt path")
+    if source_type == "file" and contains_inline_template_placeholder(prompt_text):
+        raise ScenarioValidationError(
+            "prompt must be a file path, not an inline template string. "
+            "Use a prompt template file with prompt.template or prompt.path plus prompt.variables."
+        )
     resolved_prompt_path = resolve_prompt_path(prompt_text, base_dir, allow_external_prompt=allow_external_prompt)
     source_bytes = read_prompt_bytes(resolved_prompt_path)
     prompt_bytes = source_bytes

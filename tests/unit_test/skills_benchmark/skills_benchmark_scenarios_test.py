@@ -37,11 +37,10 @@ def base_scenario(tmp_path: Path) -> dict:
         "comparison": {"type": "mode_ablation", "modes": ["without_skills", "with_skills"]},
         "workflows": [{"name": "SCAFFOLD"}],
         "jobs": [{"path": job.name, "scale": "small"}],
-        "repeat_count": 2,
     }
 
 
-def test_mode_ablation_expands_repeats_modes_and_target_record_paths(tmp_path):
+def test_mode_ablation_expands_modes_and_target_record_paths(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
@@ -61,20 +60,17 @@ def test_mode_ablation_expands_repeats_modes_and_target_record_paths(tmp_path):
         "local_wheel_with_preinstalled_skills",
         "local_wheel_without_packaged_skills",
     ]
-    assert run_plan["run_count"] == 4
-    assert run_plan["comparison_group_count"] == 2
+    assert run_plan["run_count"] == 2
+    assert run_plan["comparison_group_count"] == 1
     assert [entry["mode"] for entry in entries] == [
-        "without_skills",
-        "with_skills",
         "without_skills",
         "with_skills",
     ]
     assert {entry["prompt_hash"] for entry in entries} == {expected_prompt_hash}
     assert entries[0]["record_dir"] == (
-        "records/agent=codex/model=gpt_test/workflow=scaffold/job=ames/" "repeat=01/mode=without_skills"
+        "records/agent=codex/model=gpt_test/workflow=scaffold/job=ames/mode=without_skills"
     )
     assert entries[1]["skills_enabled"] is True
-    assert entries[2]["repeat_index"] == 2
     assert run_plan["comparison_groups"][0]["compared_run_ids"] == ["run_00001", "run_00002"]
 
 
@@ -93,7 +89,7 @@ def test_compile_scenario_file_writes_scenario_and_run_plan(tmp_path):
     run_plan_json = json.loads((output_dir / "run_plan.json").read_text(encoding="utf-8"))
     assert scenario_json["source_path"] == str(scenario_path.resolve())
     assert run_plan_json["source_path"] == str(scenario_path.resolve())
-    assert run_plan_json["run_count"] == 4
+    assert run_plan_json["run_count"] == 2
 
 
 def test_scenario_reproducibility_records_profile_image_targets(tmp_path):
@@ -180,6 +176,21 @@ def test_prompt_path_with_variables_is_rendered_as_template(tmp_path):
     assert Path(materialized.scenario["prompt"]["path"]).read_text(encoding="utf-8") == "Convert ames.\n"
 
 
+def test_inline_prompt_template_string_is_rejected(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+
+    raw = base_scenario(tmp_path)
+    raw["prompt"] = "Convert {job_name}."
+
+    try:
+        compile_scenario(raw, base_dir=tmp_path)
+    except ScenarioValidationError as exc:
+        assert "prompt must be a file path, not an inline template string" in str(exc)
+        assert "prompt.template" in str(exc)
+    else:
+        raise AssertionError("inline prompt template strings should be rejected with a targeted error")
+
+
 def test_execute_run_plan_materializes_template_prompt_under_result_root(tmp_path, monkeypatch):
     from assist_tools.skills_benchmark.skills.harness.common import write_json
     from assist_tools.skills_benchmark.skills.harness.host import runner
@@ -187,7 +198,6 @@ def test_execute_run_plan_materializes_template_prompt_under_result_root(tmp_pat
 
     raw = base_scenario(tmp_path)
     raw["comparison"] = {"type": "one", "mode": "with_skills"}
-    raw["repeat_count"] = 1
     raw["path_budget"] = 400
     template = tmp_path / "prompt_template.txt"
     template.write_text("Convert {job_name}.\n", encoding="utf-8")
@@ -309,8 +319,6 @@ def test_model_comparison_expands_comparison_models(tmp_path):
         "mode": "with_skills",
         "models": ["gpt-a", "gpt-b"],
     }
-    raw["repeat_count"] = 1
-
     run_plan = compile_scenario(raw, base_dir=tmp_path).run_plan
 
     assert run_plan["run_count"] == 2
@@ -332,8 +340,6 @@ def test_model_comparison_dedupes_overlapping_top_level_models(tmp_path):
         "mode": "with_skills",
         "models": ["gpt-a", "gpt-b"],
     }
-    raw["repeat_count"] = 1
-
     run_plan = compile_scenario(raw, base_dir=tmp_path).run_plan
 
     assert "model=gpt_a/" in run_plan["entries"][0]["record_dir"]
@@ -356,6 +362,26 @@ def test_model_slug_key_is_visible_and_agent_scoped():
     assert "\0" not in codex_key
     assert model_slug_for(slugs, "codex", "shared/model") == "shared_model_codex"
     assert model_slug_for(slugs, "claude", "shared/model") == "shared_model_claude"
+
+
+def test_slug_collisions_hash_original_values(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
+
+    raw = base_scenario(tmp_path)
+    job_a = tmp_path / "my-job"
+    job_b = tmp_path / "my job"
+    job_a.mkdir()
+    job_b.mkdir()
+    raw["jobs"] = [
+        {"name": "my-job", "path": job_a.name, "scale": "small"},
+        {"name": "my job", "path": job_b.name, "scale": "small"},
+    ]
+    entries = compile_scenario(raw, base_dir=tmp_path).run_plan["entries"]
+    job_slugs = {entry["job_slug"] for entry in entries}
+
+    assert len(job_slugs) == 2
+    assert all(job_slug.startswith("my_job_") for job_slug in job_slugs)
+    assert len({entry["record_dir"] for entry in entries}) == len(entries)
 
 
 def test_missing_job_scale_is_rejected(tmp_path):
@@ -673,8 +699,6 @@ def test_agent_comparison_models_by_agent_resolves_single_model(tmp_path):
         "agents": ["codex"],
         "models_by_agent": {"codex": "gpt-b"},
     }
-    raw["repeat_count"] = 1
-
     run_plan = compile_scenario(raw, base_dir=tmp_path).run_plan
 
     assert run_plan["run_count"] == 1
@@ -682,13 +706,12 @@ def test_agent_comparison_models_by_agent_resolves_single_model(tmp_path):
     assert run_plan["entries"][0]["model_source"] == "comparison.models_by_agent"
 
 
-def test_execute_run_plan_writes_canonical_records_repeat_and_scenario_summary(tmp_path, monkeypatch):
+def test_execute_run_plan_writes_canonical_records_and_scenario_summary(tmp_path, monkeypatch):
     from assist_tools.skills_benchmark.skills.harness.common import write_json
     from assist_tools.skills_benchmark.skills.harness.host import runner
     from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
-    raw["repeat_count"] = 1
     raw["path_budget"] = 400
     compilation = compile_scenario(raw, base_dir=tmp_path)
     result_root = tmp_path / "results"
@@ -753,7 +776,6 @@ def test_execute_run_plan_writes_canonical_records_repeat_and_scenario_summary(t
     assert json.loads((result_root / "docker_image_preflight.json").read_text(encoding="utf-8"))["status"] == "pass"
     assert (first_record_dir / "record_summary.json").is_file()
     assert (first_record_dir / "benchmark_record.json").is_file()
-    assert (first_record_dir.parent / "repeat_summary.json").is_file()
     assert not (result_root / "without_skills").exists()
     assert summary["status"] == "passed"
     assert "aggregate_metrics" in summary
@@ -773,7 +795,6 @@ def test_execute_run_plan_fails_preflight_before_missing_docker_image(tmp_path, 
 
     raw = base_scenario(tmp_path)
     raw["comparison"] = {"type": "one", "mode": "with_skills"}
-    raw["repeat_count"] = 1
     raw["path_budget"] = 400
     compilation = compile_scenario(raw, base_dir=tmp_path)
     result_root = tmp_path / "results"
@@ -809,7 +830,6 @@ def test_scenario_summary_failed_when_all_runs_fail_quality_gate(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario, write_scenario_summaries
 
     raw = base_scenario(tmp_path)
-    raw["repeat_count"] = 1
     raw["path_budget"] = 400
     compilation = compile_scenario(raw, base_dir=tmp_path).write(tmp_path / "results")
     result_root = tmp_path / "results"
@@ -832,7 +852,6 @@ def test_scenario_summary_degraded_when_fail_fast_leaves_runs_unexecuted(tmp_pat
     from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario, write_scenario_summaries
 
     raw = base_scenario(tmp_path)
-    raw["repeat_count"] = 1
     raw["fail_fast"] = True
     raw["path_budget"] = 400
     compilation = compile_scenario(raw, base_dir=tmp_path).write(tmp_path / "results")
@@ -951,6 +970,35 @@ def test_scenario_summary_replaces_stale_summary_atomically(tmp_path, monkeypatc
     assert not (result_root / ".scenario_summary.json.tmp").exists()
 
 
+def test_scenario_summary_records_per_entry_summary_exception(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness import scenario_summaries, scenarios
+
+    raw = base_scenario(tmp_path)
+    raw["comparison"] = {"type": "one", "mode": "with_skills"}
+    compilation = scenarios.compile_scenario(raw, base_dir=tmp_path).write(tmp_path / "results")
+    result_root = tmp_path / "results"
+    entry = compilation.run_plan["entries"][0]
+
+    def fail_run_summary(*_args, **_kwargs):
+        raise RuntimeError("bad record payload")
+
+    monkeypatch.setattr(scenario_summaries, "run_summary_for_entry", fail_run_summary)
+
+    summary = scenario_summaries.write_scenario_summaries(
+        result_root,
+        {entry["run_id"]: 1},
+        report_writer=lambda *_args, **_kwargs: None,
+    )
+
+    saved = json.loads((result_root / "scenario_summary.json").read_text(encoding="utf-8"))
+    run = summary["runs"][0]
+    assert saved["runs"][0]["status"] == "failed"
+    assert run["quality_gate_failures"] == ["run_summary_generation_failed"]
+    assert run["quality_gate"]["final_container_exit_code"] == 0
+    assert run["summary_generation_error"]["error_type"] == "RuntimeError"
+    assert "bad record payload" in run["summary_generation_error"]["message"]
+
+
 def test_write_json_atomic_removes_temp_file_when_write_fails(tmp_path, monkeypatch):
     from assist_tools.skills_benchmark.skills.harness.scenario_summaries import write_json_atomic
 
@@ -1016,7 +1064,6 @@ def test_replay_result_root_regenerates_agent_parser_artifacts(tmp_path):
     raw = base_scenario(tmp_path)
     raw["agents"] = [{"name": "claude", "models": ["claude-test"]}]
     raw["comparison"] = {"type": "one", "mode": "with_skills"}
-    raw["repeat_count"] = 1
     compilation = compile_scenario(raw, base_dir=tmp_path)
     result_root = tmp_path / "captured"
     compilation.write(result_root)

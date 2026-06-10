@@ -22,7 +22,7 @@ import statistics
 from pathlib import Path
 from typing import Any, Mapping
 
-from .common import load_json, write_json
+from .common import load_json
 from .quality_signals import critical_quality_checks_failed, required_validation_metric_status
 from .reports.scenario_report import write_scenario_report
 from .scenario_common import (
@@ -64,10 +64,6 @@ def stats_for_values(values: list[float]) -> dict[str, Any]:
 
 def record_dir_path(result_root: Path, entry: Mapping[str, Any]) -> Path:
     return result_root / str(entry["record_dir"])
-
-
-def repeat_dir_for_record(path: Path) -> Path:
-    return path.parent
 
 
 def benchmark_record_path(record_dir: Path, mode: str) -> Path:
@@ -249,6 +245,47 @@ def run_summary_for_entry(
     return payload
 
 
+def failed_run_summary_for_entry(
+    entry: Mapping[str, Any], statuses: Mapping[str, int], exc: Exception
+) -> dict[str, Any]:
+    status = statuses.get(str(entry.get("run_id")))
+    if status is None:
+        status = statuses.get(str(entry.get("mode")))
+    payload = {key: entry.get(key) for key in SUMMARY_RUN_FIELDS}
+    payload.update(
+        {
+            "status": "failed",
+            "host_status": status,
+            "quality_gate_passed": False,
+            "quality_gate_failures": ["run_summary_generation_failed"],
+            "quality_gate": dict(DEFAULT_QUALITY_GATE),
+            "required_validation_metric_status": "unknown",
+            "validation_metric_status": "unknown",
+            "critical_quality_checks_failed": True,
+            "agent_elapsed_seconds": None,
+            "elapsed_seconds": None,
+            "phase_seconds": None,
+            "token_count": None,
+            "command_count": None,
+            "cost": None,
+            "agent_process_passed": False,
+            "agent_exit_code": None,
+            "final_container_exit_code": None,
+            "failure_root_cause": "run_summary_generation_failed",
+            "observed_skill_name": None,
+            "skill_name_source": None,
+            "validation_metric": None,
+            "structure_quality_signal": UNAVAILABLE_STRUCTURE_QUALITY_SIGNAL,
+            "artifact_paths": entry.get("artifact_paths") or {},
+            "summary_generation_error": {
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
+    )
+    return payload
+
+
 def comparison_label(entry: Mapping[str, Any]) -> str:
     comparison_type = str(entry.get("comparison_type") or "")
     if comparison_type == COMPARISON_MODE_ABLATION:
@@ -282,20 +319,12 @@ def comparison_group_summary(
             "agent_elapsed_seconds": winner_run.get("agent_elapsed_seconds"),
             "token_count": winner_run.get("token_count"),
         }
-    per_repeat_results = [
-        {
-            "repeat_index": group.get("group_axes", {}).get("repeat_index"),
-            "records": compared,
-            "status": "passed" if compared and all(run.get("quality_gate_passed") for run in compared) else "degraded",
-        }
-    ]
     return {
         "comparison_group_id": group.get("comparison_group_id"),
         "comparison_type": group.get("comparison_type"),
         "group_axes": group.get("group_axes") or {},
         "compared_runs": compared,
         "compared_records": compared,
-        "per_repeat_results": per_repeat_results,
         "aggregate_results": aggregate_results(compared, winner_policy=winner_policy),
         "winner_policy": winner_policy,
         "quality_gate": dict(effective_quality_gate),
@@ -342,23 +371,6 @@ def aggregate_results(runs: list[dict[str, Any]], winner_policy: str = DEFAULT_W
         }
     effective_policy = winner_policy if winner else "no_quality_qualified_winner"
     return {"by_label": aggregate, "winner": winner, "winner_policy": effective_policy}
-
-
-def write_repeat_summaries(result_root: Path, runs: list[dict[str, Any]]) -> None:
-    by_repeat: dict[Path, list[dict[str, Any]]] = {}
-    for run in runs:
-        by_repeat.setdefault(repeat_dir_for_record(result_root / str(run["record_dir"])), []).append(run)
-    for repeat_dir, items in by_repeat.items():
-        repeat_dir.mkdir(parents=True, exist_ok=True)
-        write_json(
-            repeat_dir / "repeat_summary.json",
-            {
-                "schema_version": SCHEMA_VERSION,
-                "repeat_index": items[0].get("repeat_index"),
-                "mode_summaries": items,
-                "status": "passed" if all(item.get("quality_gate_passed") for item in items) else "degraded",
-            },
-        )
 
 
 def write_json_atomic(path: Path, value: object) -> None:
@@ -417,14 +429,20 @@ def write_scenario_summaries(
         run_plan.get("quality_gate") if isinstance(run_plan.get("quality_gate"), dict) else DEFAULT_QUALITY_GATE
     )
     winner_policy = str(run_plan.get("winner_policy") or DEFAULT_WINNER_POLICY)
-    runs = [run_summary_for_entry(root, entry, statuses, quality_gate) for entry in entries if isinstance(entry, dict)]
+    runs = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            runs.append(run_summary_for_entry(root, entry, statuses, quality_gate))
+        except Exception as exc:
+            runs.append(failed_run_summary_for_entry(entry, statuses, exc))
     runs_by_id = {str(run["run_id"]): run for run in runs}
     comparison_groups = [
         comparison_group_summary(group, runs_by_id, quality_gate, winner_policy)
         for group in run_plan.get("comparison_groups", [])
         if isinstance(group, dict)
     ]
-    write_repeat_summaries(root, runs)
     aggregate = aggregate_results(runs, winner_policy=winner_policy)
     completed = sum(
         1 for run in runs if run.get("host_status") is not None or run.get("final_container_exit_code") is not None
@@ -438,7 +456,6 @@ def write_scenario_summaries(
         "expanded_case_count": len(entries),
         "completed_run_count": completed,
         "failed_run_count": failed,
-        "repeat_count": scenario.get("repeat_count"),
         "status": status,
         "quality_gate": quality_gate,
         "winner_policy": winner_policy,

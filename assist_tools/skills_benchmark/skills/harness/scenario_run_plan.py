@@ -22,7 +22,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from .scenario_prompt import materialize_prompt_for_output, resolve_prompt
+from .agents.registry import load_agent_adapter
+from .common import write_json
+from .modes import mode_spec
 from .scenario_common import (
     COMPARISON_AGENT,
     COMPARISON_MODE_ABLATION,
@@ -48,9 +50,7 @@ from .scenario_common import (
     unique_slug_map,
     utc_timestamp,
 )
-from .agents.registry import load_agent_adapter
-from .common import write_json
-from .modes import mode_spec
+from .scenario_prompt import materialize_prompt_for_output, resolve_prompt
 
 
 @dataclass(frozen=True)
@@ -198,13 +198,6 @@ def resolve_jobs(raw: Mapping[str, Any], base_dir: Path) -> tuple[list[JobSpec],
         jobs.append(JobSpec(path=path, name=name, scale=scale, resource_policy=policy))
         resolved.append({"name": name, "path": str(path), "scale": scale, "resource_policy": policy})
     return jobs, resolved
-
-
-def resolve_repeat_count(raw: Mapping[str, Any]) -> int:
-    value = raw.get("repeat_count", 1)
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ScenarioValidationError("repeat_count must be a positive integer")
-    return value
 
 
 def resolve_fail_fast(raw: Mapping[str, Any]) -> bool:
@@ -374,13 +367,9 @@ def record_dir_for(
     model_slug: str,
     workflow_slug: str,
     job_slug: str,
-    repeat_index: int,
     mode: str,
 ) -> str:
-    return (
-        f"records/agent={agent_slug}/model={model_slug}/workflow={workflow_slug}/job={job_slug}/"
-        f"repeat={repeat_index:02d}/mode={mode}"
-    )
+    return f"records/agent={agent_slug}/model={model_slug}/workflow={workflow_slug}/job={job_slug}/mode={mode}"
 
 
 def model_slug_for(slugs: Mapping[str, Mapping[str, str]], agent_name: str, model_name: str) -> str:
@@ -402,7 +391,6 @@ def build_run_entry(
     workflow: WorkflowSpec,
     job: JobSpec,
     mode: str,
-    repeat_index: int,
     prompt: Mapping[str, Any],
     slugs: Mapping[str, Mapping[str, str]],
 ) -> dict[str, Any]:
@@ -416,7 +404,6 @@ def build_run_entry(
         model_slug=model_slug,
         workflow_slug=workflow_slug,
         job_slug=job_slug,
-        repeat_index=repeat_index,
         mode=mode,
     )
     return {
@@ -437,8 +424,6 @@ def build_run_entry(
         "job_path": str(job.path),
         "job_scale": job.scale,
         "resource_policy": job.resource_policy,
-        "repeat_index": repeat_index,
-        "repeat_id": f"{repeat_index:02d}",
         "mode": mode,
         "mode_label": spec.label,
         "skills_enabled": spec.skills_enabled,
@@ -517,7 +502,6 @@ def expand_run_plan(
     agents: Mapping[str, AgentSpec],
     workflows: list[WorkflowSpec],
     jobs: list[JobSpec],
-    repeat_count: int,
     prompt: Mapping[str, Any],
     path_budget: int,
     quality_gate: Mapping[str, Any],
@@ -548,100 +532,91 @@ def expand_run_plan(
             for model in agent_model_options(agent):
                 for workflow in workflows:
                     for job in jobs:
-                        for repeat_index in range(1, repeat_count + 1):
-                            group_index += 1
-                            compared = [
-                                next_entry(
-                                    comparison_group_id="",
-                                    agent=agent,
-                                    model=model,
-                                    workflow=workflow,
-                                    job=job,
-                                    mode=mode,
-                                    repeat_index=repeat_index,
-                                )
-                                for mode in modes
-                            ]
-                            append_group(
-                                groups=groups,
-                                entries=entries,
-                                group_index=group_index,
-                                group_axes={
-                                    "agent": agent.name,
-                                    "agent_model": model.name,
-                                    "workflow": workflow.name,
-                                    "job_slug": slugs["jobs"][job.name],
-                                    "repeat_index": repeat_index,
-                                },
-                                compared_entries=compared,
-                                comparison_type=comparison_type,
+                        group_index += 1
+                        compared = [
+                            next_entry(
+                                comparison_group_id="",
+                                agent=agent,
+                                model=model,
+                                workflow=workflow,
+                                job=job,
+                                mode=mode,
                             )
+                            for mode in modes
+                        ]
+                        append_group(
+                            groups=groups,
+                            entries=entries,
+                            group_index=group_index,
+                            group_axes={
+                                "agent": agent.name,
+                                "agent_model": model.name,
+                                "workflow": workflow.name,
+                                "job_slug": slugs["jobs"][job.name],
+                            },
+                            compared_entries=compared,
+                            comparison_type=comparison_type,
+                        )
     elif comparison_type == COMPARISON_AGENT:
         model_by_agent = resolve_agent_comparison_models(comparison, agents)
         mode = str(comparison["mode"])
         for workflow in workflows:
             for job in jobs:
-                for repeat_index in range(1, repeat_count + 1):
-                    group_index += 1
-                    compared = [
-                        next_entry(
-                            comparison_group_id="",
-                            agent=agents[agent_name],
-                            model=model_by_agent[agent_name],
-                            workflow=workflow,
-                            job=job,
-                            mode=mode,
-                            repeat_index=repeat_index,
-                        )
-                        for agent_name in comparison["agents"]
-                    ]
-                    append_group(
-                        groups=groups,
-                        entries=entries,
-                        group_index=group_index,
-                        group_axes={
-                            "mode": mode,
-                            "workflow": workflow.name,
-                            "job_slug": slugs["jobs"][job.name],
-                            "repeat_index": repeat_index,
-                        },
-                        compared_entries=compared,
-                        comparison_type=comparison_type,
+                group_index += 1
+                compared = [
+                    next_entry(
+                        comparison_group_id="",
+                        agent=agents[agent_name],
+                        model=model_by_agent[agent_name],
+                        workflow=workflow,
+                        job=job,
+                        mode=mode,
                     )
+                    for agent_name in comparison["agents"]
+                ]
+                append_group(
+                    groups=groups,
+                    entries=entries,
+                    group_index=group_index,
+                    group_axes={
+                        "mode": mode,
+                        "workflow": workflow.name,
+                        "job_slug": slugs["jobs"][job.name],
+                    },
+                    compared_entries=compared,
+                    comparison_type=comparison_type,
+                )
     elif comparison_type == COMPARISON_MODEL:
         agent = agents[str(comparison["agent"])]
         mode = str(comparison["mode"])
         models = [ModelSpec(str(model), "comparison") for model in comparison["models"]]
         for workflow in workflows:
             for job in jobs:
-                for repeat_index in range(1, repeat_count + 1):
-                    group_index += 1
-                    compared = [
-                        next_entry(
-                            comparison_group_id="",
-                            agent=agent,
-                            model=model,
-                            workflow=workflow,
-                            job=job,
-                            mode=mode,
-                            repeat_index=repeat_index,
-                        )
-                        for model in models
-                    ]
-                    append_group(
-                        groups=groups,
-                        entries=entries,
-                        group_index=group_index,
-                        group_axes={
-                            "agent": agent.name,
-                            "mode": mode,
-                            "workflow": workflow.name,
-                            "job_slug": slugs["jobs"][job.name],
-                            "repeat_index": repeat_index,
-                        },
-                        compared_entries=compared,
-                        comparison_type=comparison_type,
+                group_index += 1
+                compared = [
+                    next_entry(
+                        comparison_group_id="",
+                        agent=agent,
+                        model=model,
+                        workflow=workflow,
+                        job=job,
+                        mode=mode,
                     )
+                    for model in models
+                ]
+                append_group(
+                    groups=groups,
+                    entries=entries,
+                    group_index=group_index,
+                    group_axes={
+                        "agent": agent.name,
+                        "mode": mode,
+                        "workflow": workflow.name,
+                        "job_slug": slugs["jobs"][job.name],
+                    },
+                    compared_entries=compared,
+                    comparison_type=comparison_type,
+                )
 
     # Compile-time check uses a root-agnostic proxy; execution revalidates with the actual result root.
     validate_path_budget(scenario_name, entries, path_budget)
@@ -740,7 +715,6 @@ def compile_scenario(
     agents, resolved_agents = resolve_agents(raw)
     workflows, resolved_workflows = resolve_workflows(raw)
     jobs, resolved_jobs = resolve_jobs(raw, base_path)
-    repeat_count = resolve_repeat_count(raw)
     path_budget = resolve_path_budget(raw)
     comparison = validate_comparison(raw, agents)
     fail_fast = resolve_fail_fast(raw)
@@ -755,7 +729,6 @@ def compile_scenario(
         "agents": resolved_agents,
         "workflows": resolved_workflows,
         "jobs": resolved_jobs,
-        "repeat_count": repeat_count,
         "comparison": comparison,
         "fail_fast": fail_fast,
         "quality_gate": quality_gate,
@@ -775,7 +748,6 @@ def compile_scenario(
         agents=agents,
         workflows=workflows,
         jobs=jobs,
-        repeat_count=repeat_count,
         prompt=prompt,
         path_budget=path_budget,
         quality_gate=quality_gate,
