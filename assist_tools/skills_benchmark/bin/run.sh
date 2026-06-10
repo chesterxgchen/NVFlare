@@ -7,11 +7,11 @@ export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") COMMAND --prompt PATH [--training-code PATH] [--results-root PATH] [PATH]
+Usage: $(basename "$0") [COMMAND] --prompt PATH [--training-code PATH] [--results-root PATH] [PATH]
 
 Commands:
+  pair             Run paired skills/no-skills benchmark cases. This is the default when COMMAND is omitted.
   one              Run one benchmark case. Use --mode with_skills or without_skills.
-  pair             Run paired skills/no-skills benchmark cases.
   scenario         Run a compiled scenario YAML.
   replay           Rebuild parser artifacts and scenario reports from captured results.
   interactive      Start an interactive benchmark container.
@@ -19,6 +19,7 @@ Commands:
   without-skills   Shortcut for: one --mode without_skills.
 
 Examples:
+  ./bin/run.sh --prompt /path/to/prompt.txt /path/to/job-folder
   ./bin/run.sh pair --prompt /path/to/prompt.txt --training-code /path/to/job-folder
   ./bin/run.sh pair --agent claude --model MODEL --prompt /path/to/prompt.txt /path/to/job-folder
   ./bin/run.sh pair --agent-home /path/to/agent-home --prompt /path/to/prompt.txt /path/to/job-folder
@@ -36,8 +37,15 @@ if [[ "$#" -eq 0 ]]; then
   exit 2
 fi
 
-command="$1"
-shift
+if [[ "$1" == "-h" || "$1" == "--help" || "$1" == "help" ]]; then
+  command="$1"
+  shift
+elif [[ "$1" == -* ]]; then
+  command="pair"
+else
+  command="$1"
+  shift
+fi
 
 case "${command}" in
   one|run-one|single)

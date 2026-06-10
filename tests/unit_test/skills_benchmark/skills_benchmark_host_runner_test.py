@@ -14,7 +14,40 @@
 
 import json
 import os
+import subprocess
 from pathlib import Path
+
+
+def test_run_sh_defaults_to_pair_when_first_arg_is_option(tmp_path):
+    script = Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "bin" / "run.sh"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    recorder = tmp_path / "python_args.txt"
+    fake_python = fake_bin / "python3"
+    fake_python.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$RECORD_PATH"\n', encoding="utf-8")
+    fake_python.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["RECORD_PATH"] = str(recorder)
+
+    result = subprocess.run(
+        [str(script), "--prompt", "prompt.txt", "job"],
+        env=env,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert recorder.read_text(encoding="utf-8").splitlines() == [
+        "-m",
+        "assist_tools.skills_benchmark.skills.harness.host.runner",
+        "pair",
+        "--prompt",
+        "prompt.txt",
+        "job",
+    ]
 
 
 def test_expand_home_path_uses_pathlib_expanduser():
