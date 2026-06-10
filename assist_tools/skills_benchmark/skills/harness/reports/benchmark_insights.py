@@ -1195,13 +1195,13 @@ def missing_result_metrics_section(runs: dict[str, dict[str, Any]], modes: list[
 
 def activity_insights_table(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
     rows = [
-        ("Read commands (`cat`/`sed`/`nl`)", "shell_cat_or_sed", "Direct file-read behavior changed materially."),
+        ("File reads (`cat`/`sed`/Read tool)", "shell_cat_or_sed", "Direct file-read behavior; includes shell cat/sed and Read tool calls."),
         ("`find` commands", "shell_find", "Filesystem discovery proxy."),
         ("`rg` commands", "shell_rg", "Search use proxy."),
         ("Simulation references", "simulation", "Shows validation effort against generated jobs."),
         ("Python compile checks", "py_compile", "Shows syntax validation effort."),
-        ("Skill reference hits", "skill_references", "Only skills-enabled runs should usually show these."),
-        ("Agent inspect references", "agent_inspect", "Shows use of agent inspection commands."),
+        ("Skill calls / skill references", "skill_references", "Only skills-enabled runs should usually show these; includes Skill tool calls."),
+        ("Agent / inspect calls", "agent_inspect", "Shows use of agent inspection commands; includes Agent tool calls."),
         ("Python job.py references", "python_job_py", "Shows repeated exercise of generated job entry points."),
     ]
     lines = [

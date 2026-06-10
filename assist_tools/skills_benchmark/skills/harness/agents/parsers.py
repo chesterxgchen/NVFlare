@@ -319,6 +319,13 @@ def parse_claude_stream_activity(events_path: Path) -> dict[str, Any]:
                 if any(needle in lowered for needle in needles):
                     hint_counts[name] += 1
 
+    # Augment shell-pattern hints with structured tool call counts so that
+    # agents using tool APIs (e.g. Claude Read/Skill/Agent tools) are reflected
+    # in the same Activity Insights rows as their shell equivalents.
+    hint_counts["shell_cat_or_sed"] += tool_counts.get("Read", 0)
+    hint_counts["skill_references"] += tool_counts.get("Skill", 0)
+    hint_counts["agent_inspect"] += tool_counts.get("Agent", 0)
+
     return {
         "event_count": len(events),
         "json_decode_errors": decode_errors,
