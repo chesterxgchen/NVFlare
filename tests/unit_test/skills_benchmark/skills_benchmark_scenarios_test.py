@@ -159,6 +159,16 @@ def test_prompt_template_renders_only_explicit_variables(tmp_path):
     assert {entry["prompt_source"] for entry in written_run_plan["entries"]} == {str(rendered_path)}
     assert {entry["prompt_source"] for entry in materialized.run_plan["entries"]} == {str(rendered_path)}
 
+    second_root = tmp_path / "second-results"
+    second_materialized = materialized.write(second_root)
+    second_scenario = json.loads((second_root / "scenario.json").read_text(encoding="utf-8"))
+    second_run_plan = json.loads((second_root / "run_plan.json").read_text(encoding="utf-8"))
+    second_rendered_path = Path(second_scenario["prompt"]["path"])
+    assert second_rendered_path.is_relative_to((second_root / ".agent_benchmark" / "rendered_prompts").resolve())
+    assert second_rendered_path.read_bytes() == rendered_bytes
+    assert {entry["prompt_source"] for entry in second_run_plan["entries"]} == {str(second_rendered_path)}
+    assert {entry["prompt_source"] for entry in second_materialized.run_plan["entries"]} == {str(second_rendered_path)}
+
 
 def test_prompt_path_with_variables_is_rendered_as_template(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
@@ -1079,30 +1089,20 @@ def test_scenario_summary_ignores_missing_run_id_when_indexing_runs(tmp_path, mo
     assert [run["run_id"] for run in compared] == ["run_00001"]
 
 
-def test_write_json_atomic_removes_temp_file_when_write_fails(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.scenario_summaries import write_json_atomic
+def test_write_json_atomic_delegates_to_common_helper(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness import scenario_summaries
 
     target = tmp_path / "scenario_summary.json"
-    tmp_file = tmp_path / ".scenario_summary.json.tmp"
-    original_write_text = Path.write_text
+    calls = []
 
-    def fail_after_partial_write(self, data, *args, **kwargs):
-        if self == tmp_file:
-            original_write_text(self, "partial", encoding="utf-8")
-            raise OSError("disk full")
-        return original_write_text(self, data, *args, **kwargs)
+    def fake_write_json_atomic(path, value):
+        calls.append((path, value))
 
-    monkeypatch.setattr(Path, "write_text", fail_after_partial_write)
+    monkeypatch.setattr(scenario_summaries, "common_write_json_atomic", fake_write_json_atomic)
 
-    try:
-        write_json_atomic(target, {"status": "ok"})
-    except OSError as exc:
-        assert "disk full" in str(exc)
-    else:
-        raise AssertionError("partial temp write failure should propagate")
+    scenario_summaries.write_json_atomic(target, {"status": "ok"})
 
-    assert not tmp_file.exists()
-    assert not target.exists()
+    assert calls == [(target, {"status": "ok"})]
 
 
 def test_comparison_group_summary_ignores_non_numeric_token_count():
@@ -1163,6 +1163,36 @@ def test_comparison_group_summary_sorts_missing_token_count_last():
     summary = comparison_group_summary(group, runs_by_id)
 
     assert summary["winner"]["run_id"] == "run_00002"
+
+
+def test_comparison_group_summary_uses_stable_run_id_tiebreaker():
+    from assist_tools.skills_benchmark.skills.harness.scenarios import comparison_group_summary
+
+    group = {
+        "comparison_group_id": "group_001",
+        "comparison_type": "mode_ablation",
+        "compared_run_ids": ["run_00002", "run_00001"],
+    }
+    runs_by_id = {
+        "run_00001": {
+            "run_id": "run_00001",
+            "mode": "without_skills",
+            "quality_gate_passed": True,
+            "agent_elapsed_seconds": 2,
+            "token_count": None,
+        },
+        "run_00002": {
+            "run_id": "run_00002",
+            "mode": "with_skills",
+            "quality_gate_passed": True,
+            "agent_elapsed_seconds": 2,
+            "token_count": None,
+        },
+    }
+
+    summary = comparison_group_summary(group, runs_by_id)
+
+    assert summary["winner"]["run_id"] == "run_00001"
 
 
 def test_aggregate_results_sorts_missing_token_median_last():

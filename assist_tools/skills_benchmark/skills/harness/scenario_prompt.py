@@ -139,17 +139,27 @@ def materialize_prompt_for_output(scenario: dict[str, Any], run_plan: dict[str, 
     prompt = scenario.get("prompt")
     if not isinstance(prompt, dict) or prompt.get("source_type") != "template":
         return
-    rendered_text = prompt.pop("_rendered_text", None)
-    filename = prompt.pop("_rendered_filename", None)
-    if not isinstance(rendered_text, str) or not isinstance(filename, str):
-        return
-    rendered_bytes = rendered_text.encode("utf-8")
+    rendered_text = prompt.get("_rendered_text")
+    filename = prompt.get("_rendered_filename")
+    prompt_output = {key: value for key, value in prompt.items() if not str(key).startswith("_")}
+    scenario["prompt"] = prompt_output
+    if isinstance(rendered_text, str) and isinstance(filename, str):
+        rendered_bytes = rendered_text.encode("utf-8")
+    else:
+        rendered_source = prompt.get("rendered_path") or prompt.get("path")
+        if not isinstance(rendered_source, str):
+            return
+        rendered_source_path = Path(rendered_source)
+        if not rendered_source_path.is_file():
+            return
+        rendered_bytes = rendered_source_path.read_bytes()
+        filename = rendered_source_path.name
     prompt_dir = output_dir / GENERATED_PROMPT_DIR
     prompt_dir.mkdir(parents=True, exist_ok=True)
     rendered_path = (prompt_dir / filename).resolve()
     rendered_path.write_bytes(rendered_bytes)
-    prompt["path"] = str(rendered_path)
-    prompt["rendered_path"] = str(rendered_path)
+    prompt_output["path"] = str(rendered_path)
+    prompt_output["rendered_path"] = str(rendered_path)
     for entry in run_plan.get("entries") or []:
         if isinstance(entry, dict):
             entry["prompt_source"] = str(rendered_path)

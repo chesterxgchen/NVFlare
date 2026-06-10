@@ -16,13 +16,12 @@
 
 from __future__ import annotations
 
-import json
-import os
 import statistics
 from pathlib import Path
 from typing import Any, Mapping
 
 from .common import load_json
+from .common import write_json_atomic as common_write_json_atomic
 from .quality_signals import critical_quality_checks_failed, required_validation_metric_status
 from .reports.scenario_report import write_scenario_report
 from .scenario_common import (
@@ -330,6 +329,7 @@ def comparison_group_summary(
             key=lambda item: (
                 float(item["agent_elapsed_seconds"]),
                 optional_number_sort_value(item.get("token_count")),
+                str(item.get("run_id") or ""),
             ),
         )
         winner = {
@@ -393,17 +393,7 @@ def aggregate_results(runs: list[dict[str, Any]], winner_policy: str = DEFAULT_W
 
 
 def write_json_atomic(path: Path, value: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_name(f".{path.name}.tmp")
-    try:
-        tmp_path.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(tmp_path, path)
-    except BaseException:
-        try:
-            tmp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise
+    common_write_json_atomic(path, value)
 
 
 def scenario_status(

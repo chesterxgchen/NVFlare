@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +50,33 @@ def as_number(value: Any) -> float | None:
 
 
 def write_json(path: str | Path, value: Any) -> None:
-    Path(path).write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
+    write_json_atomic(path, value)
+
+
+def write_json_atomic(path: str | Path, value: Any) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd = None
+    tmp_path = None
+    try:
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
+        tmp_path = Path(tmp_name)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            fd = None
+            stream.write(json.dumps(value, indent=2, sort_keys=True))
+        os.replace(tmp_path, target)
+        tmp_path = None
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def make_tree_readable(path: str | Path) -> None:

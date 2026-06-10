@@ -60,6 +60,7 @@ def normalize_command(value: Any) -> str | None:
 
 
 def increment_bounded_counter(counter: Counter[str], key: str, max_keys: int) -> bool:
+    # Returns True when the key was rejected because the bounded counter is full.
     if key in counter or len(counter) < max_keys:
         counter[key] += 1
         return False
