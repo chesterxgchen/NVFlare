@@ -389,10 +389,11 @@ def bash_blocked_diagnostic(run: dict[str, Any]) -> str | None:
         impact = " The simulation step was never run."
     return (
         f"Bash tool was blocked {blocked_count} time(s) with 'requested permissions' errors. "
-        f"Despite --dangerously-skip-permissions being set, Claude Code 2.1.x still blocks Bash "
-        f"unless it is also listed in --allowedTools. "
-        f"Fix: add --allowedTools 'Bash(*)' (and other required tools) to the agent launch argv "
-        f"in the agent profile, then rebuild the Docker image.{impact}"
+        f"In Claude Code --print (non-interactive) mode, tools require explicit allow rules even with "
+        f"--dangerously-skip-permissions. Check that (1) BENCHMARK_AGENT_HOME/settings.json has "
+        f"Bash(*) in permissions.allow, (2) --allowedTools includes Bash(*) in the agent launch argv, "
+        f"and (3) no deny/ask rules exist at /etc/claude-code/managed-settings.json inside Docker. "
+        f"Rebuild the Docker image after any agent config changes.{impact}"
     )
 
 
