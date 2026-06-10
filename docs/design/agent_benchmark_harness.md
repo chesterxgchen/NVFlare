@@ -179,9 +179,8 @@ logs, derive skill identity from workflow names, or mutate job input folders.
 
 `harness/record_identity.py` owns stable identifiers used in run plans, result
 paths, and aggregation keys: slugs, collision handling, prompt hashes, job
-hashes, repeat IDs, and comparison group IDs. Reports consume these identifiers
-from scenario/run-plan metadata rather than reconstructing them from directory
-names.
+hashes, and comparison group IDs. Reports consume these identifiers from
+scenario/run-plan metadata rather than reconstructing them from directory names.
 
 ### Scenario Engine
 
@@ -215,11 +214,9 @@ must be explicit because concurrent agent runs affect timing, resource
 contention, and result interpretation.
 
 Parallelism applies to independent run-plan entries only. A single run-plan
-entry owns one container, one result directory, and one runtime staging root.
-Modes within the same repeat may run in parallel only when each mode gets its
-own container and staging root. No two concurrent entries may share
-`/tmp/agent_benchmark`, a workspace copy, a record directory, or an agent auth/config
-write location.
+entry owns one container, one result directory, and one runtime staging root. No
+two concurrent entries may share `/tmp/agent_benchmark`, a workspace copy, a
+record directory, or an agent auth/config write location.
 Isolation is container-boundary isolation. A fixed path such as `/tmp/agent_benchmark`
 is safe only because each benchmark run gets its own container; if a container
 is reused for multiple concurrent run-plan entries, each entry must receive a
@@ -1173,8 +1170,7 @@ Reports show:
 - scalar validation metrics when extractable;
 - source immutability and structure checks;
 - token, command, timing, and cost-related measurements;
-- comparison summaries across modes, agents, models, workflows, jobs, and
-  repeats.
+- comparison summaries across modes, agents, models, workflows, and jobs.
 
 Metric sections should be named by metric family, for example
 `Metrics (AUROC)` or `Metrics (valid_loss)`. Plot legends should identify the
@@ -1235,8 +1231,6 @@ A scenario defines a matrix across these axes:
 | `comparison` | Explicit comparison object |
 | `job` | Unstructured input job folder |
 | `job_scale` | Scenario-provided scale annotation: `small`, `medium`, `large` |
-| `repeat_count` | Number of complete comparison repeats |
-
 Important boundaries:
 
 - `agent` and `agent_model` are separate axes.
@@ -1300,11 +1294,11 @@ comparison:
 Expansion rules:
 
 - `mode_ablation` and `one` create one comparison group per
-  `(agent, model, workflow, job, repeat)` combination.
+  `(agent, model, workflow, job)` combination.
 - `agent_comparison` varies the agent axis. Each compared agent resolves to one
   model. Ambiguous model selection is a validation error.
 - `model_comparison` varies the model axis for one explicit agent.
-- Workflows, jobs, and repeats expand outside the compared axis.
+- Workflows and jobs expand outside the compared axis.
 
 For `agent_comparison`, each compared agent must resolve to exactly one model
 through one of these sources, in order: an explicit `models_by_agent` entry in
@@ -1388,19 +1382,17 @@ results/
             `-- model=<model_slug>/
                 `-- workflow=<workflow_slug>/
                     `-- job=<job_slug>/
-                        `-- repeat=<NN>/
-                            |-- repeat_summary.json
-                            `-- mode=<mode>/
-                                |-- record_summary.json
-                                |-- agent_events.jsonl
-                                |-- agent_usage.json
-                                |-- agent_activity.json
-                                |-- agent_last_message.txt
-                                |-- agent_stderr.txt
-                                |-- agent_record.json
-                                |-- benchmark_record.json
-                                |-- input_delta_manifest.json
-                                `-- workspace_delta_manifest.json
+                        `-- mode=<mode>/
+                            |-- record_summary.json
+                            |-- agent_events.jsonl
+                            |-- agent_usage.json
+                            |-- agent_activity.json
+                            |-- agent_last_message.txt
+                            |-- agent_stderr.txt
+                            |-- agent_record.json
+                            |-- benchmark_record.json
+                            |-- input_delta_manifest.json
+                            `-- workspace_delta_manifest.json
 ```
 
 Slugs are filesystem-safe and stable: lowercase, replace every non-alphanumeric
@@ -1450,7 +1442,6 @@ skill_name_source
 job_slug
 job_path
 job_scale
-repeat_index
 mode
 skills_enabled
 runtime_image
@@ -1491,7 +1482,6 @@ Every comparison summary includes:
 comparison_type
 group_axes
 compared_records[]
-per_repeat_results[]
 aggregate_results{}
 winner_policy
 quality_gate
@@ -1529,13 +1519,13 @@ The default winner policy is
 1. Exclude compared records that do not satisfy the quality gate.
 2. If no compared record satisfies the gate, set winner policy to
    `no_quality_qualified_winner`.
-3. Compare median `agent_elapsed_seconds` across repeats.
-4. Break ties with median `token_count`.
-5. If both medians tie or required values are missing, report
+3. Compare `agent_elapsed_seconds` across compared records.
+4. Break ties with `token_count`.
+5. If both values tie or required values are missing, report
    `no_single_cost_winner`.
 
-Reports may also show mean, min, max, and standard deviation, but headline
-winner selection uses medians.
+Reports may also show aggregate statistics when a scenario contains multiple
+records for the same comparison label.
 
 Scenario execution continues after individual run failures unless the scenario
 sets `fail_fast: true`. Scenario summaries report partial results and mark the
@@ -1544,40 +1534,6 @@ quality-qualified record. A scenario is `failed` when preflight fails before a
 run plan is executable, all run-plan entries fail, or a required report cannot
 be generated. A fully executed scenario with all required records satisfying
 the quality gate is `passed`.
-
-## Repeat Aggregation
-
-Repeats are first-class. Each repeat is a complete execution of the selected
-comparison.
-
-Per-repeat summaries include:
-
-```text
-repeat_summary.json
-mode_summaries[]
-comparison_type
-agent
-model
-workflow
-job
-repeat_index
-```
-
-Scenario-level summaries aggregate across repeats:
-
-```text
-scenario_summary.json
-scenario_name
-expanded_case_count
-repeat_count
-comparison_groups[]
-aggregate_metrics{}
-```
-
-Default statistics are median, mean, min, max, standard deviation when
-`repeat_count >= 2`, pass/fail counts, failure-root counts, and validation
-metric distributions when available. Headline comparisons should prefer medians
-over single-run values.
 
 ## CI And Test Boundaries
 
@@ -1588,7 +1544,6 @@ CI exercises harness health, not the full benchmark matrix. A CI scenario uses:
 - one small synthetic job folder;
 - one workflow;
 - one explicit comparison object;
-- one repeat.
 
 CI verifies that Docker build/run works, records are produced, reports render,
 skill exposure modes behave correctly, and parser assumptions remain valid.
@@ -1601,7 +1556,6 @@ Unit tests cover pure behavior:
 - record normalization;
 - metric extraction;
 - structure-tree rendering;
-- repeat aggregation;
 - report rendering helpers.
 
 Adapter contract tests validate that sample agent outputs map into the neutral

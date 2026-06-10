@@ -79,7 +79,6 @@ SUMMARY_RUN_FIELDS = (
     "job_slug",
     "job_path",
     "job_scale",
-    "repeat_index",
     "mode",
     "skills_enabled",
     "prompt_hash",
@@ -106,7 +105,7 @@ def slug_base(value: str) -> tuple[str, bool]:
 
 def slugify(value: str, *, force_hash: bool = False) -> str:
     normalized = re.sub(r"[^a-z0-9]+", "_", str(value).lower()).strip("_")
-    hash_input = normalized or str(value) or "empty"
+    hash_input = str(value) or "empty"
     suffix = stable_hash(hash_input)
     if not normalized:
         return f"item_{suffix}"

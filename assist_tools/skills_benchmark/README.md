@@ -38,7 +38,7 @@ results/<timestamp>/
 |   |-- scenario_report.json
 |   `-- scenario_report.md
 |-- records/
-|   `-- agent=.../model=.../workflow=.../job=.../repeat=01/mode=.../
+|   `-- agent=.../model=.../workflow=.../job=.../mode=.../
 ```
 
 Read `reports/scenario_report.md` first. It summarizes scenario status,
@@ -337,9 +337,9 @@ same canonical scenario records as `scenario`.
 
 ## Run A Scenario
 
-Scenario YAML files describe agents, models, workflows, jobs, comparison type,
-and repeat count. The harness compiles them into `scenario.json` and
-`run_plan.json` before Docker execution:
+Scenario YAML files describe agents, models, workflows, jobs, and comparison
+type. The harness compiles them into `scenario.json` and `run_plan.json`
+before Docker execution:
 
 ```bash
 ./bin/run.sh scenario /path/to/scenario.yaml --output-dir /path/to/result-root
@@ -351,7 +351,6 @@ Minimal skills-vs-baseline scenario:
 name: ames mode ablation
 
 prompt: ./prompt.txt
-repeat_count: 1
 fail_fast: false
 
 agents:
@@ -392,7 +391,7 @@ result-root/
 |   |-- scenario_report.json
 |   `-- scenario_report.md
 `-- records/
-    `-- agent=<agent>/model=<model>/workflow=<workflow>/job=<job>/repeat=<NN>/mode=<mode>/
+    `-- agent=<agent>/model=<model>/workflow=<workflow>/job=<job>/mode=<mode>/
 ```
 
 Each mode directory contains direct canonical artifacts such as
@@ -402,7 +401,7 @@ Each mode directory contains direct canonical artifacts such as
 
 ## Replay Captured Results
 
-Use `replay` to regenerate parser artifacts, repeat summaries, scenario
+Use `replay` to regenerate parser artifacts, scenario
 summaries, and scenario reports from an existing result root without invoking a
 live agent or Docker:
 
@@ -465,7 +464,7 @@ ls -la /workspace/prompts
 Each scenario mode directory contains the normalized run artifacts:
 
 ```text
-records/agent=<agent>/model=<model>/workflow=<workflow>/job=<job>/repeat=01/mode=with_skills/
+records/agent=<agent>/model=<model>/workflow=<workflow>/job=<job>/mode=with_skills/
 |-- agent_activity.json
 |-- agent_events.jsonl
 |-- agent_record.json
@@ -640,8 +639,8 @@ agent to install job dependencies from available requirements files when needed.
 - `docker/Dockerfile`: runtime image with the selected agent CLI and SDK wheel.
 - `config/agents/`: built-in editable agent CLI configs.
 - `config/sdks/`: built-in editable SDK build/install configs.
-- `skills/harness/scenarios.py`: scenario validation, run-plan expansion, repeat
-  aggregation, and scenario reports.
+- `skills/harness/scenarios.py`: scenario validation, run-plan expansion, and
+  scenario reports.
 - `skills/harness/host/`: Docker orchestration, path handling, image selection, and
   scenario execution.
 - `skills/harness/container/`: in-container agent execution and artifact capture.

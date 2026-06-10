@@ -18,6 +18,28 @@ import os
 from pathlib import Path
 
 
+def test_record_identity_prefers_direct_skill_and_case():
+    from assist_tools.skills_benchmark.skills.harness.record_identity import record_case, record_skill
+
+    record = {
+        "skill": "direct-skill",
+        "case_id": "direct-case",
+        "skill_discovery": {"selected_skill": "fallback-skill", "selected_case_id": "fallback-case"},
+    }
+
+    assert record_skill(record) == "direct-skill"
+    assert record_case(record) == "direct-case"
+
+
+def test_record_identity_falls_back_to_skill_discovery():
+    from assist_tools.skills_benchmark.skills.harness.record_identity import record_case, record_skill
+
+    record = {"skill_discovery": {"selected_skill": "fallback-skill", "selected_case_id": "fallback-case"}}
+
+    assert record_skill(record) == "fallback-skill"
+    assert record_case(record) == "fallback-case"
+
+
 def test_collect_report_artifacts_skips_symlinks(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.artifacts import collect_report_artifacts
 
