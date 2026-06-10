@@ -975,6 +975,7 @@ def test_scenario_summary_records_per_entry_summary_exception(tmp_path, monkeypa
 
     raw = base_scenario(tmp_path)
     raw["comparison"] = {"type": "one", "mode": "with_skills"}
+    raw["quality_gate"] = {"required_validation_metric_status": ["present"]}
     compilation = scenarios.compile_scenario(raw, base_dir=tmp_path).write(tmp_path / "results")
     result_root = tmp_path / "results"
     entry = compilation.run_plan["entries"][0]
@@ -995,8 +996,56 @@ def test_scenario_summary_records_per_entry_summary_exception(tmp_path, monkeypa
     assert saved["runs"][0]["status"] == "failed"
     assert run["quality_gate_failures"] == ["run_summary_generation_failed"]
     assert run["quality_gate"]["final_container_exit_code"] == 0
+    assert run["quality_gate"]["required_validation_metric_status"] == ["present"]
     assert run["summary_generation_error"]["error_type"] == "RuntimeError"
     assert "bad record payload" in run["summary_generation_error"]["message"]
+
+
+def test_scenario_summary_ignores_missing_run_id_when_indexing_runs(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness import scenario_summaries
+    from assist_tools.skills_benchmark.skills.harness.common import write_json
+
+    result_root = tmp_path / "results"
+    result_root.mkdir()
+    run_plan = {
+        "schema_version": "1",
+        "scenario_name": "missing run id",
+        "comparison_type": "mode_ablation",
+        "quality_gate": {"final_container_exit_code": 0},
+        "entries": [
+            {"mode": "without_skills", "record_dir": "records/missing"},
+            {"run_id": "run_00001", "mode": "with_skills", "record_dir": "records/valid"},
+        ],
+        "comparison_groups": [
+            {
+                "comparison_group_id": "group_001",
+                "comparison_type": "mode_ablation",
+                "compared_run_ids": ["None", "run_00001"],
+            }
+        ],
+    }
+    write_json(result_root / "run_plan.json", run_plan)
+    write_json(result_root / "scenario.json", {"name": "missing run id"})
+
+    def fake_run_summary(_root, entry, _statuses, _quality_gate):
+        return {
+            "run_id": entry.get("run_id"),
+            "mode": entry["mode"],
+            "record_dir": entry["record_dir"],
+            "quality_gate_passed": entry.get("run_id") == "run_00001",
+            "agent_elapsed_seconds": 1.0 if entry.get("run_id") == "run_00001" else None,
+        }
+
+    monkeypatch.setattr(scenario_summaries, "run_summary_for_entry", fake_run_summary)
+
+    summary = scenario_summaries.write_scenario_summaries(
+        result_root,
+        {"run_00001": 0},
+        report_writer=lambda *_args, **_kwargs: None,
+    )
+
+    compared = summary["comparison_groups"][0]["compared_runs"]
+    assert [run["run_id"] for run in compared] == ["run_00001"]
 
 
 def test_write_json_atomic_removes_temp_file_when_write_fails(tmp_path, monkeypatch):
@@ -1053,6 +1102,29 @@ def test_comparison_group_summary_ignores_non_numeric_token_count():
     summary = comparison_group_summary(group, runs_by_id)
 
     assert summary["winner"]["run_id"] == "run_00001"
+
+
+def test_aggregate_results_sorts_missing_token_median_last():
+    from assist_tools.skills_benchmark.skills.harness.scenario_summaries import aggregate_results
+
+    summary = aggregate_results(
+        [
+            {
+                "mode": "without_skills",
+                "quality_gate_passed": True,
+                "agent_elapsed_seconds": 2,
+                "token_count": None,
+            },
+            {
+                "mode": "with_skills",
+                "quality_gate_passed": True,
+                "agent_elapsed_seconds": 2,
+                "token_count": 5,
+            },
+        ]
+    )
+
+    assert summary["winner"]["label"] == "with_skills"
 
 
 def test_replay_result_root_regenerates_agent_parser_artifacts(tmp_path):

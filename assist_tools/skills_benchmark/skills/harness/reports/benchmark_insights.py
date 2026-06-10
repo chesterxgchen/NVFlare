@@ -109,8 +109,39 @@ def truncate(value: Any, limit: int = 180) -> str:
     return text[: max(0, limit - 3)].rstrip() + "..."
 
 
+def mode_dir_for_benchmark(root: Path, mode: str) -> Path:
+    legacy = root / mode
+    if legacy.exists():
+        return legacy
+
+    run_plan = load_json(root / "run_plan.json", {}) or {}
+    entries = (
+        run_plan.get("entries") if isinstance(run_plan, dict) and isinstance(run_plan.get("entries"), list) else []
+    )
+    for entry in entries:
+        if not isinstance(entry, dict) or str(entry.get("mode")) != mode:
+            continue
+        record_dir = entry.get("record_dir")
+        if not record_dir:
+            continue
+        candidate = root / str(record_dir)
+        if candidate.exists():
+            return candidate
+
+    records_root = root / "records"
+    if records_root.exists():
+        matches = sorted(records_root.glob(f"**/mode={mode}"))
+        if matches:
+            return matches[0]
+    return legacy
+
+
 def final_record_path(root: Path, mode: str) -> Path:
-    return root / mode / "records" / f"{mode}_record.json"
+    mode_dir = mode_dir_for_benchmark(root, mode)
+    benchmark_record = mode_dir / "benchmark_record.json"
+    if benchmark_record.exists():
+        return benchmark_record
+    return mode_dir / "records" / f"{mode}_record.json"
 
 
 def validation_metric_from_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -145,7 +176,7 @@ def collect_benchmark_runs(root: Path) -> dict[str, dict[str, Any]]:
     runs: dict[str, dict[str, Any]] = {}
     for spec in BENCHMARK_RUNS:
         mode = spec.mode
-        mode_dir = root / mode
+        mode_dir = mode_dir_for_benchmark(root, mode)
         mode_console_text = read_text(root / f"{mode}.console.log") or filter_mode_console(console_text, mode)
         summary = load_json(mode_dir / "run_summary.json", {}) if mode_dir.exists() else {}
         record = load_json(final_record_path(root, mode), {}) if mode_dir.exists() else {}
@@ -1020,6 +1051,21 @@ def tree_from_paths(paths: list[str], *, max_paths: int = 80) -> str:
     return "\n".join(lines)
 
 
+def tree_paths_for_keys(
+    run: dict[str, Any],
+    keys: tuple[str, ...],
+    *,
+    suffixes: tuple[str, ...] | None = None,
+) -> list[str]:
+    paths = []
+    for key in keys:
+        for path in manifest_paths(run, key):
+            if suffixes is not None and Path(path).suffix not in suffixes:
+                continue
+            paths.append(path)
+    return unique_paths(paths)
+
+
 def structure_correctness_table(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
     rows = [
         ("Required converted files", structure_required_display),
@@ -1056,19 +1102,22 @@ def structure_trees_section(runs: dict[str, dict[str, Any]], modes: list[str]) -
         lines.append("")
         lines.append(f"#### {run.get('label') or mode}")
         lines.append("")
-        paths = unique_paths(
-            [
-                path
-                for key, suffixes in (
-                    ("changed_files", TREE_SOURCE_SUFFIXES),
-                    ("runtime_artifacts", TREE_RUNTIME_SUFFIXES),
-                )
-                for path in manifest_paths(run, key)
-                if Path(path).suffix in suffixes
-            ]
+        final_paths = tree_paths_for_keys(run, ("final_files",)) or tree_paths_for_keys(
+            run,
+            ("final_structure_files", "runtime_artifacts"),
+            suffixes=TREE_RUNTIME_SUFFIXES,
         )
+        changed_paths = tree_paths_for_keys(run, ("changed_files", "runtime_artifacts"))
+        lines.append("Final workspace:")
+        lines.append("")
         lines.append("```text")
-        lines.append(tree_from_paths(paths))
+        lines.append(tree_from_paths(final_paths))
+        lines.append("```")
+        lines.append("")
+        lines.append("Changed/generated files:")
+        lines.append("")
+        lines.append("```text")
+        lines.append(tree_from_paths(changed_paths))
         lines.append("```")
     return "\n".join(lines)
 

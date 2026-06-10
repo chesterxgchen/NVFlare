@@ -162,14 +162,14 @@ def iter_json_records(root: Path, agent_record_path: Path | None = None) -> Iter
             continue
         if path.name.endswith("_agent_record.json") or path.name.endswith("_record.json"):
             continue
-        scanned += 1
-        if scanned > MAX_JSON_RECORD_FILES:
-            break
         try:
             if path.stat().st_size > MAX_JSON_RECORD_FILE_BYTES:
                 continue
         except OSError:
             continue
+        scanned += 1
+        if scanned > MAX_JSON_RECORD_FILES:
+            break
         data = load_json(path)
         if isinstance(data, dict):
             yield path, data

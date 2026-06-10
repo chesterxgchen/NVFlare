@@ -49,6 +49,10 @@ def number_or_zero(value: Any) -> float:
     return float(value) if is_number(value) else 0.0
 
 
+def optional_number_sort_value(value: Any) -> tuple[int, float]:
+    return (0, float(value)) if is_number(value) else (1, 0.0)
+
+
 def stats_for_values(values: list[float]) -> dict[str, Any]:
     if not values:
         return {"count": 0, "median": None, "mean": None, "min": None, "max": None, "stddev": None}
@@ -246,8 +250,13 @@ def run_summary_for_entry(
 
 
 def failed_run_summary_for_entry(
-    entry: Mapping[str, Any], statuses: Mapping[str, int], exc: Exception
+    entry: Mapping[str, Any],
+    statuses: Mapping[str, int],
+    exc: Exception,
+    *,
+    quality_gate: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    effective_quality_gate = quality_gate or DEFAULT_QUALITY_GATE
     status = statuses.get(str(entry.get("run_id")))
     if status is None:
         status = statuses.get(str(entry.get("mode")))
@@ -258,7 +267,7 @@ def failed_run_summary_for_entry(
             "host_status": status,
             "quality_gate_passed": False,
             "quality_gate_failures": ["run_summary_generation_failed"],
-            "quality_gate": dict(DEFAULT_QUALITY_GATE),
+            "quality_gate": dict(effective_quality_gate),
             "required_validation_metric_status": "unknown",
             "validation_metric_status": "unknown",
             "critical_quality_checks_failed": True,
@@ -361,7 +370,7 @@ def aggregate_results(runs: list[dict[str, Any]], winner_policy: str = DEFAULT_W
             candidates,
             key=lambda item: (
                 float(item[1]["agent_elapsed_seconds"]["median"]),
-                float(item[1]["token_count"]["median"] or 0),
+                optional_number_sort_value(item[1]["token_count"]["median"]),
             ),
         )
         winner = {
@@ -436,8 +445,8 @@ def write_scenario_summaries(
         try:
             runs.append(run_summary_for_entry(root, entry, statuses, quality_gate))
         except Exception as exc:
-            runs.append(failed_run_summary_for_entry(entry, statuses, exc))
-    runs_by_id = {str(run["run_id"]): run for run in runs}
+            runs.append(failed_run_summary_for_entry(entry, statuses, exc, quality_gate=quality_gate))
+    runs_by_id = {str(run["run_id"]): run for run in runs if run.get("run_id") is not None}
     comparison_groups = [
         comparison_group_summary(group, runs_by_id, quality_gate, winner_policy)
         for group in run_plan.get("comparison_groups", [])

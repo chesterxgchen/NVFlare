@@ -94,6 +94,107 @@ def test_benchmark_insights_caps_agent_events_text(tmp_path, monkeypatch):
     assert run["agent_events_text"] == "01234567"
 
 
+def test_benchmark_reports_read_canonical_record_layout(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.common import write_json
+    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.reports import metrics_report
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import collect_benchmark_runs
+
+    entries = []
+    for index, mode in enumerate((NO_SKILLS_MODE, WITH_SKILLS_MODE), start=1):
+        record_dir = (
+            tmp_path
+            / "records"
+            / "agent=codex"
+            / "model=default"
+            / "workflow=default"
+            / "job=ames"
+            / "repeat=01"
+            / f"mode={mode}"
+        )
+        record_dir.mkdir(parents=True)
+        entries.append(
+            {"run_id": f"run_{index:05d}", "mode": mode, "record_dir": str(record_dir.relative_to(tmp_path))}
+        )
+        write_json(
+            record_dir / "run_summary.json",
+            {
+                "mode": mode,
+                "elapsed_seconds": 10 + index,
+                "token_count": 100 + index,
+                "agent_exit_code": 0,
+                "final_container_exit_code": 0,
+            },
+        )
+        write_json(record_dir / "container_exit_code.json", {"exit_code": 0})
+        write_json(record_dir / "agent_activity.json", {"command_count": index})
+        write_json(
+            record_dir / "benchmark_record.json",
+            {
+                "mode": mode,
+                "reported_validation_metric": {"name": "AUROC", "value": 0.7 + index / 100},
+            },
+        )
+    write_json(tmp_path / "run_plan.json", {"entries": entries})
+
+    runs = collect_benchmark_runs(tmp_path)
+    assert runs[NO_SKILLS_MODE]["available"] is True
+    assert runs[WITH_SKILLS_MODE]["record"]["reported_validation_metric"]["name"] == "AUROC"
+
+    metrics_report.write_reports(tmp_path, "Synthetic Metrics")
+
+    assert (tmp_path / "metrics_report.json").is_file()
+    assert "Metrics (AUROC)" in (tmp_path / "metrics_report.md").read_text(encoding="utf-8")
+
+
+def test_numeric_comparison_rejects_bool_values():
+    from assist_tools.skills_benchmark.skills.harness.reports.metrics_report import numeric_comparison
+
+    rows = [
+        {"summary": {"elapsed_seconds": 10, "token_count": 100}},
+        {"summary": {"elapsed_seconds": True, "token_count": False}},
+    ]
+
+    assert numeric_comparison(rows) == {}
+
+
+def test_structure_tree_falls_back_to_final_workspace_when_changed_python_is_empty():
+    from assist_tools.skills_benchmark.skills.harness.modes import WITH_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import structure_trees_section
+
+    report = structure_trees_section(
+        {
+            WITH_SKILLS_MODE: {
+                "available": True,
+                "label": "With skills",
+                "workspace_delta": {
+                    "changed_files": [
+                        {"path": "nvflare_jobs/ames_fedavg/README.md"},
+                        {"path": "nvflare_jobs/ames_fedavg/requirements.txt"},
+                    ],
+                    "final_structure_files": [
+                        {"path": "download_data.py"},
+                        {"path": "model.py"},
+                        {"path": "nvflare_jobs/ames_fedavg/client.py"},
+                        {"path": "nvflare_jobs/ames_fedavg/job.py"},
+                        {"path": "nvflare_jobs/ames_fedavg/model.py"},
+                    ],
+                },
+            }
+        },
+        [WITH_SKILLS_MODE],
+    )
+
+    assert "Final workspace:" in report
+    assert "Changed/generated files:" in report
+    assert "none" not in report
+    assert "nvflare_jobs" in report
+    assert "client.py" in report
+    assert "job.py" in report
+    assert "README.md" in report
+    assert "requirements.txt" in report
+
+
 def test_status_summary_is_human_readable_for_failures():
     from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE
     from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import status_summary
