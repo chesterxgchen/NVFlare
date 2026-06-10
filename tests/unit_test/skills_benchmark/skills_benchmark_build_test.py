@@ -70,6 +70,29 @@ def test_prepare_build_context_stages_assist_tools_for_docker_copy(tmp_path, mon
         build.shutil.rmtree(context, ignore_errors=True)
 
 
+def test_build_copytree_calls_dereference_symlinks(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness.host import build
+
+    src = tmp_path / "src"
+    dst = tmp_path / "dst"
+    src.mkdir()
+    dst.mkdir()
+    src.joinpath("package").mkdir()
+    calls = []
+
+    def fake_copytree(source, target, **kwargs):
+        calls.append((Path(source).name, Path(target).name, kwargs))
+
+    monkeypatch.setattr(build.shutil, "copytree", fake_copytree)
+
+    build.copy_directory_contents(src, dst)
+    build.copy_harness(src / "package", dst / "package")
+
+    assert [(source, target) for source, target, _kwargs in calls] == [("package", "package"), ("package", "package")]
+    assert all(kwargs["symlinks"] is False for _source, _target, kwargs in calls)
+    assert all(callable(kwargs["ignore"]) for _source, _target, kwargs in calls)
+
+
 def test_latest_sdk_wheel_skips_stat_failures(tmp_path, monkeypatch):
     from assist_tools.skills_benchmark.skills.harness.host import build
 

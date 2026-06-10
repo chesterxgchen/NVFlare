@@ -126,6 +126,36 @@ def test_workspace_artifact_capture_does_not_traverse_symlinked_directories(tmp_
     assert {item["path"] for item in manifest["changed_files"]} == {"kept.py"}
 
 
+def test_workspace_artifact_json_writes_use_atomic_helper(tmp_path, monkeypatch):
+    from assist_tools.skills_benchmark.skills.harness import artifacts
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    workspace.joinpath("kept.py").write_text("print('kept')\n", encoding="utf-8")
+    baseline_path = tmp_path / "baseline.json"
+    manifest_path = tmp_path / "delta_manifest.json"
+    calls = []
+
+    def fake_write_json_atomic(path, value):
+        calls.append((Path(path).name, value))
+
+    monkeypatch.setattr(artifacts, "write_json_atomic", fake_write_json_atomic)
+
+    artifacts.write_workspace_baseline(workspace, baseline_path)
+    artifacts.capture_workspace_delta(
+        workspace,
+        tmp_path / "empty_baseline.json",
+        tmp_path / "delta",
+        manifest_path,
+        tmp_path / "nvflare",
+        include_runtime_artifacts=False,
+    )
+
+    assert [name for name, _value in calls] == ["baseline.json", "delta_manifest.json"]
+    assert calls[0][1]["files"]["kept.py"]["size_bytes"] > 0
+    assert calls[1][1]["final_file_manifest_count"] == 1
+
+
 def test_parse_usage_activity_scans_hints_from_raw_line_without_json_reserialize(tmp_path, monkeypatch):
     from assist_tools.skills_benchmark.skills.harness import events
 

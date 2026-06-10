@@ -208,7 +208,14 @@ Useful build flags:
 ./bin/build.sh --skip-skills-image
 ./bin/build.sh --node-image node:22.16.0-bookworm-slim
 ./bin/build.sh --uv-image ghcr.io/astral-sh/uv:0.11.19
+./bin/build.sh --reuse-wheels   # skip uv build; reuse latest wheels already in dist/
 ```
+
+Use `--reuse-wheels` when only agent config or Docker layers changed and you
+want to avoid rebuilding SDK wheels from source. The flag looks for the most
+recently built wheel in `dist/` and copies it into the build context instead
+of running `uv build`. Omit it (or run without the flag) the first time, or
+whenever the SDK source has changed.
 
 Verify the images exist:
 
