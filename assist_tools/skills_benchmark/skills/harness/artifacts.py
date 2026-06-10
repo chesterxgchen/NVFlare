@@ -24,6 +24,8 @@ import shutil
 from pathlib import Path
 from typing import Any, Iterable
 
+from .common import write_json_atomic
+
 SOURCE_SUFFIXES = {
     ".cfg",
     ".ini",
@@ -131,18 +133,14 @@ def write_workspace_baseline(workspace_root: Path, out: Path) -> None:
             continue
         files[rel] = {"sha256": sha256(path), "size_bytes": size}
 
-    out.write_text(
-        json.dumps(
-            {
-                "root": str(workspace_root),
-                "max_file_bytes": WORKSPACE_MAX_FILE_BYTES,
-                "source_file_count": len(files),
-                "files": files,
-            },
-            indent=2,
-            sort_keys=True,
-        ),
-        encoding="utf-8",
+    write_json_atomic(
+        out,
+        {
+            "root": str(workspace_root),
+            "max_file_bytes": WORKSPACE_MAX_FILE_BYTES,
+            "source_file_count": len(files),
+            "files": files,
+        },
     )
 
 
@@ -311,7 +309,7 @@ def capture_workspace_delta(
         "runtime_artifacts": runtime_artifacts,
         "skipped_files": skipped_files,
     }
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    write_json_atomic(manifest_path, manifest)
 
 
 def collect_report_artifacts(root: Path) -> list[dict[str, Any]]:

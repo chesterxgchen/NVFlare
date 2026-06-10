@@ -200,7 +200,7 @@ def copy_directory_contents(src: Path, dst: Path) -> None:
     for child in src.iterdir():
         target = dst / child.name
         if child.is_dir():
-            shutil.copytree(child, target, ignore=ignore)
+            shutil.copytree(child, target, ignore=ignore, symlinks=False)
         else:
             shutil.copy2(child, target)
 
@@ -359,7 +359,7 @@ def copy_harness(src: Path, dst: Path) -> None:
     def ignore(_dir: str, names: list[str]) -> set[str]:
         return {name for name in names if name == "__pycache__" or name.endswith(".pyc")}
 
-    shutil.copytree(src, dst, ignore=ignore)
+    shutil.copytree(src, dst, ignore=ignore, symlinks=False)
 
 
 def copy_harness_package(context: Path) -> None:
