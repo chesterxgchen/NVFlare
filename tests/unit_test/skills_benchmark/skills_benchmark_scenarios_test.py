@@ -656,20 +656,18 @@ def test_known_pending_agent_is_rejected(tmp_path):
         raise AssertionError("known-pending agents should fail preflight")
 
 
-def test_claude_scenario_requires_explicit_model(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+def test_claude_scenario_uses_adapter_default_model_when_unspecified(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["agents"] = [{"name": "claude"}]
     raw["comparison"] = {"type": "one", "mode": "with_skills"}
 
-    try:
-        compile_scenario(raw, base_dir=tmp_path)
-    except ScenarioValidationError as exc:
-        assert "requires an explicit benchmark model" in str(exc)
-        assert "BENCHMARK_AGENT_MODEL" in str(exc)
-    else:
-        raise AssertionError("Claude scenarios must require an explicit model")
+    compilation = compile_scenario(raw, base_dir=tmp_path)
+    entry = compilation.run_plan["entries"][0]
+
+    assert entry["agent_model"] == "unspecified_default"
+    assert entry["model_source"] == "adapter_default"
 
 
 def test_agent_comparison_requires_unambiguous_model_selection(tmp_path):

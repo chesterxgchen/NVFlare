@@ -370,10 +370,11 @@ not add prompt text, task hints, benchmark expectations, metric names, record
 paths, workflow instructions, or other context beyond the explicit benchmark
 prompt selected by the scenario.
 
-If an adapter cannot provide a stable, benchmark-owned default model, it must
-require an explicit model from direct CLI `--model` or scenario configuration.
-A supported adapter must not let the underlying agent CLI select an implicit
-default model for measured runs.
+Model selection is optional for direct runs. When a model is not specified, the
+adapter may use its configured default model or omit provider-specific model
+arguments so the underlying agent CLI uses its own default. In that case the
+harness records the adapter's default model metadata, usually
+`unspecified_default`, so reports make the implicit model choice visible.
 
 ```python
 class AgentAdapter:
@@ -923,7 +924,6 @@ exit:
 name: claude
 display_name: Anthropic Claude Code CLI
 default_model: unspecified_default
-requires_explicit_model: true
 agent_home_env: CLAUDE_CONFIG_DIR
 container_home: /workspace/.claude
 
@@ -942,7 +942,9 @@ launch:
   prompt_input_mode: stdin
   argv: ["claude", "--dangerously-skip-permissions",
          "--output-format", "stream-json",
-         "--verbose", "--model", "{model}", "--print"]
+         "--verbose", "--print"]
+  model_argv: ["--model", "{model}"]
+  model_argv_position: before_final_arg
   sandbox_flags: ["--dangerously-skip-permissions"]
   bypass_reason: "isolated benchmark container; writable state is limited to mounted result/workspace paths"
 
