@@ -708,6 +708,61 @@ def test_failure_analysis_reports_recovered_job_failure_and_metric_gap():
     assert "log/per-site evidence" in details
 
 
+def test_job_run_status_section_reports_bash_blocked_not_started(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
+        benchmark_report,
+        job_run_status,
+        job_run_status_section,
+    )
+
+    permission_result = {
+        "message": {
+            "content": [
+                {
+                    "content": "Claude requested permissions to use Bash, but you haven't granted it yet.",
+                    "type": "tool_result",
+                }
+            ]
+        },
+        "type": "user",
+    }
+    final_result = {
+        "final_message": "Usage:\n```bash\ncd nvflare_jobs/ames_fedavg\npython job.py\n```",
+        "permission_denials": [{"tool_name": "Bash", "tool_input": {"command": "python job.py"}}],
+        "subtype": "success",
+        "type": "result",
+    }
+    run = {
+        "available": True,
+        "label": "With skills",
+        "activity": {
+            "commands": ["find /workspace/run/with_skills/workspace -type f"],
+            "hint_counts": {"python_job_py": 0, "simulation": 0},
+        },
+        "agent_events_text": "\n".join(json.dumps(event) for event in (permission_result, final_result)),
+        "agent_last_message": final_result["final_message"],
+        "container_exit": {"exit_code": 0},
+        "record": {},
+        "run": {"final_container_exit_code": 0},
+    }
+    runs = {
+        NO_SKILLS_MODE: {"available": False, "label": "No skills baseline"},
+        WITH_SKILLS_MODE: run,
+    }
+
+    assert job_run_status(run) == "not_started"
+
+    section = job_run_status_section(runs, [NO_SKILLS_MODE, WITH_SKILLS_MODE])
+    report = benchmark_report(tmp_path, runs)
+    assert "## Job Run Status" in report
+    assert "| Job execution | No skills baseline: unknown" in report
+    assert "With skills: not_started (Bash blocked 1 time(s)" in report
+    assert "| With skills | not_started | Bash blocked 1 time(s)" in section
+    assert "Fix agent Bash/tool permissions and rerun" in section
+    assert "python job.py" not in section
+
+
 def test_readme_metric_alignment_uses_server_best_validation_metric_scalar():
     from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
 
