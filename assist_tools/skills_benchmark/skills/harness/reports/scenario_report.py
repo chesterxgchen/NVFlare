@@ -27,6 +27,28 @@ def markdown_cell(value: Any) -> str:
     return text.replace("|", "\\|").replace("\n", "<br>")
 
 
+def run_identity_lines(runs: Any) -> list[str]:
+    if not isinstance(runs, list) or not runs:
+        return []
+    lines = [
+        "",
+        "## Run Identity",
+        "",
+        "| Run ID | Label | Agent | Model | Model source | Mode |",
+        "|---|---|---|---|---|---|",
+    ]
+    for run in runs:
+        if not isinstance(run, Mapping):
+            continue
+        label = run.get("label") or run.get("mode") or run.get("run_id")
+        lines.append(
+            f"| {markdown_cell(run.get('run_id'))} | {markdown_cell(label)} | {markdown_cell(run.get('agent'))} | "
+            f"{markdown_cell(run.get('agent_model'))} | {markdown_cell(run.get('model_source'))} | "
+            f"{markdown_cell(run.get('mode'))} |"
+        )
+    return lines
+
+
 def write_scenario_report(result_root: Path, summary: Mapping[str, Any]) -> None:
     reports_dir = result_root / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -49,6 +71,7 @@ def write_scenario_report(result_root: Path, summary: Mapping[str, Any]) -> None
                 "This report was regenerated from captured artifacts; no agent or Docker run was executed.",
             ]
         )
+    lines.extend(run_identity_lines(summary.get("runs")))
     lines.extend(
         [
             "",

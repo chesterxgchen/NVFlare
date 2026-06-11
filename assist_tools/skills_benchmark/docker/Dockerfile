@@ -37,11 +37,13 @@ ARG SKILLS_INSTALL_EXPECTED_SOURCE
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
+    bubblewrap \
     ca-certificates \
     git \
     python3 \
     findutils \
     coreutils \
+    socat \
     tree \
     && rm -rf /var/lib/apt/lists/*
 

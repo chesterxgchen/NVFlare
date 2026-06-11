@@ -29,6 +29,7 @@ from .benchmark_insights import (
     embedded_bar_chart,
     filter_mode_console,
     final_record_path,
+    first_non_empty,
     human_readable_status,
     interpretation_section,
     markdown_cell,
@@ -45,7 +46,15 @@ from .benchmark_insights import (
 
 def collect_runs(root: Path) -> list[dict[str, Any]]:
     runs = []
+    run_plan = load_json(root / "run_plan.json", {}) or {}
+    entries = (
+        run_plan.get("entries") if isinstance(run_plan, dict) and isinstance(run_plan.get("entries"), list) else []
+    )
     for spec in BENCHMARK_RUNS:
+        run_plan_entry = next(
+            (entry for entry in entries if isinstance(entry, dict) and str(entry.get("mode")) == spec.mode),
+            {},
+        )
         mode_dir = mode_dir_for_benchmark(root, spec.mode)
         summary = load_json(mode_dir / "run_summary.json", {}) if mode_dir.exists() else {}
         record = load_json(final_record_path(root, spec.mode), {}) if mode_dir.exists() else {}
@@ -68,6 +77,17 @@ def collect_runs(root: Path) -> list[dict[str, Any]]:
                 "label": spec.label,
                 "available": mode_dir.exists(),
                 "skills_enabled": spec.skills_enabled,
+                "agent": first_non_empty(summary.get("agent"), record.get("agent"), run_plan_entry.get("agent")),
+                "agent_model": first_non_empty(
+                    summary.get("agent_model"),
+                    record.get("agent_model"),
+                    run_plan_entry.get("agent_model"),
+                ),
+                "model_source": first_non_empty(
+                    summary.get("model_source"),
+                    record.get("model_source"),
+                    run_plan_entry.get("model_source"),
+                ),
                 "summary": summary,
                 "record": record,
                 "activity": activity,
@@ -101,6 +121,17 @@ def runs_by_mode_for_insights(root: Path, rows: list[dict[str, Any]]) -> dict[st
             "mode": mode,
             "label": row.get("label") or spec.label,
             "skills": "with skills" if spec.skills_enabled else "without skills",
+            "agent": first_non_empty(row.get("agent"), summary.get("agent"), record.get("agent")),
+            "agent_model": first_non_empty(
+                row.get("agent_model"),
+                summary.get("agent_model"),
+                record.get("agent_model"),
+            ),
+            "model_source": first_non_empty(
+                row.get("model_source"),
+                summary.get("model_source"),
+                record.get("model_source"),
+            ),
             "run": summary,
             "record": record,
             "container_exit": load_json(mode_dir / "container_exit_code.json", {}) if available else {},
@@ -180,8 +211,8 @@ def markdown_report(summary: dict[str, Any], insight_runs: dict[str, dict[str, A
         "",
         "## Runs",
         "",
-        "| Run | Status | Skills | Elapsed seconds | Tokens | Commands | Root cause |",
-        "|---|---|---|---:|---:|---:|---|",
+        "| Run | Agent | Model | Status | Skills | Elapsed seconds | Tokens | Commands | Root cause |",
+        "|---|---|---|---|---|---:|---:|---:|---|",
     ]
     for row in summary["runs"]:
         run = insight_runs[row["mode"]]
@@ -189,7 +220,8 @@ def markdown_report(summary: dict[str, Any], insight_runs: dict[str, dict[str, A
         activity = row["activity"]
         root_cause = "NA" if human_readable_status(run) == "passed" else run_analysis(run)
         lines.append(
-            f"| {markdown_cell(row['label'])} | {markdown_cell(human_readable_status(run))} | "
+            f"| {markdown_cell(row['label'])} | {markdown_cell(run.get('agent'))} | "
+            f"{markdown_cell(run.get('agent_model'))} | {markdown_cell(human_readable_status(run))} | "
             f"{fmt(row['skills_enabled'])} | {fmt(run_summary.get('elapsed_seconds'))} | "
             f"{fmt(run_summary.get('token_count'))} | {fmt(activity.get('command_count'))} | "
             f"{markdown_cell(root_cause)} |"
@@ -219,6 +251,8 @@ def html_report(summary: dict[str, Any], insight_runs: dict[str, dict[str, Any]]
         rows.append(
             "<tr>"
             f"<td>{html.escape(row['label'])}</td>"
+            f"<td>{html.escape(fmt(run.get('agent')))}</td>"
+            f"<td>{html.escape(fmt(run.get('agent_model')))}</td>"
             f"<td>{html.escape(human_readable_status(run))}</td>"
             f"<td>{html.escape(fmt(row['skills_enabled']))}</td>"
             f"<td>{html.escape(fmt(run_summary.get('elapsed_seconds')))}</td>"
@@ -246,7 +280,7 @@ def html_report(summary: dict[str, Any], insight_runs: dict[str, dict[str, Any]]
   <p>Result root: <code>{html.escape(summary['result_root'])}</code></p>
   <p>Status: {html.escape(summary['status'])}</p>
   <table>
-    <thead><tr><th>Run</th><th>Status</th><th>Skills</th><th>Elapsed seconds</th><th>Tokens</th></tr></thead>
+    <thead><tr><th>Run</th><th>Agent</th><th>Model</th><th>Status</th><th>Skills</th><th>Elapsed seconds</th><th>Tokens</th></tr></thead>
     <tbody>{''.join(rows)}</tbody>
   </table>
   {chart}

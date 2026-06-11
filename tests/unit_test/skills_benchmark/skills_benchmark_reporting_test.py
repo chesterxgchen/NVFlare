@@ -98,7 +98,10 @@ def test_benchmark_reports_read_canonical_record_layout(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.common import write_json
     from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
     from assist_tools.skills_benchmark.skills.harness.reports import metrics_report
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import collect_benchmark_runs
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
+        benchmark_report,
+        collect_benchmark_runs,
+    )
 
     entries = []
     for index, mode in enumerate((NO_SKILLS_MODE, WITH_SKILLS_MODE), start=1):
@@ -114,7 +117,14 @@ def test_benchmark_reports_read_canonical_record_layout(tmp_path):
         )
         record_dir.mkdir(parents=True)
         entries.append(
-            {"run_id": f"run_{index:05d}", "mode": mode, "record_dir": str(record_dir.relative_to(tmp_path))}
+            {
+                "run_id": f"run_{index:05d}",
+                "mode": mode,
+                "agent": "codex",
+                "agent_model": "default",
+                "model_source": "scenario",
+                "record_dir": str(record_dir.relative_to(tmp_path)),
+            }
         )
         write_json(
             record_dir / "run_summary.json",
@@ -139,12 +149,19 @@ def test_benchmark_reports_read_canonical_record_layout(tmp_path):
 
     runs = collect_benchmark_runs(tmp_path)
     assert runs[NO_SKILLS_MODE]["available"] is True
+    assert runs[NO_SKILLS_MODE]["agent"] == "codex"
+    assert runs[NO_SKILLS_MODE]["agent_model"] == "default"
     assert runs[WITH_SKILLS_MODE]["record"]["reported_validation_metric"]["name"] == "AUROC"
+    insights = benchmark_report(tmp_path, runs)
+    assert "## Run Identity" in insights
+    assert "| No skills baseline | codex | default | scenario | without_skills |" in insights
 
     metrics_report.write_reports(tmp_path, "Synthetic Metrics")
 
     assert (tmp_path / "metrics_report.json").is_file()
-    assert "Metrics (AUROC)" in (tmp_path / "metrics_report.md").read_text(encoding="utf-8")
+    metrics_markdown = (tmp_path / "metrics_report.md").read_text(encoding="utf-8")
+    assert "Metrics (AUROC)" in metrics_markdown
+    assert "| No skills baseline | codex | default |" in metrics_markdown
 
 
 def test_mode_dir_for_benchmark_does_not_guess_ambiguous_canonical_layout(tmp_path):
@@ -359,12 +376,13 @@ def test_shared_lifecycle_requires_dependency_preflight_before_missing_dependenc
         encoding="utf-8"
     )
 
-    assert "all generated NVFLARE jobs" in lifecycle
-    assert "recipe-, framework-, and algorithm-independent" in lifecycle
-    assert "requirements-train.txt" in lifecycle
-    assert "python -m pip install -r <requirements-file>" in lifecycle
-    assert "dependency or import failures" in lifecycle
-    assert "Report missing dependencies as blockers only when" in lifecycle
+    assert "source-provided `requirements*.txt` files" in lifecycle
+    assert "uv pip install -r <file>" in lifecycle
+    assert "python -m pip install -r <file>" in lifecycle
+    assert "framework-specific" in lifecycle
+    assert "NVFLARE modules" in lifecycle
+    assert "`nvflare.app_opt.pt.*`" in lifecycle
+    assert "Treat missing dependencies as blockers only when" in lifecycle
 
 
 def test_readme_metric_alignment_uses_aggregated_validation_metric_scalar():
@@ -1431,6 +1449,16 @@ def test_scenario_report_escapes_markdown_table_pipes(tmp_path):
             "completed_run_count": 1,
             "expanded_case_count": 1,
             "winner_policy": "quality",
+            "runs": [
+                {
+                    "run_id": "run_pipe",
+                    "label": "with|skills",
+                    "agent": "claude",
+                    "agent_model": "default|model",
+                    "model_source": "adapter_default",
+                    "mode": "with_skills",
+                }
+            ],
             "aggregate_results": {
                 "by_label": {
                     "with|skills": {
@@ -1447,6 +1475,8 @@ def test_scenario_report_escapes_markdown_table_pipes(tmp_path):
 
     report = (tmp_path / "reports" / "scenario_report.md").read_text(encoding="utf-8")
     assert "with\\|skills" in report
+    assert "## Run Identity" in report
+    assert "default\\|model" in report
 
 
 def test_report_generators_write_two_mode_outputs(tmp_path, monkeypatch):

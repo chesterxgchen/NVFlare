@@ -135,8 +135,12 @@ exit:
         - login
     - category: agent_sandbox_or_approval_failure
       any:
+        - bubblewrap
+        - bwrap
         - permission
         - approval
+        - sandbox
+        - socat
 
 availability_probe:
   - claude
