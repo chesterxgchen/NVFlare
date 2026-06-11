@@ -880,6 +880,7 @@ def test_job_run_status_uses_claude_bash_output_to_detect_completed_simulation()
 
 def test_job_run_status_reason_includes_failed_job_command_error():
     from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
+        job_run_action,
         job_run_status,
         job_run_status_reason,
     )
@@ -901,7 +902,166 @@ def test_job_run_status_reason_includes_failed_job_command_error():
     }
 
     assert job_run_status(run) == "started_failed"
-    assert "ModuleNotFoundError" in job_run_status_reason(run)
+    reason = job_run_status_reason(run)
+    assert "missing Python dependency `torch`" in reason
+    assert "no dependency install command was captured" in reason
+    assert "Install the job requirements" in job_run_action(run)
+
+
+def test_completed_job_run_status_reason_includes_recovered_dependency_failure():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
+        job_run_action,
+        job_run_status,
+        job_run_status_reason,
+    )
+
+    failed_probe = {
+        "item": {
+            "aggregated_output": "Traceback (most recent call last):\nModuleNotFoundError: No module named 'torch'",
+            "command": 'python -c "import torch"',
+            "exit_code": 1,
+            "id": "probe",
+            "status": "failed",
+            "type": "command_execution",
+        }
+    }
+    install = {
+        "item": {
+            "aggregated_output": "Successfully installed torch",
+            "command": "pip install -r requirements.txt",
+            "exit_code": 0,
+            "id": "install",
+            "status": "completed",
+            "type": "command_execution",
+        }
+    }
+    successful_job = {
+        "item": {
+            "aggregated_output": "site-1: round=0 train_loss=0.5 valid_auroc=0.7\nFinished FedAvg.",
+            "command": "python job.py",
+            "exit_code": 0,
+            "id": "job",
+            "status": "completed",
+            "type": "command_execution",
+        }
+    }
+    run = {
+        "available": True,
+        "activity": {"commands": ['python -c "import torch"', "pip install -r requirements.txt", "python job.py"]},
+        "agent_events_text": "\n".join(json.dumps(event) for event in (failed_probe, install, successful_job)),
+    }
+
+    reason = job_run_status_reason(run)
+
+    assert job_run_status(run) == "completed"
+    assert "simulation completed" in reason
+    assert "earlier missing Python dependency `torch` was recovered" in reason
+    assert "a dependency install command later succeeded" in reason
+    assert "inspect recovered command failures" in job_run_action(run)
+
+
+def test_failure_analysis_reports_dependency_install_evidence_for_missing_module():
+    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import failure_analysis_section
+
+    event = {
+        "item": {
+            "aggregated_output": "Traceback (most recent call last):\nModuleNotFoundError: No module named 'torch'",
+            "command": 'python -c "import torch"',
+            "exit_code": 1,
+            "id": "probe",
+            "status": "failed",
+            "type": "command_execution",
+        }
+    }
+    run = {
+        "available": True,
+        "label": "No skills baseline",
+        "container_exit": {"exit_code": 1},
+        "activity": {"commands": ['python -c "import torch"']},
+        "agent_events_text": json.dumps(event),
+    }
+
+    section = failure_analysis_section({NO_SKILLS_MODE: run}, [NO_SKILLS_MODE])
+
+    assert "Root cause evidence: ModuleNotFoundError: No module named 'torch'" in section
+    assert (
+        "Dependency install evidence: no dependency install command was captured before the failed job run" in section
+    )
+
+
+def test_job_run_status_reason_reports_failed_dependency_install():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_run_status_reason
+
+    install_event = {
+        "item": {
+            "aggregated_output": "ERROR: Could not find a version that satisfies the requirement torch",
+            "command": "python -m pip install -r requirements.txt",
+            "exit_code": 1,
+            "id": "install",
+            "status": "failed",
+            "type": "command_execution",
+        }
+    }
+    job_event = {
+        "item": {
+            "aggregated_output": "Traceback (most recent call last):\nModuleNotFoundError: No module named 'torch'",
+            "command": "python job.py",
+            "exit_code": 1,
+            "id": "job",
+            "status": "failed",
+            "type": "command_execution",
+        }
+    }
+    run = {
+        "available": True,
+        "activity": {"commands": ["python -m pip install -r requirements.txt", "python job.py"]},
+        "agent_events_text": "\n".join(json.dumps(event) for event in (install_event, job_event)),
+    }
+
+    reason = job_run_status_reason(run)
+
+    assert "missing Python dependency `torch`" in reason
+    assert "dependency install attempted and failed" in reason
+    assert "requirements.txt" in reason
+
+
+def test_job_run_status_reason_reports_successful_install_with_wrong_runtime():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
+        job_run_action,
+        job_run_status_reason,
+    )
+
+    install_event = {
+        "item": {
+            "aggregated_output": "Successfully installed torch",
+            "command": "python -m pip install -r requirements.txt",
+            "exit_code": 0,
+            "id": "install",
+            "status": "completed",
+            "type": "command_execution",
+        }
+    }
+    job_event = {
+        "item": {
+            "aggregated_output": "Traceback (most recent call last):\nModuleNotFoundError: No module named 'torch'",
+            "command": "python job.py",
+            "exit_code": 1,
+            "id": "job",
+            "status": "failed",
+            "type": "command_execution",
+        }
+    }
+    run = {
+        "available": True,
+        "activity": {"commands": ["python -m pip install -r requirements.txt", "python job.py"]},
+        "agent_events_text": "\n".join(json.dumps(event) for event in (install_event, job_event)),
+    }
+
+    reason = job_run_status_reason(run)
+
+    assert "dependency install command succeeded" in reason
+    assert "simulator uses the environment where requirements were installed" in job_run_action(run)
 
 
 def test_readme_metric_alignment_uses_server_best_validation_metric_scalar():

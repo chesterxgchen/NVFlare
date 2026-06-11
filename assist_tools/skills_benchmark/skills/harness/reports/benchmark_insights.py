@@ -445,6 +445,15 @@ def is_material_failed_command(event: dict[str, Any]) -> bool:
     )
 
 
+def missing_python_module_name(output: str) -> str:
+    text = strip_ansi(output)
+    match = re.search(r"ModuleNotFoundError:\s+No module named ['\"]([^'\"]+)['\"]", text)
+    if match:
+        return match.group(1)
+    match = re.search(r"No module named ['\"]([^'\"]+)['\"]", text)
+    return match.group(1) if match else ""
+
+
 def command_error_summary(output: str) -> str:
     text = strip_ansi(output)
     patterns = (
@@ -639,24 +648,66 @@ def job_run_status_reason(run: dict[str, Any]) -> str:
         events = agent_command_events(run)
         for event in reversed(events):
             if command_failed(event) and is_simulation_or_job_command(str(event.get("command") or "")):
-                summary = command_error_summary(str(event.get("output") or ""))
+                output = str(event.get("output") or "")
+                missing_module = missing_python_module_name(output)
+                if missing_module:
+                    return (
+                        f"simulation command ran but missing Python dependency `{missing_module}` — "
+                        f"{dependency_install_evidence(run)}"
+                    )
+                summary = command_error_summary(output)
                 return f"simulation command ran but exited with error — {truncate(summary, 200)}"
         for event in reversed(events):
             if is_simulation_or_job_command(str(event.get("command") or "")):
-                summary = command_error_summary(str(event.get("output") or ""))
+                output = str(event.get("output") or "")
+                missing_module = missing_python_module_name(output)
+                if missing_module:
+                    return (
+                        f"simulation command ran but missing Python dependency `{missing_module}` — "
+                        f"{dependency_install_evidence(run)}"
+                    )
+                summary = command_error_summary(output)
                 return f"simulation command ran but success was not confirmed — {truncate(summary, 200)}"
         return "simulation command ran but no command output was captured"
 
     if status == "completed":
         event = last_successful_job_event(run)
         output = str(event.get("output") or "") if event else ""
+        recovered_issue = completed_job_recovered_issue_summary(run)
         if "Finished" in output:
-            return "simulation completed — FL workflow reached Finished state"
+            reason = "simulation completed — FL workflow reached Finished state"
+            return f"{reason}; {recovered_issue}" if recovered_issue else reason
         if sim_count > 0 or py_count > 0:
-            return f"simulation completed successfully (hint count: simulation={sim_count}, python_job_py={py_count})"
-        return "simulation completed successfully"
+            reason = f"simulation completed successfully (hint count: simulation={sim_count}, python_job_py={py_count})"
+            return f"{reason}; {recovered_issue}" if recovered_issue else reason
+        reason = "simulation completed successfully"
+        return f"{reason}; {recovered_issue}" if recovered_issue else reason
 
     return "status unknown — no simulation hint counts or events found"
+
+
+def completed_job_recovered_issue_summary(run: dict[str, Any]) -> str:
+    parts = []
+    blocked_count = bash_permission_denial_count(run)
+    if blocked_count:
+        parts.append(f"Bash/tool permission was blocked {blocked_count} time(s) before a later job command completed")
+    for event in agent_command_events(run):
+        if not command_failed(event) or not is_material_failed_command(event):
+            continue
+        events = agent_command_events(run)
+        if not (recovered_by_later_success(event, events) or recovered_by_later_successful_job(event, events)):
+            continue
+        output = str(event.get("output") or "")
+        missing_module = missing_python_module_name(output)
+        if missing_module:
+            parts.append(
+                f"earlier missing Python dependency `{missing_module}` was recovered "
+                f"({dependency_install_evidence_brief(run)})"
+            )
+        else:
+            parts.append(f"earlier command failure was recovered ({truncate(command_error_summary(output), 160)})")
+        break
+    return "; ".join(parts)
 
 
 def job_run_action(run: dict[str, Any]) -> str:
@@ -666,8 +717,15 @@ def job_run_action(run: dict[str, Any]) -> str:
             return "Fix agent Bash/tool permissions and rerun; no FL metrics can be trusted until the job executes."
         return "Require the agent to run the generated job or simulator before reporting benchmark metrics."
     if status == "started_failed":
+        reason = job_run_status_reason(run)
+        if "missing Python dependency" in reason:
+            if "no dependency install command was captured" in reason:
+                return "Install the job requirements in the same Python environment before running the simulator, then rerun the benchmark."
+            return "Inspect the dependency install command output and ensure the simulator uses the environment where requirements were installed."
         return "Inspect the failed job command output, fix the generated job, and rerun the benchmark."
     if status == "completed":
+        if completed_job_recovered_issue_summary(run):
+            return "Use the final successful job logs for metrics, but inspect recovered command failures before drawing conclusions."
         return "Use job logs and reported metrics for quality comparison."
     return "Inspect run artifacts; job execution evidence is unavailable."
 
@@ -692,9 +750,12 @@ def command_failure_diagnostics(run: dict[str, Any], limit: int = 3) -> list[str
             recovery = "recovered by a later successful simulator/job command"
         else:
             recovery = "not recovered in this run"
+        dependency_evidence = ""
+        if missing_python_module_name(output):
+            dependency_evidence = f" Dependency install evidence: {dependency_install_evidence(run)}."
         diagnostics.append(
             f"Command `{truncate(command, 160)}` failed with exit {event.get('exit_code')}; "
-            f"{recovery}. Root cause evidence: {command_error_summary(output)}"
+            f"{recovery}. Root cause evidence: {command_error_summary(output)}.{dependency_evidence}"
         )
         if len(diagnostics) >= limit:
             break
@@ -1483,6 +1544,52 @@ def dependency_install_attempted(run: dict[str, Any]) -> bool:
         if "pip install" in lowered or "uv pip install" in lowered or "python -m pip" in lowered:
             return True
     return False
+
+
+def is_dependency_install_command(command: str) -> bool:
+    lowered = str(command).lower()
+    return "pip install" in lowered or "uv pip install" in lowered or "python -m pip" in lowered
+
+
+def dependency_install_events(run: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        event for event in agent_command_events(run) if is_dependency_install_command(str(event.get("command") or ""))
+    ]
+
+
+def dependency_install_evidence_brief(run: dict[str, Any]) -> str:
+    events = dependency_install_events(run)
+    if events:
+        if any(command_failed(event) for event in events):
+            return "dependency install was attempted and failed"
+        if any(command_succeeded(event) for event in events):
+            return "a dependency install command later succeeded"
+        return "dependency install command was captured without success/failure status"
+    if any(is_dependency_install_command(command) for command in commands_for_run(run)):
+        return "dependency install command was listed but no command result was captured"
+    return "no dependency install command was captured"
+
+
+def dependency_install_evidence(run: dict[str, Any]) -> str:
+    events = dependency_install_events(run)
+    if events:
+        failed = [event for event in events if command_failed(event)]
+        if failed:
+            event = failed[-1]
+            return (
+                f"dependency install attempted and failed (`{truncate(str(event.get('command') or ''), 100)}` "
+                f"exit {event.get('exit_code')}: {truncate(command_error_summary(str(event.get('output') or '')), 160)})"
+            )
+        succeeded = [event for event in events if command_succeeded(event)]
+        if succeeded:
+            event = succeeded[-1]
+            return f"dependency install command succeeded (`{truncate(str(event.get('command') or ''), 100)}`)"
+        event = events[-1]
+        return f"dependency install command captured without success/failure status (`{truncate(str(event.get('command') or ''), 100)}`)"
+    commands = [command for command in commands_for_run(run) if is_dependency_install_command(command)]
+    if commands:
+        return f"dependency install command listed in activity but no command result was captured (`{truncate(commands[-1], 100)}`)"
+    return "no dependency install command was captured before the failed job run"
 
 
 def missing_result_metrics_section(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
