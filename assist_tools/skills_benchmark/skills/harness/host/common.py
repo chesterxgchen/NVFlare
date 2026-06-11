@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -61,6 +62,7 @@ __all__ = [
     "optional_int_env",
     "parse_host_cli_options",
     "prepare_result_mount",
+    "stage_read_only_mount_file",
     "print_usage",
     "stream_command",
     "timestamp_slug",
@@ -451,17 +453,33 @@ def prepare_result_mount(result_dir: Path, *, logs: Iterable[Path] = (), prefix:
             )
 
 
+def stage_read_only_mount_file(source: Path, staging_dir: Path, index: int) -> Path:
+    target_dir = staging_dir / f"mount_{index:02d}"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / source.name
+    shutil.copy2(source, target, follow_symlinks=False)
+    target_dir.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+    target.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+    return target
+
+
 def add_agent_auth_mounts(
     args: list[str],
     *,
     mounts: list[DockerMount],
     logs: Iterable[Path] = (),
     prefix: str | None = None,
+    staging_dir: Path | None = None,
 ) -> None:
+    staged_index = 0
     for mount in mounts:
         if mount.host_path.is_file() and not mount.host_path.is_symlink():
+            host_path = mount.host_path
+            if staging_dir is not None and mount.read_only:
+                host_path = stage_read_only_mount_file(mount.host_path, staging_dir, staged_index)
+                staged_index += 1
             suffix = ":ro" if mount.read_only else ""
-            args.extend(["-v", f"{mount.host_path}:{mount.container_path}{suffix}"])
+            args.extend(["-v", f"{host_path}:{mount.container_path}{suffix}"])
             label = mount.description or "agent auth/config"
             emit(f"Mounting {label}: {mount.host_path} -> {mount.container_path}", logs=logs, prefix=prefix)
         elif mount.host_path.is_symlink():
@@ -583,7 +601,12 @@ def optional_int_env(name: str) -> int | None:
     return parsed
 
 
-def docker_args_for_case(config: CaseConfig, logs: Iterable[Path] = (), prefix: str | None = None) -> list[str]:
+def docker_args_for_case(
+    config: CaseConfig,
+    logs: Iterable[Path] = (),
+    prefix: str | None = None,
+    auth_staging_dir: Path | None = None,
+) -> list[str]:
     runtime_env = config.adapter.runtime_env(config)
     args = [
         "docker",
@@ -612,7 +635,13 @@ def docker_args_for_case(config: CaseConfig, logs: Iterable[Path] = (), prefix: 
         args.extend(docker_env("AGENT_TIMEOUT_SECONDS", config.agent_timeout_seconds))
     add_agent_passthrough_env(args, config.adapter)
     if config.mount_host_agent_auth:
-        add_agent_auth_mounts(args, mounts=config.adapter.auth_mounts(config), logs=logs, prefix=prefix)
+        add_agent_auth_mounts(
+            args,
+            mounts=config.adapter.auth_mounts(config),
+            logs=logs,
+            prefix=prefix,
+            staging_dir=auth_staging_dir,
+        )
     args.extend(
         [
             config.run_image,

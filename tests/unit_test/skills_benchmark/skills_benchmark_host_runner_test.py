@@ -205,6 +205,30 @@ def test_add_agent_auth_mounts_rejects_symlinked_optional_file(tmp_path):
     assert args == []
 
 
+def test_add_agent_auth_mounts_stages_read_only_file_for_container_user(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.agents.base import DockerMount
+    from assist_tools.skills_benchmark.skills.harness.host.common import add_agent_auth_mounts
+
+    auth = tmp_path / "auth.json"
+    auth.write_text('{"token": "secret"}\n', encoding="utf-8")
+    auth.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    staging_dir = tmp_path / "staged"
+    args = []
+
+    add_agent_auth_mounts(
+        args,
+        mounts=[DockerMount(host_path=auth, container_path="/workspace/.codex/auth.json", read_only=True)],
+        staging_dir=staging_dir,
+    )
+
+    volume = args[args.index("-v") + 1]
+    staged_source = Path(volume.split(":", 1)[0])
+    assert staged_source != auth
+    assert staged_source.read_text(encoding="utf-8") == auth.read_text(encoding="utf-8")
+    assert stat.S_IMODE(staged_source.stat().st_mode) & stat.S_IROTH
+    assert volume.endswith(":/workspace/.codex/auth.json:ro")
+
+
 def test_add_agent_auth_mounts_rejects_symlinked_required_file(tmp_path):
     if not hasattr(os, "symlink"):
         return
