@@ -90,6 +90,8 @@ STALE_RESULT_DIRS = (
     "with_skills_eval_on",
 )
 BENCHMARK_METRICS_TITLE = "Agent Skills Benchmark Metrics"
+FAILURE_STDERR_LINE_LIMIT = 4
+FAILURE_STDERR_CHAR_LIMIT = 1200
 
 
 @dataclass(frozen=True)
@@ -138,9 +140,108 @@ def run_one_case(config: CaseConfig, *, logs: Iterable[Path] = (), prefix: str |
             timeout_seconds=config.container_timeout_seconds,
         )
     write_json(config.result_dir / "container_exit_code.json", {"exit_code": status})
+    if status != 0:
+        emit_case_failure_summary(config, status, logs=logs, prefix=prefix)
     if enforce_result_size_budget(config, logs=logs, prefix=prefix):
         return 1
     return combined_exit_status({config.mode: status})
+
+
+def truncate_text(text: object, limit: int = 240) -> str:
+    rendered = str(text or "").strip().replace("\n", " ")
+    if len(rendered) <= limit:
+        return rendered
+    return rendered[: limit - 3].rstrip() + "..."
+
+
+def bounded_stderr_excerpt(text: str) -> str:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    excerpt = "\n".join(lines[:FAILURE_STDERR_LINE_LIMIT])
+    if len(excerpt) > FAILURE_STDERR_CHAR_LIMIT:
+        excerpt = excerpt[: FAILURE_STDERR_CHAR_LIMIT - 3].rstrip() + "..."
+    return excerpt
+
+
+def read_agent_stderr_excerpt(result_dir: Path, exit_summary: dict[str, object]) -> str:
+    excerpt = str(exit_summary.get("stderr_excerpt") or "")
+    if not excerpt:
+        stderr_path = result_dir / "agent_stderr.txt"
+        try:
+            excerpt = stderr_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            excerpt = ""
+    return bounded_stderr_excerpt(excerpt)
+
+
+def emit_case_failure_summary(
+    config: CaseConfig,
+    status: int,
+    *,
+    logs: Iterable[Path] = (),
+    prefix: str | None = None,
+) -> None:
+    result_dir = config.result_dir
+    run_summary = load_json(result_dir / "run_summary.json", {}) or {}
+    exit_summary = load_json(result_dir / "agent_exit_summary.json", {}) or {}
+    early_failure = load_json(result_dir / "early_failure.json", {}) or {}
+    host_error = load_json(result_dir / "host_case_error.json", {}) or {}
+    if not isinstance(run_summary, dict):
+        run_summary = {}
+    if not isinstance(exit_summary, dict):
+        exit_summary = {}
+    if not isinstance(early_failure, dict):
+        early_failure = {}
+    if not isinstance(host_error, dict):
+        host_error = {}
+
+    emit(
+        f"Run failed: mode={config.mode}; final_status={status}; result_dir={result_dir}",
+        logs=logs,
+        prefix=prefix,
+        stderr=True,
+    )
+    agent_exit = run_summary.get("agent_process_exit_code")
+    final_exit = run_summary.get("final_container_exit_code")
+    if agent_exit is not None or final_exit is not None:
+        emit(
+            f"Failure exit codes: agent_process_exit={agent_exit}; final_container_exit={final_exit}",
+            logs=logs,
+            prefix=prefix,
+            stderr=True,
+        )
+    failure_category = (
+        run_summary.get("failure_root_cause")
+        or run_summary.get("failure_category")
+        or exit_summary.get("failure_category")
+    )
+    if failure_category:
+        emit(
+            f"Failure category: {truncate_text(failure_category)}",
+            logs=logs,
+            prefix=prefix,
+            stderr=True,
+        )
+    harness_message = early_failure.get("message") or host_error.get("message")
+    if harness_message:
+        phase = early_failure.get("phase") or host_error.get("error_type") or "host"
+        emit(
+            f"Harness failure detail: {phase}: {truncate_text(harness_message)}",
+            logs=logs,
+            prefix=prefix,
+            stderr=True,
+        )
+    stderr_excerpt = read_agent_stderr_excerpt(result_dir, exit_summary)
+    if stderr_excerpt:
+        emit("Agent stderr excerpt:", logs=logs, prefix=prefix, stderr=True)
+        for line in stderr_excerpt.splitlines():
+            emit(f"  {line}", logs=logs, prefix=prefix, stderr=True)
+    emit(
+        f"Failure artifacts: {result_dir / 'agent_stderr.txt'}, {result_dir / 'agent_exit_summary.json'}, "
+        f"{result_dir / 'run_summary.json'}",
+        logs=logs,
+        prefix=prefix,
+        stderr=True,
+    )
 
 
 def directory_size_bytes(path: Path) -> int:
