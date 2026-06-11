@@ -3,4 +3,3 @@
 2026-06-02 07:39:46 - DownloadService - INFO - stream progress active ref=model-abc bytes_done=3221225472 total_bytes=5368709120
 2026-06-02 07:41:02 - DownloadService - INFO - stream progress active ref=model-abc bytes_done=4831838208 total_bytes=5368709120
 2026-06-02 07:43:11 - client_api_launcher - INFO - model transfer completed after timeout warning
-
