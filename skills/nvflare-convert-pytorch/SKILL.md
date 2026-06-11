@@ -42,12 +42,11 @@ debugging that does not ask for FLARE conversion.
    an `FLModel`, load `params` into the PyTorch model, train or evaluate, and
    send an `FLModel` with updated `params`, metrics, and useful metadata.
 7. Add or update a `job.py` that uses the selected PyTorch recipe or job API
-   path for local simulation and export. Follow the shared job lifecycle
-   guidance for generated job layout, validation, and export system arguments.
-8. Validate locally with `python job.py` and export with
-   `python job.py --export --export-dir /tmp/nvflare/job_config/<job_name>`
-   using NVFLARE job system arguments. Keep simulation workspaces and generated
-   runtime outputs under `/tmp/nvflare/` unless the user provides another path.
+   path. Follow the shared lifecycle for generated layout, validation, export,
+   runtime locations, and evidence reporting.
+8. Validate and export through the shared lifecycle. Use
+   `references/job-validation.md` for PyTorch-specific checks before calling the
+   conversion complete.
 
 ## Requirements
 
@@ -60,16 +59,11 @@ debugging that does not ask for FLARE conversion.
   them.
 - Must translate natural user requests into concrete recipe, site-count,
   dataset, split, training, validation, and export settings.
-- Must prefer synthetic or fixture data for validation when the original dataset is
-  unavailable.
-- Must report recipe choice, validation commands, export status, and remaining
-  blockers before calling the conversion complete.
-- Must report metric values or explain why metrics are unavailable, including
-  the exact simulation workspace, server-side metrics artifact, result file,
-  log, or global-model path used as evidence. In simulation, standard
-  aggregation recipes write metric evidence under the server workspace's
-  `simulate_job/metrics/` directory, including `metrics_summary.json` and
-  `round_metrics.jsonl` when present.
+- Must prefer synthetic or fixture data for validation when the original dataset
+  is unavailable.
+- Must follow the shared job lifecycle guidance for validation evidence,
+  including final/best metrics, round/per-site metrics, and artifact paths when
+  those artifacts are present.
 - Must not submit to POC or production without explicit user approval.
 - Must not generate Python solely to wrap `nvflare` CLI commands or scrape
   human CLI output.
@@ -81,9 +75,9 @@ debugging that does not ask for FLARE conversion.
 - Run project inspection and recipe discovery before selecting a recipe.
 - Explain the selected recipe when the user's algorithm intent is ambiguous.
 - Convert PyTorch Client API model exchange and generate or update `job.py`.
-- Keep validation, export, reruns, recipe comparisons, data-prep experiments,
-  synthetic data decisions, POC handoff, and evaluation records within the
-  instructions in this skill and its `references/` files.
+- Keep PyTorch conversion choices, validation blockers, recipe comparisons, and
+  data-prep decisions within this skill, its references, and the shared
+  lifecycle guidance.
 - Report PyTorch-specific blockers such as non-`state_dict` model state,
   incompatible checkpoint loading, unsupported metric serialization, or data
   loaders that cannot be parameterized per site.
@@ -94,14 +88,14 @@ debugging that does not ask for FLARE conversion.
 - Ask before changing private data paths, replacing dataset access, or using
   non-fixture data for validation.
 - Ask before POC, production, or startup-kit based runtime submission.
-- After an approved POC or production run reaches a terminal state, use
-  `nvflare job download <job_id> -o <dir> --format json` to locate downloaded
-  model and metric artifacts. Read `data.artifacts.global_model`,
-  `data.artifacts.metrics_summary`, and `data.artifacts.round_metrics` when
-  present; report `data.missing_artifacts` when expected artifacts are absent.
+- After approved POC or production submission, follow the shared lifecycle for
+  result download and artifact reporting.
 
-Load `../_shared/nvflare-job-lifecycle.md` and
-`references/recipe-selection.md` before creating `job.py`,
-`references/pytorch-client-api-conversion.md` for conversion details, and
-`references/job-validation.md` for PyTorch-specific validation notes. Do not
-depend on NVFLARE repository examples being present in the user's environment.
+Load `../_shared/nvflare-job-lifecycle.md` for every conversion. Load the
+smallest PyTorch-specific reference needed for the current phase:
+`references/recipe-selection.md` before selecting or constructing a recipe,
+`references/pytorch-client-api-conversion.md` when converting training code to
+Client API model exchange, and `references/job-validation.md` before validation,
+export, or debugging PyTorch-specific validation failures. Do not load every
+reference preemptively, and do not depend on NVFLARE repository examples being
+present in the user's environment.
