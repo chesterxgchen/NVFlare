@@ -575,6 +575,10 @@ def test_claude_exit_classifier_detects_auth_and_model_failures(tmp_path):
     stderr.write_text("Authentication failed: please login to Claude Code.\n", encoding="utf-8")
 
     auth_summary = adapter.exit_summary(1, stderr)
+    stderr.write_text("", encoding="utf-8")
+    last_message = tmp_path / "agent_last_message.txt"
+    last_message.write_text("Not logged in - Please run /login\n", encoding="utf-8")
+    auth_from_last_message = adapter.exit_summary(1, stderr, evidence_paths=(last_message,))
     stderr.write_text("Model is not supported in this account.\n", encoding="utf-8")
     model_summary = adapter.exit_summary(1, stderr)
     stderr.write_text("Permission approval is required.\n", encoding="utf-8")
@@ -588,6 +592,8 @@ def test_claude_exit_classifier_detects_auth_and_model_failures(tmp_path):
 
     assert auth_summary["classifier"] == "stderr_patterns"
     assert auth_summary["failure_category"] == "agent_auth_failure"
+    assert auth_from_last_message["failure_category"] == "agent_auth_failure"
+    assert "Not logged in" in auth_from_last_message["classification_excerpt"]
     assert model_summary["failure_category"] == "agent_model_unsupported"
     assert permission_summary["failure_category"] == "agent_sandbox_or_approval_failure"
     assert sandbox_dependency_summary["failure_category"] == "agent_sandbox_or_approval_failure"

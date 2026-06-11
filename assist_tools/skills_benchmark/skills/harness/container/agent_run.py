@@ -902,7 +902,11 @@ def post_process(
         extra_runtime_artifact_sources=[("runtime_workspaces", NVFLARE_RUNTIME_WORKSPACES_ROOT)],
     )
     adapter = load_agent_adapter(config.agent)
-    exit_summary = adapter.exit_summary(agent_exit, config.agent_stderr_path)
+    exit_summary = adapter.exit_summary(
+        agent_exit,
+        config.agent_stderr_path,
+        evidence_paths=(config.agent_last_message_path, config.agent_events_path),
+    )
     write_json(config.agent_usage_path, adapter.parse_usage(config.agent_events_path))
     write_json(config.agent_activity_path, adapter.parse_activity(config.agent_events_path))
     write_json(config.result_dir / "agent_exit_summary.json", exit_summary)

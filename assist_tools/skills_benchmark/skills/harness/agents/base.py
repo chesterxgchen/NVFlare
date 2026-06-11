@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -211,7 +212,9 @@ class AgentAdapter(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def exit_summary(self, exit_code: int, stderr_path: Path) -> dict[str, Any]:
+    def exit_summary(
+        self, exit_code: int, stderr_path: Path, evidence_paths: Iterable[Path] = ()
+    ) -> dict[str, Any]:
         raise NotImplementedError
 
     def artifact_alias_prefixes(self) -> tuple[str, ...]:
