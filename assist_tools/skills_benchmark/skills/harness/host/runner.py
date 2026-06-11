@@ -20,6 +20,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -129,12 +130,13 @@ def run_one_case(config: CaseConfig, *, logs: Iterable[Path] = (), prefix: str |
     emit(f"Job folder: {config.job_input_dir} -> /workspace/input", logs=logs, prefix=prefix)
     emit(f"Prompt file: {config.prompt_path} -> {CONTAINER_PROMPT_PATH}", logs=logs, prefix=prefix)
     write_runtime_image(config)
-    status = stream_command(
-        docker_args_for_case(config, logs=logs, prefix=prefix),
-        logs=logs,
-        prefix=prefix,
-        timeout_seconds=config.container_timeout_seconds,
-    )
+    with tempfile.TemporaryDirectory(prefix="agent-benchmark-auth-") as auth_staging:
+        status = stream_command(
+            docker_args_for_case(config, logs=logs, prefix=prefix, auth_staging_dir=Path(auth_staging)),
+            logs=logs,
+            prefix=prefix,
+            timeout_seconds=config.container_timeout_seconds,
+        )
     write_json(config.result_dir / "container_exit_code.json", {"exit_code": status})
     if enforce_result_size_budget(config, logs=logs, prefix=prefix):
         return 1
