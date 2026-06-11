@@ -699,6 +699,15 @@ def job_run_status_reason(run: dict[str, Any]) -> str:
     bash_blocked_count = bash_permission_denial_count(run)
 
     if status == "not_started":
+        failure_category = agent_failure_category(run)
+        if exit_code(run) not in (None, 0) and failure_category and failure_category != "agent_unknown_failure":
+            evidence = failure_evidence(run)
+            if evidence:
+                return (
+                    "simulation not attempted — agent failed before starting job work "
+                    f"({failure_category}: {truncate(evidence, 180)})"
+                )
+            return f"simulation not attempted — agent failed before starting job work ({failure_category})"
         if bash_blocked_count > 0:
             return (
                 f"Bash blocked {bash_blocked_count} time(s) — simulation never ran "
@@ -792,6 +801,11 @@ def completed_job_recovered_issue_summary(run: dict[str, Any]) -> str:
 def job_run_action(run: dict[str, Any]) -> str:
     status = job_run_status(run)
     if status == "not_started":
+        failure_category = agent_failure_category(run)
+        if exit_code(run) not in (None, 0) and failure_category and failure_category != "agent_unknown_failure":
+            if failure_category == "agent_auth_failure":
+                return "Authenticate the selected agent in the mounted benchmark home, then rerun; the job never started."
+            return "Fix the agent startup failure, then rerun; the job never started."
         if bash_permission_denial_count(run):
             return "Fix agent Bash/tool permissions and rerun; no FL metrics can be trusted until the job executes."
         return "Require the agent to run the generated job or simulator before reporting benchmark metrics."
@@ -940,18 +954,44 @@ def failure_evidence(run: dict[str, Any]) -> str:
     model_error = unsupported_model_message(text)
     if model_error:
         return model_error
-    for line in text.splitlines():
-        lowered = line.lower()
-        if any(token in lowered for token in ("error", "failed", "pull access denied", "not supported")):
-            return line.strip()[:500]
+    for source_name in ("agent_last_message", "agent_stderr", "console_text", "agent_events_text"):
+        for line in str(run.get(source_name) or "").splitlines():
+            lowered = line.lower()
+            if any(
+                token in lowered
+                for token in (
+                    "error",
+                    "failed",
+                    "pull access denied",
+                    "not supported",
+                    "authentication_failed",
+                    "not logged in",
+                    "please run /login",
+                    "api key",
+                )
+            ):
+                return line.strip()[:500]
+    return ""
+
+
+def agent_failure_category(run: dict[str, Any]) -> str:
+    record = run.get("record") if isinstance(run.get("record"), dict) else {}
+    exit_summary = record.get("agent_exit_summary") if isinstance(record.get("agent_exit_summary"), dict) else {}
+    failure_category = record.get("failure_category") or exit_summary.get("failure_category")
+    if failure_category and failure_category != "agent_unknown_failure":
+        return str(failure_category)
+    text = combined_text(run).lower()
+    if any(token in text for token in ("authentication_failed", "not logged in", "please run /login", "api key")):
+        return "agent_auth_failure"
+    if failure_category:
+        return str(failure_category)
     return ""
 
 
 def failure_root_cause(run: dict[str, Any]) -> str:
     record = run.get("record") if isinstance(run.get("record"), dict) else {}
-    exit_summary = record.get("agent_exit_summary") if isinstance(record.get("agent_exit_summary"), dict) else {}
-    failure_category = record.get("failure_category") or exit_summary.get("failure_category")
-    if failure_category:
+    failure_category = agent_failure_category(run)
+    if failure_category and failure_category != "agent_unknown_failure":
         return f"Agent failure category: {failure_category}"
     text = combined_text(run)
     model_error = unsupported_model_message(text)
@@ -966,6 +1006,8 @@ def failure_root_cause(run: dict[str, Any]) -> str:
     evidence = failure_evidence(run)
     if evidence:
         return evidence
+    if failure_category:
+        return f"Agent failure category: {failure_category}"
     code = exit_code(run)
     if code not in (None, 0):
         return f"Agent container failed with exit code {code}."

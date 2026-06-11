@@ -347,6 +347,36 @@ def test_failure_root_cause_prefers_agent_exit_classifier():
     assert failure_root_cause(run) == "Agent failure category: agent_auth_failure"
 
 
+def test_failure_root_cause_infers_auth_from_agent_last_message():
+    from assist_tools.skills_benchmark.skills.harness.modes import WITH_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
+        failure_analysis_section,
+        failure_root_cause,
+        job_run_action,
+        job_run_status_reason,
+    )
+
+    run = {
+        "available": True,
+        "agent_events_text": '{"error":"authentication_failed","message":{"content":[{"text":"Not logged in"}]}}',
+        "agent_last_message": "Not logged in - Please run /login",
+        "container_exit": {"exit_code": 1},
+        "record": {"agent_exit_summary": {"failure_category": "agent_unknown_failure"}},
+        "run": {"final_container_exit_code": 1},
+    }
+
+    assert failure_root_cause(run) == "Agent failure category: agent_auth_failure"
+    assert "agent_auth_failure" in job_run_status_reason(run)
+    assert "Not logged in" in job_run_status_reason(run)
+    assert '{"error"' not in job_run_status_reason(run)
+    assert "Authenticate the selected agent" in job_run_action(run)
+
+    section = failure_analysis_section({WITH_SKILLS_MODE: run}, [WITH_SKILLS_MODE])
+    assert "Job run status: not_started" in section
+    assert "agent_auth_failure" in section
+    assert "Not logged in" in section
+
+
 def test_failure_analysis_identifies_agent_generated_requirements_file():
     from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import dependency_reference_notes
 

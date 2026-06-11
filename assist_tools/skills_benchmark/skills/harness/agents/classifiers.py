@@ -16,8 +16,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
+
+CLASSIFICATION_EVIDENCE_LIMIT = 4000
 
 
 def stderr_excerpt(stderr_path: Path) -> str:
@@ -29,15 +32,48 @@ def stderr_excerpt(stderr_path: Path) -> str:
     return stderr_text
 
 
-def generic_cli_exit(exit_code: int, stderr_path: Path, classifier_id: str = "generic_cli") -> dict[str, Any]:
+def evidence_excerpt(paths: Iterable[Path]) -> str:
+    evidence_parts = []
+    remaining = CLASSIFICATION_EVIDENCE_LIMIT
+    for path in paths:
+        if remaining <= 0:
+            break
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        text = text.strip()
+        if not text:
+            continue
+        if len(text) > remaining:
+            text = text[:remaining]
+        evidence_parts.append(text)
+        remaining -= len(text)
+    return "\n".join(evidence_parts)[:CLASSIFICATION_EVIDENCE_LIMIT]
+
+
+def generic_cli_exit(
+    exit_code: int,
+    stderr_path: Path,
+    classifier_id: str = "generic_cli",
+    evidence_paths: Iterable[Path] = (),
+) -> dict[str, Any]:
     stderr_text = stderr_excerpt(stderr_path)
-    return {
+    summary = {
         "classifier": classifier_id,
         "exit_code": exit_code,
         "passed": exit_code == 0,
         "failure_category": "agent_unknown_failure" if exit_code else None,
         "stderr_excerpt": stderr_text,
     }
+    extra_evidence = evidence_excerpt(evidence_paths)
+    if extra_evidence:
+        summary["classification_excerpt"] = stderr_text
+        if stderr_text:
+            summary["classification_excerpt"] += "\n"
+        summary["classification_excerpt"] += extra_evidence
+        summary["classification_excerpt"] = summary["classification_excerpt"][:CLASSIFICATION_EVIDENCE_LIMIT]
+    return summary
 
 
 EXIT_CLASSIFIERS = {"generic_cli", "stderr_patterns"}
@@ -88,36 +124,48 @@ def validate_exit_config(config: dict[str, Any]) -> None:
         validate_stderr_pattern_rules(config)
 
 
-def stderr_rule_matches(rule: dict[str, Any], exit_code: int, stderr_lower: str) -> bool:
+def stderr_rule_matches(rule: dict[str, Any], exit_code: int, evidence_lower: str) -> bool:
     if exit_code == 0:
         return False
     exit_codes = as_exit_codes(rule.get("exit_codes"), "exit.rules[].exit_codes")
     if exit_codes and exit_code not in exit_codes:
         return False
     all_patterns = as_string_list(rule.get("all"), "exit.rules[].all")
-    if all_patterns and not all(pattern in stderr_lower for pattern in all_patterns):
+    if all_patterns and not all(pattern in evidence_lower for pattern in all_patterns):
         return False
     any_patterns = as_string_list(rule.get("any"), "exit.rules[].any")
-    if any_patterns and not any(pattern in stderr_lower for pattern in any_patterns):
+    if any_patterns and not any(pattern in evidence_lower for pattern in any_patterns):
         return False
     return bool(exit_codes or all_patterns or any_patterns)
 
 
-def stderr_pattern_exit(exit_code: int, stderr_path: Path, config: dict[str, Any]) -> dict[str, Any]:
-    summary = generic_cli_exit(exit_code, stderr_path, classifier_id="stderr_patterns")
-    stderr_lower = str(summary.get("stderr_excerpt") or "").lower()
+def stderr_pattern_exit(
+    exit_code: int,
+    stderr_path: Path,
+    config: dict[str, Any],
+    evidence_paths: Iterable[Path] = (),
+) -> dict[str, Any]:
+    summary = generic_cli_exit(exit_code, stderr_path, classifier_id="stderr_patterns", evidence_paths=evidence_paths)
+    evidence_lower = str(
+        summary.get("classification_excerpt") or summary.get("stderr_excerpt") or ""
+    ).lower()
     for rule in config.get("rules") or []:
-        if stderr_rule_matches(rule, exit_code, stderr_lower):
+        if stderr_rule_matches(rule, exit_code, evidence_lower):
             summary["failure_category"] = str(rule["category"])
             break
     return summary
 
 
-def classify_exit(exit_code: int, stderr_path: Path, config: dict[str, Any]) -> dict[str, Any]:
+def classify_exit(
+    exit_code: int,
+    stderr_path: Path,
+    config: dict[str, Any],
+    evidence_paths: Iterable[Path] = (),
+) -> dict[str, Any]:
     validate_exit_config(config)
     classifier_id = str(config.get("classifier") or "")
     if classifier_id == "generic_cli":
-        return generic_cli_exit(exit_code, stderr_path)
+        return generic_cli_exit(exit_code, stderr_path, evidence_paths=evidence_paths)
     if classifier_id == "stderr_patterns":
-        return stderr_pattern_exit(exit_code, stderr_path, config)
+        return stderr_pattern_exit(exit_code, stderr_path, config, evidence_paths=evidence_paths)
     raise ValueError(f"Unknown agent exit classifier: {classifier_id}")

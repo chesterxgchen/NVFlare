@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import string
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -591,8 +592,10 @@ class ConfigurableAgentAdapter(AgentAdapter):
             "adapter_type": "ConfigurableAgentAdapter",
         }
 
-    def exit_summary(self, exit_code: int, stderr_path: Path) -> dict[str, Any]:
-        return classify_exit(exit_code, stderr_path, self._cfg.exit_config)
+    def exit_summary(
+        self, exit_code: int, stderr_path: Path, evidence_paths: Iterable[Path] = ()
+    ) -> dict[str, Any]:
+        return classify_exit(exit_code, stderr_path, self._cfg.exit_config, evidence_paths=evidence_paths)
 
     def artifact_alias_prefixes(self) -> tuple[str, ...]:
         return self._cfg.legacy_artifact_prefixes
