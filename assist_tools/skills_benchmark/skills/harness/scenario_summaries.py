@@ -244,7 +244,9 @@ def run_summary_for_entry(
             or record.get("skill")
             or record.get("skill_name"),
             "skill_name_source": summary.get("skill_name_source") or record.get("agent_record_source"),
-            "validation_metric": summary.get("validation_metric") or record.get("reported_validation_metric"),
+            "validation_metric": summary.get("validation_metric")
+            or record.get("validation_metric")
+            or record.get("reported_validation_metric"),
             "structure_quality_signal": summary.get("structure_quality_signal")
             or record.get("structure_quality_signal")
             or UNAVAILABLE_STRUCTURE_QUALITY_SIGNAL,

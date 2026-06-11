@@ -32,8 +32,14 @@ Python debugging without NVFLARE job context.
 3. For simulation mode, inspect local artifacts only. Use
    `nvflare agent inspect <path> --format json` when a project or job path is
    available, then read bounded local logs and generated job/config artifacts.
+   For completed simulations, check the server workspace's
+   `simulate_job/metrics/` directory for `metrics_summary.json` and
+   `round_metrics.jsonl` before falling back to logs for metric evidence.
 4. For POC/production mode, collect bounded job and system evidence through the
-   FLARE CLI, using `--tail`, `--since`, or `--max-bytes` for logs.
+   FLARE CLI, using `--tail`, `--since`, or `--max-bytes` for logs. For
+   terminal jobs, use `nvflare job download <job_id> -o <dir> --format json`
+   and read `data.artifacts.global_model`, `data.artifacts.metrics_summary`,
+   and `data.artifacts.round_metrics` when present.
 5. Match evidence against the packaged failure-pattern catalog before
    interpreting raw logs.
 6. Report observed status, evidence quality, matched pattern, likely cause,
@@ -44,6 +50,9 @@ Python debugging without NVFLARE job context.
 - Must keep diagnosis read-only.
 - Must distinguish simulation from POC/production before choosing evidence
   commands.
+- Must use simulation server metrics artifacts when present and production
+  `nvflare job download` artifacts when available, instead of inventing metric
+  or model paths.
 - Must keep log evidence bounded and report truncation or missing site logs.
 - Must avoid confident root-cause claims when required site evidence is missing.
 - Must not read private key contents, mutate jobs/configs/runtime state, or run

@@ -14,6 +14,7 @@
 
 import json
 import os
+import stat
 import subprocess
 from pathlib import Path
 
@@ -165,6 +166,23 @@ def test_host_docker_args_use_migrated_container_entrypoint(tmp_path):
     assert f"{prompt_path}:{CONTAINER_PROMPT_PATH}:ro" in args
     assert f"PROMPT_SOURCE={CONTAINER_PROMPT_PATH}" in args
     assert "RECORDS_DIR=/workspace/results/records" in args
+
+
+def test_prepare_result_mount_allows_non_root_container_writes(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.host.common import prepare_result_mount
+
+    result_dir = tmp_path / "results"
+
+    prepare_result_mount(result_dir)
+
+    assert result_dir.is_dir()
+    assert (result_dir / "records").is_dir()
+    result_mode = result_dir.stat().st_mode
+    records_mode = (result_dir / "records").stat().st_mode
+    assert result_mode & stat.S_IWOTH
+    assert result_mode & stat.S_IXOTH
+    assert records_mode & stat.S_IWOTH
+    assert records_mode & stat.S_IXOTH
 
 
 def test_add_agent_auth_mounts_rejects_symlinked_optional_file(tmp_path):

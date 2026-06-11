@@ -52,6 +52,7 @@ from .skills import copy_optional_metadata_files as _copy_optional_metadata_file
 
 DEFAULT_CONTAINER_VENV_DIR = "/workspace/venv"
 RUNTIME_ARTIFACT_ROOT = Path("/tmp/agent_benchmark")
+NVFLARE_RUNTIME_WORKSPACES_ROOT = Path("/tmp/nvflare/workspaces")
 AGENT_TIMEOUT_EXIT_CODE = 124
 AGENT_TERMINATE_GRACE_SECONDS = 10
 MAX_STDOUT_TAIL_LINES = 1000
@@ -898,6 +899,7 @@ def post_process(
         workspace_delta_manifest,
         RUNTIME_ARTIFACT_ROOT,
         delta_scope="agent_workspace",
+        extra_runtime_artifact_sources=[("runtime_workspaces", NVFLARE_RUNTIME_WORKSPACES_ROOT)],
     )
     adapter = load_agent_adapter(config.agent)
     exit_summary = adapter.exit_summary(agent_exit, config.agent_stderr_path)

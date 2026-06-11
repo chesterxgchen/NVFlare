@@ -52,6 +52,15 @@ runtime locations under `/tmp/nvflare/` unless the user provides another path:
   file exists, dependency installation fails, the requirement needs unavailable
   system/GPU resources, or user approval/network access is required and not
   available.
+- For simulation metrics, inspect the server-side simulation workspace after a
+  successful run. Aggregation recipes that emit standard metrics artifacts write
+  them under
+  `/tmp/nvflare/workspaces/<job_name>/server/simulate_job/metrics/` by default.
+  Use `metrics_summary.json` for final/best aggregate metrics and
+  `round_metrics.jsonl` for per-round and per-site metric evidence when those
+  files exist. If they are absent, report that metrics artifacts were not
+  produced and fall back to bounded stdout/stderr or server logs as secondary
+  evidence.
 - Report command, status, result directory, and dependency or data blockers.
 
 ## Preflight Before Full Simulation
@@ -100,7 +109,8 @@ Before calling a generated job correct, report:
   export is in scope;
 - metric values or a clear explanation that metrics were unavailable;
 - exact result paths, including simulation workspace, generated result files,
-  logs, and global-model artifact paths used as evidence;
+  server-side metrics artifacts, logs, and global-model artifact paths used as
+  evidence;
 - unresolved blockers such as unavailable data, missing dependencies, or
   required user approval.
 
@@ -118,8 +128,14 @@ then use the supplied POC workspace or start POC as requested, submit the job,
 and wait or monitor if requested.
 
 Report the POC workspace, submitted job folder, job ID, final status or current
-status, command evidence, and log/result paths. If the POC run fails, record the
-failure as evaluation evidence.
+status, command evidence, and log/result paths. For POC or production runs in a
+terminal state, use `nvflare job download <job_id> -o <dir> --format json` to
+download consumable result artifacts. Read `data.artifacts.global_model`,
+`data.artifacts.metrics_summary`, and `data.artifacts.round_metrics` from the
+JSON response when present instead of constructing server paths manually.
+`round_metrics` is optional, and missing artifact categories should be reported
+from `data.missing_artifacts` without treating a successful download as failed.
+If the POC run fails, record the failure as evaluation evidence.
 
 ## Approval Boundary
 
