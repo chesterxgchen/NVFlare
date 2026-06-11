@@ -111,6 +111,13 @@ def truncate(value: Any, limit: int = 180) -> str:
     return text[: max(0, limit - 3)].rstrip() + "..."
 
 
+def first_non_empty(*values: Any) -> Any:
+    for value in values:
+        if value is not None and value != "":
+            return value
+    return None
+
+
 def mode_dir_for_benchmark(root: Path, mode: str) -> Path:
     legacy = root / mode
     if legacy.exists():
@@ -197,8 +204,16 @@ def filter_mode_console(console_text: str, mode: str) -> str:
 def collect_benchmark_runs(root: Path) -> dict[str, dict[str, Any]]:
     console_text = read_text(root / "console_output.log")
     runs: dict[str, dict[str, Any]] = {}
+    run_plan = load_json(root / "run_plan.json", {}) or {}
+    entries = (
+        run_plan.get("entries") if isinstance(run_plan, dict) and isinstance(run_plan.get("entries"), list) else []
+    )
     for spec in BENCHMARK_RUNS:
         mode = spec.mode
+        run_plan_entry = next(
+            (entry for entry in entries if isinstance(entry, dict) and str(entry.get("mode")) == mode),
+            {},
+        )
         mode_dir = mode_dir_for_benchmark(root, mode)
         mode_console_text = read_text(root / f"{mode}.console.log") or filter_mode_console(console_text, mode)
         summary = load_json(mode_dir / "run_summary.json", {}) if mode_dir.exists() else {}
@@ -211,6 +226,12 @@ def collect_benchmark_runs(root: Path) -> dict[str, dict[str, Any]]:
             record = {}
         if not isinstance(workspace_delta, dict):
             workspace_delta = {}
+        agent = first_non_empty(summary.get("agent"), record.get("agent"), run_plan_entry.get("agent"))
+        agent_model = first_non_empty(
+            summary.get("agent_model"),
+            record.get("agent_model"),
+            run_plan_entry.get("agent_model"),
+        )
         record_metric = validation_metric_from_record(record)
         expected_metric = (
             record.get("validation_metric_policy", {}).get("expected_primary_metric")
@@ -227,6 +248,9 @@ def collect_benchmark_runs(root: Path) -> dict[str, dict[str, Any]]:
             "mode": mode,
             "label": spec.label,
             "skills": "with skills" if spec.skills_enabled else "without skills",
+            "agent": agent,
+            "agent_model": agent_model,
+            "model_source": first_non_empty(summary.get("model_source"), record.get("model_source"), run_plan_entry.get("model_source")),
             "run": summary,
             "record": record,
             "container_exit": load_json(mode_dir / "container_exit_code.json", {}) if mode_dir.exists() else {},
@@ -245,6 +269,29 @@ def collect_benchmark_runs(root: Path) -> dict[str, dict[str, Any]]:
             "validation_metric": artifact_metric or record_metric,
         }
     return runs
+
+
+def run_identity_table(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
+    lines = [
+        "| Run | Agent | Model | Model source | Mode |",
+        "|---|---|---|---|---|",
+    ]
+    for mode in modes:
+        run = runs[mode]
+        lines.append(
+            f"| {markdown_cell(run.get('label') or mode)} | {markdown_cell(run.get('agent'))} | "
+            f"{markdown_cell(run.get('agent_model'))} | {markdown_cell(run.get('model_source'))} | "
+            f"{markdown_cell(mode)} |"
+        )
+    return "\n".join(lines)
+
+
+def run_identity_summary(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
+    return "; ".join(
+        f"{runs[mode].get('label') or mode}: agent={runs[mode].get('agent') or 'NA'}, "
+        f"model={runs[mode].get('agent_model') or 'NA'}"
+        for mode in modes
+    )
 
 
 def exit_code(run: dict[str, Any]) -> int | None:
@@ -2350,6 +2397,7 @@ def benchmark_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
         "| Signal | Value |",
         "|---|---|",
         f"| Status | {markdown_cell(status_summary(runs, modes))} |",
+        f"| Agent/model | {markdown_cell(run_identity_summary(runs, modes))} |",
         f"| Job execution | {markdown_cell(job_execution_summary(runs, modes))} |",
         f"| FL result quality gate | {markdown_cell(quality_gate_summary)} |",
         f"| Missing/partial result metrics | {markdown_cell(missing_metric_summary or 'none')} |",
@@ -2359,6 +2407,10 @@ def benchmark_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
         "## Status",
         "",
         status_table(runs, modes),
+        "",
+        "## Run Identity",
+        "",
+        run_identity_table(runs, modes),
         "",
         job_run_status_section(runs, modes),
         "",

@@ -579,11 +579,18 @@ def test_claude_exit_classifier_detects_auth_and_model_failures(tmp_path):
     model_summary = adapter.exit_summary(1, stderr)
     stderr.write_text("Permission approval is required.\n", encoding="utf-8")
     permission_summary = adapter.exit_summary(1, stderr)
+    stderr.write_text(
+        "Sandbox disabled: sandbox is enabled but dependencies are missing: "
+        "bubblewrap (bwrap) not installed, socat not installed.\n",
+        encoding="utf-8",
+    )
+    sandbox_dependency_summary = adapter.exit_summary(1, stderr)
 
     assert auth_summary["classifier"] == "stderr_patterns"
     assert auth_summary["failure_category"] == "agent_auth_failure"
     assert model_summary["failure_category"] == "agent_model_unsupported"
     assert permission_summary["failure_category"] == "agent_sandbox_or_approval_failure"
+    assert sandbox_dependency_summary["failure_category"] == "agent_sandbox_or_approval_failure"
 
 
 def test_codex_exit_classifier_prioritizes_missing_cli_over_stderr_text(tmp_path):
@@ -805,6 +812,8 @@ def test_shared_dockerfile_uses_profile_agent_install_commands():
 
     assert "AGENT_INSTALL_COMMAND" in dockerfile
     assert "AGENT_VERSION_COMMAND" in dockerfile
+    assert "bubblewrap" in dockerfile
+    assert "socat" in dockerfile
     assert 'BENCHMARK_DOCKER_AGENT}" = "codex"' not in dockerfile
     assert "@openai/codex" not in dockerfile
     assert "@anthropic-ai/claude-code" not in dockerfile
