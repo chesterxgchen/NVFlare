@@ -53,6 +53,7 @@ from .common import (
     docker_env,
     emit,
     parse_host_cli_options,
+    prepare_result_mount,
     stream_command,
     timestamp_slug,
     write_runtime_image,
@@ -122,7 +123,7 @@ class RuntimeAuthOptions:
 
 
 def run_one_case(config: CaseConfig, *, logs: Iterable[Path] = (), prefix: str | None = None) -> int:
-    config.result_dir.mkdir(parents=True, exist_ok=True)
+    prepare_result_mount(config.result_dir, logs=logs, prefix=prefix)
     emit(f"Running mode={config.mode} with runtime image: {config.run_image}", logs=logs, prefix=prefix)
     emit(f"Report image: {config.images.report_image_name}", logs=logs, prefix=prefix)
     emit(f"Job folder: {config.job_input_dir} -> /workspace/input", logs=logs, prefix=prefix)

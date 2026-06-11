@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 import sys
 import threading
@@ -59,6 +60,7 @@ __all__ = [
     "expand_home_path",
     "optional_int_env",
     "parse_host_cli_options",
+    "prepare_result_mount",
     "print_usage",
     "stream_command",
     "timestamp_slug",
@@ -431,6 +433,22 @@ def docker_env(name: str, value: str | int | bool | None = None) -> list[str]:
     else:
         rendered = str(value)
     return ["-e", f"{name}={rendered}"]
+
+
+def prepare_result_mount(result_dir: Path, *, logs: Iterable[Path] = (), prefix: str | None = None) -> None:
+    """Prepare a host results directory for the container's non-root benchmark user."""
+    for directory in (result_dir, result_dir / "records"):
+        directory.mkdir(parents=True, exist_ok=True)
+        try:
+            mode = directory.stat().st_mode
+            directory.chmod(mode | stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+        except OSError as exc:
+            emit(
+                f"Could not relax result directory permissions for container writes: {directory}: {exc}",
+                logs=logs,
+                prefix=prefix,
+                stderr=True,
+            )
 
 
 def add_agent_auth_mounts(

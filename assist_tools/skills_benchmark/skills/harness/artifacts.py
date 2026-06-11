@@ -175,6 +175,7 @@ def capture_workspace_delta(
     *,
     delta_scope: str = "workspace",
     include_runtime_artifacts: bool = True,
+    extra_runtime_artifact_sources: Iterable[tuple[str, Path]] | None = None,
 ) -> None:
     baseline = load_json(baseline_path)
     baseline_files = baseline.get("files") if isinstance(baseline.get("files"), dict) else {}
@@ -236,6 +237,8 @@ def capture_workspace_delta(
         runtime_sources = [
             ("runtime_job_config", runtime_artifact_root / "job_config"),
         ]
+        if extra_runtime_artifact_sources:
+            runtime_sources.extend(extra_runtime_artifact_sources)
         for label, root in runtime_sources:
             if not root.is_dir():
                 continue

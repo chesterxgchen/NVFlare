@@ -375,6 +375,73 @@ Validation:
     assert metric["summary_value_label"] == "Best aggregated validation AUROC"
 
 
+def test_metric_alignment_rejects_out_of_range_auroc_from_dependency_version():
+    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
+
+    signal = metric_signal(
+        None,
+        "Primary validation metric: AUROC.\n",
+        """
+The job uses NVFLARE 2.8 recipe APIs.
+The job config uses AUROC as key_metric.
+Requirements:
+- nvflare[PT]>=2.8.0
+
+No simulation was run.
+""",
+    )
+
+    metric = signal["reported_validation_metric"]
+    assert signal["status"] == "missing"
+    assert signal["metric_value_available"] is False
+    assert metric["name"] == "AUROC"
+    assert metric["value"] is None
+    assert metric["reported_values"] == []
+
+
+def test_benchmark_report_sanitizes_stale_out_of_range_metric_record():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
+        quality_signal,
+        validation_metric_from_record,
+    )
+
+    record = {
+        "reported_validation_metric": {
+            "name": "AUROC",
+            "reported_value_entries": [{"value": 2.8}],
+            "reported_values": [2.8],
+            "source": "agent_last_message",
+            "value": 2.8,
+            "value_scope": "reported_scalar",
+        },
+        "quality_signals": {
+            "job_guidance_primary_validation_metric": {
+                "expected_primary_metric": "AUROC",
+                "evidence": "Job guidance declares AUROC as the primary metric, and the final response reported AUROC 2.8000.",
+                "metric_value_available": True,
+                "reported_validation_metric": {
+                    "name": "AUROC",
+                    "reported_value_entries": [{"value": 2.8}],
+                    "reported_values": [2.8],
+                    "value": 2.8,
+                    "value_scope": "reported_scalar",
+                },
+                "status": "pass",
+            }
+        },
+    }
+
+    metric = validation_metric_from_record(record)
+    signal = quality_signal(record)
+
+    assert metric["name"] == "AUROC"
+    assert metric["value"] is None
+    assert metric["reported_values"] == []
+    assert signal["status"] == "missing"
+    assert signal["metric_value_available"] is False
+    assert "did not report a plausible numeric value" in signal["evidence"]
+
+
 def test_job_guidance_metric_alignment_uses_non_readme_docs(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
     from assist_tools.skills_benchmark.skills.harness.records import discover_job_guidance
@@ -761,6 +828,80 @@ def test_job_run_status_section_reports_bash_blocked_not_started(tmp_path):
     assert "| With skills | not_started | Bash blocked 1 time(s)" in section
     assert "Fix agent Bash/tool permissions and rerun" in section
     assert "python job.py" not in section
+
+
+def test_job_run_status_uses_claude_bash_output_to_detect_completed_simulation():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
+        job_run_status,
+        job_run_status_reason,
+    )
+
+    tool_id = "toolu_job"
+    command_event = {
+        "event_type": "assistant",
+        "message": {
+            "content": [
+                {
+                    "id": tool_id,
+                    "input": {"command": "timeout 300 python job.py --num-rounds 1"},
+                    "name": "Bash",
+                    "type": "tool_use",
+                }
+            ]
+        },
+    }
+    result_event = {
+        "event_type": "user",
+        "message": {
+            "content": [
+                {
+                    "content": "site-1: round=0 train_loss=0.5440 valid_auroc=0.7254\nFinished FedAvg.\nSimulation workspace: /tmp/nvflare/workspaces/ames_fedavg",
+                    "is_error": False,
+                    "tool_use_id": tool_id,
+                    "type": "tool_result",
+                }
+            ]
+        },
+        "tool_use_result": {
+            "interrupted": False,
+            "stderr": "",
+            "stdout": "site-1: round=0 train_loss=0.5440 valid_auroc=0.7254\nFinished FedAvg.\nSimulation workspace: /tmp/nvflare/workspaces/ames_fedavg",
+        },
+    }
+    run = {
+        "available": True,
+        "activity": {"commands": ["timeout 300 python job.py --num-rounds 1"]},
+        "agent_events_text": "\n".join(json.dumps(event) for event in (command_event, result_event)),
+    }
+
+    assert job_run_status(run) == "completed"
+    assert job_run_status_reason(run) == "simulation completed — FL workflow reached Finished state"
+
+
+def test_job_run_status_reason_includes_failed_job_command_error():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
+        job_run_status,
+        job_run_status_reason,
+    )
+
+    event = {
+        "item": {
+            "aggregated_output": "Traceback (most recent call last):\nModuleNotFoundError: No module named 'torch'",
+            "command": "python job.py",
+            "exit_code": 1,
+            "id": "item_1",
+            "status": "failed",
+            "type": "command_execution",
+        }
+    }
+    run = {
+        "available": True,
+        "activity": {"commands": ["python job.py"]},
+        "agent_events_text": json.dumps(event),
+    }
+
+    assert job_run_status(run) == "started_failed"
+    assert "ModuleNotFoundError" in job_run_status_reason(run)
 
 
 def test_readme_metric_alignment_uses_server_best_validation_metric_scalar():

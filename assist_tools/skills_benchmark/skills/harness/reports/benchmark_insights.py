@@ -24,11 +24,13 @@ from pathlib import Path
 from typing import Any
 
 from ..common import load_json
+from ..metric_artifacts import validation_metric_from_workspace_delta_manifest
 from ..modes import BENCHMARK_RUNS, mode_names
 from ..quality_signals import (
     canonical_metric_name,
     is_fl_summary_metric_label,
     is_numeric_metric_value,
+    is_plausible_metric_value,
     metric_value_entries,
     reported_metric_payload,
 )
@@ -144,10 +146,31 @@ def final_record_path(root: Path, mode: str) -> Path:
     return mode_dir / "records" / f"{mode}_record.json"
 
 
+def sanitized_validation_metric(metric: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(metric, dict) or not metric.get("name"):
+        return metric if isinstance(metric, dict) else {}
+    name = canonical_metric_name(metric.get("name"))
+    entries = [entry for entry in metric.get("reported_value_entries") or [] if isinstance(entry, dict)]
+    if not entries and is_numeric_metric_value(metric.get("value")):
+        entry: dict[str, Any] = {"value": metric["value"]}
+        if metric.get("summary_value_label"):
+            entry["label"] = metric["summary_value_label"]
+        entries = [entry]
+    sanitized = reported_metric_payload(name, entries)
+    sanitized["source"] = metric.get("source") or sanitized.get("source")
+    return sanitized
+
+
 def validation_metric_from_record(record: dict[str, Any]) -> dict[str, Any]:
+    metric = record.get("validation_metric")
+    if isinstance(metric, dict) and metric.get("name"):
+        return sanitized_validation_metric(metric)
+    metric = record.get("artifact_validation_metric")
+    if isinstance(metric, dict) and metric.get("name"):
+        return sanitized_validation_metric(metric)
     metric = record.get("reported_validation_metric")
     if isinstance(metric, dict) and metric.get("name"):
-        return metric
+        return sanitized_validation_metric(metric)
     quality = record.get("quality_signals")
     if isinstance(quality, dict):
         signal = quality.get("job_guidance_primary_validation_metric") or quality.get(
@@ -156,7 +179,7 @@ def validation_metric_from_record(record: dict[str, Any]) -> dict[str, Any]:
         if isinstance(signal, dict):
             metric = signal.get("reported_validation_metric")
             if isinstance(metric, dict) and metric.get("name"):
-                return metric
+                return sanitized_validation_metric(metric)
     return {}
 
 
@@ -180,10 +203,25 @@ def collect_benchmark_runs(root: Path) -> dict[str, dict[str, Any]]:
         mode_console_text = read_text(root / f"{mode}.console.log") or filter_mode_console(console_text, mode)
         summary = load_json(mode_dir / "run_summary.json", {}) if mode_dir.exists() else {}
         record = load_json(final_record_path(root, mode), {}) if mode_dir.exists() else {}
+        workspace_delta_path = mode_dir / "workspace_delta_manifest.json"
+        workspace_delta = load_json(workspace_delta_path, {}) if mode_dir.exists() else {}
         if not isinstance(summary, dict):
             summary = {}
         if not isinstance(record, dict):
             record = {}
+        if not isinstance(workspace_delta, dict):
+            workspace_delta = {}
+        record_metric = validation_metric_from_record(record)
+        expected_metric = (
+            record.get("validation_metric_policy", {}).get("expected_primary_metric")
+            if isinstance(record.get("validation_metric_policy"), dict)
+            else None
+        )
+        artifact_metric = validation_metric_from_workspace_delta_manifest(
+            workspace_delta,
+            workspace_delta_path,
+            expected_metric,
+        )
         runs[mode] = {
             "available": mode_dir.exists(),
             "mode": mode,
@@ -194,7 +232,7 @@ def collect_benchmark_runs(root: Path) -> dict[str, dict[str, Any]]:
             "container_exit": load_json(mode_dir / "container_exit_code.json", {}) if mode_dir.exists() else {},
             "usage": load_json(mode_dir / "agent_usage.json", {}) if mode_dir.exists() else {},
             "activity": load_json(mode_dir / "agent_activity.json", {}) if mode_dir.exists() else {},
-            "workspace_delta": load_json(mode_dir / "workspace_delta_manifest.json", {}) if mode_dir.exists() else {},
+            "workspace_delta": workspace_delta,
             "runtime_image": load_json(mode_dir / "runtime_image.json", {}) if mode_dir.exists() else {},
             "agent_last_message": read_text(mode_dir / "agent_last_message.txt") if mode_dir.exists() else "",
             "agent_stderr": read_text(mode_dir / "agent_stderr.txt") if mode_dir.exists() else "",
@@ -204,7 +242,7 @@ def collect_benchmark_runs(root: Path) -> dict[str, dict[str, Any]]:
                 else ""
             ),
             "console_text": mode_console_text,
-            "validation_metric": validation_metric_from_record(record),
+            "validation_metric": artifact_metric or record_metric,
         }
     return runs
 
@@ -242,8 +280,59 @@ def strip_ansi(text: str) -> str:
     return ANSI_ESCAPE_PATTERN.sub("", text)
 
 
+def message_content_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    message = payload.get("message")
+    if not isinstance(message, dict):
+        return []
+    content = message.get("content")
+    if not isinstance(content, list):
+        return []
+    return [item for item in content if isinstance(item, dict)]
+
+
+def tool_result_output(payload: dict[str, Any], item: dict[str, Any]) -> str:
+    parts = []
+    result = payload.get("tool_use_result")
+    if isinstance(result, dict):
+        for key in ("stdout", "stderr"):
+            value = result.get(key)
+            text = str(value or "")
+            if text and text not in parts:
+                parts.append(text)
+    elif result:
+        text = str(result)
+        if text not in parts:
+            parts.append(text)
+    for key in ("content", "text"):
+        value = item.get(key)
+        text = str(value or "")
+        if text and text not in parts:
+            parts.append(text)
+    return strip_ansi("\n".join(parts))
+
+
+def tool_result_exit(payload: dict[str, Any], item: dict[str, Any], output: str) -> tuple[int | None, str]:
+    result = payload.get("tool_use_result")
+    is_error = bool(item.get("is_error"))
+    interrupted = False
+    if isinstance(result, dict):
+        is_error = is_error or bool(result.get("is_error"))
+        interrupted = bool(result.get("interrupted"))
+    exit_match = re.search(r"\bExit code\s+([0-9]+)\b", output, flags=re.IGNORECASE)
+    exit_code = int(exit_match.group(1)) if exit_match else None
+    if interrupted and exit_code is None:
+        exit_code = 124
+    if is_error and exit_code is None:
+        exit_code = 1
+    if exit_code is None and not is_error and not interrupted:
+        exit_code = 0
+    status = "failed" if (exit_code not in (None, 0) or is_error or interrupted) else "completed"
+    return exit_code, status
+
+
 def agent_command_events(run: dict[str, Any]) -> list[dict[str, Any]]:
     events = []
+    pending_tool_commands: dict[str, dict[str, Any]] = {}
     for line in str(run.get("agent_events_text") or "").splitlines():
         try:
             payload = json.loads(line)
@@ -251,6 +340,34 @@ def agent_command_events(run: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         if not isinstance(payload, dict):
             continue
+        for content_item in message_content_items(payload):
+            if content_item.get("type") == "tool_use" and content_item.get("name") == "Bash":
+                tool_input = content_item.get("input") if isinstance(content_item.get("input"), dict) else {}
+                command = str(tool_input.get("command") or "")
+                tool_id = str(content_item.get("id") or "")
+                if command and tool_id:
+                    pending_tool_commands[tool_id] = {
+                        "command": command,
+                        "id": tool_id,
+                        "index": len(events),
+                    }
+            elif content_item.get("type") == "tool_result":
+                tool_id = str(content_item.get("tool_use_id") or "")
+                pending = pending_tool_commands.pop(tool_id, None)
+                if not pending:
+                    continue
+                output = tool_result_output(payload, content_item)
+                exit_code, status = tool_result_exit(payload, content_item, output)
+                events.append(
+                    {
+                        "command": pending["command"],
+                        "exit_code": exit_code,
+                        "id": pending["id"],
+                        "index": len(events),
+                        "output": output,
+                        "status": status,
+                    }
+                )
         item = payload.get("item")
         if not isinstance(item, dict) or item.get("type") != "command_execution":
             continue
@@ -280,7 +397,9 @@ def command_failed(event: dict[str, Any]) -> bool:
 
 
 def command_succeeded(event: dict[str, Any]) -> bool:
-    return event.get("exit_code") == 0 and str(event.get("status") or "") == "completed"
+    return (event.get("exit_code") == 0 and str(event.get("status") or "") == "completed") or job_output_succeeded(
+        str(event.get("output") or "")
+    )
 
 
 def command_recovery_key(command: str) -> str:
@@ -298,6 +417,16 @@ def command_recovery_key(command: str) -> str:
 
 def is_simulation_or_job_command(command: str) -> bool:
     return bool(re.search(r"\bpython(?:3)?\s+[A-Za-z0-9_./-]*job[A-Za-z0-9_./-]*\.py\b", str(command)))
+
+
+def job_output_succeeded(output: str) -> bool:
+    return bool(
+        re.search(
+            r"\bFinished\s+FedAvg\b|\bSimulation workspace:\s*|\bResult workspace:\s*",
+            strip_ansi(output),
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def is_material_failed_command(event: dict[str, Any]) -> bool:
@@ -346,6 +475,16 @@ def recovered_by_later_success(event: dict[str, Any], events: list[dict[str, Any
         if int(candidate.get("index") or 0) <= index:
             continue
         if command_recovery_key(str(candidate.get("command") or "")) == key and command_succeeded(candidate):
+            return True
+    return False
+
+
+def recovered_by_later_successful_job(event: dict[str, Any], events: list[dict[str, Any]]) -> bool:
+    index = int(event.get("index") or 0)
+    for candidate in events:
+        if int(candidate.get("index") or 0) <= index:
+            continue
+        if command_succeeded(candidate) and is_simulation_or_job_command(str(candidate.get("command") or "")):
             return True
     return False
 
@@ -482,7 +621,13 @@ def job_run_status_reason(run: dict[str, Any]) -> str:
         if denials:
             denial_summary = "; ".join(str(d) for d in denials[:3])
             return f"simulation not attempted — permission denials: {denial_summary}"
-        return "simulation not attempted — agent did not run a job.py command"
+        commands = commands_for_run(run)
+        if commands:
+            return (
+                "simulation not attempted — captured commands did not run job.py "
+                f"(first command: `{truncate(commands[0], 120)}`)"
+            )
+        return "simulation not attempted — no captured job.py or simulator command"
 
     if status == "started_failed":
         if bash_blocked_count > 0:
@@ -496,7 +641,11 @@ def job_run_status_reason(run: dict[str, Any]) -> str:
             if command_failed(event) and is_simulation_or_job_command(str(event.get("command") or "")):
                 summary = command_error_summary(str(event.get("output") or ""))
                 return f"simulation command ran but exited with error — {truncate(summary, 200)}"
-        return "simulation command ran but did not complete successfully"
+        for event in reversed(events):
+            if is_simulation_or_job_command(str(event.get("command") or "")):
+                summary = command_error_summary(str(event.get("output") or ""))
+                return f"simulation command ran but success was not confirmed — {truncate(summary, 200)}"
+        return "simulation command ran but no command output was captured"
 
     if status == "completed":
         event = last_successful_job_event(run)
@@ -537,11 +686,12 @@ def command_failure_diagnostics(run: dict[str, Any], limit: int = 3) -> list[str
     for event in selected_events:
         command = str(event.get("command") or "")
         output = str(event.get("output") or "")
-        recovery = (
-            "recovered by a later successful similar command"
-            if recovered_by_later_success(event, events)
-            else "not recovered in this run"
-        )
+        if recovered_by_later_success(event, events):
+            recovery = "recovered by a later successful similar command"
+        elif recovered_by_later_successful_job(event, events):
+            recovery = "recovered by a later successful simulator/job command"
+        else:
+            recovery = "not recovered in this run"
         diagnostics.append(
             f"Command `{truncate(command, 160)}` failed with exit {event.get('exit_code')}; "
             f"{recovery}. Root cause evidence: {command_error_summary(output)}"
@@ -785,14 +935,16 @@ def metric_value(run: dict[str, Any], metric_name: str | None = None) -> Any:
     if metric_name is not None and canonical_metric_name(metric.get("name")) != canonical_metric_name(metric_name):
         return None
     value = metric.get("value")
-    if is_numeric_metric_value(value):
+    if is_plausible_metric_value(canonical_metric_name(metric.get("name")), value):
         return value
     for entry in reversed(metric.get("reported_value_entries") or []):
         if not isinstance(entry, dict):
             continue
         value = entry.get("value")
         label = entry.get("label")
-        if is_numeric_metric_value(value) and is_fl_summary_metric_label(label):
+        if is_plausible_metric_value(canonical_metric_name(metric.get("name")), value) and is_fl_summary_metric_label(
+            label
+        ):
             return value
     return None
 
@@ -805,12 +957,14 @@ def metric_value_label(run: dict[str, Any], metric_name: str | None = None) -> s
         return ""
     if metric.get("summary_value_label"):
         return str(metric["summary_value_label"])
-    if is_numeric_metric_value(metric.get("value")):
+    if is_plausible_metric_value(canonical_metric_name(metric.get("name")), metric.get("value")):
         return str(metric.get("value_scope") or "reported scalar")
     for entry in reversed(metric.get("reported_value_entries") or []):
         if not isinstance(entry, dict):
             continue
-        if is_numeric_metric_value(entry.get("value")) and is_fl_summary_metric_label(entry.get("label")):
+        if is_plausible_metric_value(
+            canonical_metric_name(metric.get("name")), entry.get("value")
+        ) and is_fl_summary_metric_label(entry.get("label")):
             return str(entry.get("label") or "")
     return ""
 
@@ -967,7 +1121,31 @@ def quality_signal(record: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(quality, dict):
         return {}
     signal = quality.get("job_guidance_primary_validation_metric") or quality.get("readme_primary_validation_metric")
-    return signal if isinstance(signal, dict) else {}
+    if not isinstance(signal, dict):
+        return {}
+    result = dict(signal)
+    metric = result.get("reported_validation_metric")
+    if isinstance(metric, dict) and metric.get("name"):
+        sanitized = sanitized_validation_metric(metric)
+        result["reported_validation_metric"] = sanitized
+        values = sanitized.get("reported_values")
+        if not isinstance(values, list):
+            values = []
+        has_numeric = is_numeric_metric_value(sanitized.get("value")) or any(
+            is_numeric_metric_value(value) for value in values
+        )
+        expected = result.get("expected_primary_metric") or sanitized.get("name")
+        if not has_numeric and sanitized.get("name"):
+            result["status"] = "missing"
+            result["metric_value_available"] = False
+            result["metric_scalar_available"] = False
+            result["aligned_with_job_guidance"] = False
+            result["aligned_with_readme"] = False
+            result["evidence"] = (
+                f"Job guidance declares {expected} as the primary metric, and the final response mentioned "
+                f"{sanitized.get('name')} but did not report a plausible numeric value."
+            )
+    return result
 
 
 def quality_signal_table(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:

@@ -65,8 +65,11 @@ debugging that does not ask for FLARE conversion.
 - Must report recipe choice, validation commands, export status, and remaining
   blockers before calling the conversion complete.
 - Must report metric values or explain why metrics are unavailable, including
-  the exact simulation workspace, result file, log, or global-model path used as
-  evidence.
+  the exact simulation workspace, server-side metrics artifact, result file,
+  log, or global-model path used as evidence. In simulation, standard
+  aggregation recipes write metric evidence under the server workspace's
+  `simulate_job/metrics/` directory, including `metrics_summary.json` and
+  `round_metrics.jsonl` when present.
 - Must not submit to POC or production without explicit user approval.
 - Must not generate Python solely to wrap `nvflare` CLI commands or scrape
   human CLI output.
@@ -91,6 +94,11 @@ debugging that does not ask for FLARE conversion.
 - Ask before changing private data paths, replacing dataset access, or using
   non-fixture data for validation.
 - Ask before POC, production, or startup-kit based runtime submission.
+- After an approved POC or production run reaches a terminal state, use
+  `nvflare job download <job_id> -o <dir> --format json` to locate downloaded
+  model and metric artifacts. Read `data.artifacts.global_model`,
+  `data.artifacts.metrics_summary`, and `data.artifacts.round_metrics` when
+  present; report `data.missing_artifacts` when expected artifacts are absent.
 
 Load `../_shared/nvflare-job-lifecycle.md` and
 `references/recipe-selection.md` before creating `job.py`,

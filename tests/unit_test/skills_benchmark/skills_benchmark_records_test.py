@@ -156,6 +156,68 @@ def test_workspace_artifact_json_writes_use_atomic_helper(tmp_path, monkeypatch)
     assert calls[1][1]["final_file_manifest_count"] == 1
 
 
+def test_runtime_artifact_capture_preserves_generic_workspace_json(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.artifacts import capture_workspace_delta, write_workspace_baseline
+
+    workspace = tmp_path / "workspace"
+    runtime_root = tmp_path / "nvflare_workspaces"
+    workspace.mkdir()
+    workspace.joinpath("client.py").write_text("print('client')\n", encoding="utf-8")
+    runtime_metric = runtime_root / "job_a" / "server" / "simulate_job" / "metrics" / "custom_results.json"
+    runtime_metric.parent.mkdir(parents=True)
+    runtime_metric.write_text(
+        json.dumps({"server": {"metric": "auroc", "score": 0.8123}}) + "\n",
+        encoding="utf-8",
+    )
+    baseline_path = tmp_path / "baseline.json"
+    write_workspace_baseline(workspace, baseline_path)
+
+    capture_workspace_delta(
+        workspace,
+        baseline_path,
+        tmp_path / "delta",
+        tmp_path / "delta_manifest.json",
+        tmp_path / "agent_runtime",
+        extra_runtime_artifact_sources=[("runtime_workspaces", runtime_root)],
+    )
+    manifest = json.loads((tmp_path / "delta_manifest.json").read_text(encoding="utf-8"))
+
+    assert [item["path"] for item in manifest["runtime_artifacts"]] == [
+        "runtime_workspaces/job_a/server/simulate_job/metrics/custom_results.json"
+    ]
+
+
+def test_metric_artifact_parser_reads_generic_json_shape(tmp_path):
+    from assist_tools.skills_benchmark.skills.harness.metric_artifacts import (
+        validation_metric_from_workspace_delta_manifest,
+    )
+
+    delta = tmp_path / "delta"
+    artifact = (
+        delta / "runtime_artifacts" / "runtime_workspaces" / "job_a" / "server" / "metrics" / "custom_results.json"
+    )
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text(
+        json.dumps({"server": {"metric": "auroc", "score": 0.8123}}) + "\n",
+        encoding="utf-8",
+    )
+    manifest = {
+        "delta_dir": str(delta),
+        "runtime_artifacts": [
+            {
+                "path": "runtime_workspaces/job_a/server/metrics/custom_results.json",
+                "artifact_path": "runtime_artifacts/runtime_workspaces/job_a/server/metrics/custom_results.json",
+            }
+        ],
+    }
+
+    metric = validation_metric_from_workspace_delta_manifest(manifest, tmp_path / "delta_manifest.json", "AUROC")
+
+    assert metric["name"] == "AUROC"
+    assert metric["value"] == 0.8123
+    assert metric["source"] == "metrics_artifact"
+
+
 def test_parse_usage_activity_scans_hints_from_raw_line_without_json_reserialize(tmp_path, monkeypatch):
     from assist_tools.skills_benchmark.skills.harness import events
 

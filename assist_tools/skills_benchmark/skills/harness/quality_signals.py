@@ -35,6 +35,7 @@ METRIC_ALIAS_PATTERNS = {
     "loss": r"\b(?:loss|valid[_-]?loss|validation[_-]?loss|train[_-]?loss)\b",
     "f1": r"\b(?:f1|f1[_-]?score|valid[_-]?f1|validation[_-]?f1)\b",
 }
+BOUNDED_METRICS = {"AUROC", "accuracy", "f1"}
 
 
 def canonical_metric_name(name: Any) -> str:
@@ -79,6 +80,17 @@ def parse_float(value: str) -> float | None:
 
 def is_numeric_metric_value(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def is_plausible_metric_value(metric_name: str, value: Any) -> bool:
+    if not is_numeric_metric_value(value):
+        return False
+    canonical = canonical_metric_name(metric_name)
+    if canonical in BOUNDED_METRICS:
+        return 0 <= float(value) <= 1
+    if canonical == "loss":
+        return float(value) >= 0
+    return True
 
 
 def format_metric_value(value: Any) -> str:
@@ -248,6 +260,8 @@ def fl_summary_metric_entry(entries: list[dict[str, Any]]) -> dict[str, Any] | N
 
 
 def reported_metric_payload(name: str, entries: list[dict[str, Any]]) -> dict[str, Any]:
+    name = canonical_metric_name(name)
+    entries = [entry for entry in entries if is_plausible_metric_value(name, entry.get("value"))]
     values = [entry["value"] for entry in entries if is_numeric_metric_value(entry.get("value"))]
     labels = [entry.get("label") for entry in entries]
     site_entries = [
@@ -272,7 +286,7 @@ def reported_metric_payload(name: str, entries: list[dict[str, Any]]) -> dict[st
         value = None
         value_scope = "not_available"
     return {
-        "name": canonical_metric_name(name),
+        "name": name,
         "value": value,
         "reported_values": values,
         "reported_value_labels": labels,

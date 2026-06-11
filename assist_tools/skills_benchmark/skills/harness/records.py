@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .common import bool_from_text, flatten_numbers, load_json, write_json
+from .metric_artifacts import validation_metric_from_workspace_delta_manifest
 from .quality_signals import critical_quality_checks_failed, metric_signal, required_validation_metric_status
 from .record_identity import record_case, record_skill
 from .timing import LifecycleEpochs, finalize_timing
@@ -538,6 +539,11 @@ def synthesize_agent_record(inputs: AgentRecordSynthesisInputs) -> None:
     guidance_sources, guidance_text = discover_job_guidance(input_dir, prompt_path)
     event_identity = infer_from_events(events_text)
     job_guidance_metric_signal = metric_signal(guidance_sources, guidance_text, last_message)
+    artifact_validation_metric = validation_metric_from_workspace_delta_manifest(
+        workspace_delta,
+        workspace_delta_manifest_path,
+        job_guidance_metric_signal.get("expected_primary_metric"),
+    )
     existing_skill = str(record_skill(existing_agent_record) or "") if isinstance(existing_agent_record, dict) else ""
     existing_case = str(record_case(existing_agent_record) or "") if isinstance(existing_agent_record, dict) else ""
     if not valid_identity_token(existing_skill):
@@ -703,8 +709,20 @@ def synthesize_agent_record(inputs: AgentRecordSynthesisInputs) -> None:
     if not isinstance(quality_signals, dict):
         quality_signals = {}
     quality_signals["job_guidance_primary_validation_metric"] = job_guidance_metric_signal
+    if artifact_validation_metric:
+        quality_signals["artifact_validation_metric"] = {
+            "status": "pass",
+            "source_type": "metrics_artifact",
+            "reported_validation_metric": artifact_validation_metric,
+            "evidence": (
+                "A captured runtime metrics artifact contains a numeric "
+                f"{artifact_validation_metric.get('name')} value."
+            ),
+        }
     record["quality_signals"] = quality_signals
-    record["required_validation_metric_status"] = required_validation_metric_status(job_guidance_metric_signal)
+    record["required_validation_metric_status"] = (
+        "present" if artifact_validation_metric else required_validation_metric_status(job_guidance_metric_signal)
+    )
     record["critical_quality_checks_failed"] = bool(
         record.get("critical_quality_checks_failed") or critical_quality_checks_failed(record)
     )
@@ -717,22 +735,28 @@ def synthesize_agent_record(inputs: AgentRecordSynthesisInputs) -> None:
         }
         validation_metric = job_guidance_metric_signal.get("reported_validation_metric")
         record["reported_validation_metric"] = validation_metric
+        if artifact_validation_metric:
+            record["validation_metric"] = artifact_validation_metric
         metrics["validation_metric_policy_available"] = 1
         metrics["validation_metric_value_available"] = (
-            1 if job_guidance_metric_signal.get("metric_value_available") else 0
+            1 if artifact_validation_metric or job_guidance_metric_signal.get("metric_value_available") else 0
         )
+        metrics["validation_metric_artifact_available"] = 1 if artifact_validation_metric else 0
         metrics["validation_metric_aligned_with_job_guidance"] = (
-            1 if job_guidance_metric_signal.get("aligned_with_job_guidance") else 0
+            1 if artifact_validation_metric or job_guidance_metric_signal.get("aligned_with_job_guidance") else 0
         )
         metrics["validation_metric_aligned_with_readme"] = (
-            1 if job_guidance_metric_signal.get("aligned_with_readme") else 0
+            1 if artifact_validation_metric or job_guidance_metric_signal.get("aligned_with_readme") else 0
         )
         metrics["validation_metric_mismatch"] = 1 if job_guidance_metric_signal.get("mismatch") else 0
     else:
         validation_metric = job_guidance_metric_signal.get("reported_validation_metric")
         if isinstance(validation_metric, dict) and validation_metric.get("name"):
             record["reported_validation_metric"] = validation_metric
+        if artifact_validation_metric:
+            record["validation_metric"] = artifact_validation_metric
         metrics["validation_metric_policy_available"] = 0
+        metrics["validation_metric_artifact_available"] = 1 if artifact_validation_metric else 0
 
     record["process_metrics"] = metrics
     record["agent_usage"] = usage
@@ -909,7 +933,7 @@ def write_run_summary(final_record_path: Path, summary_path: Path, *, print_summ
     skill_discovery = record.get("skill_discovery") if isinstance(record.get("skill_discovery"), dict) else {}
     quality_signals = record.get("quality_signals") if isinstance(record.get("quality_signals"), dict) else {}
     validation_signal = quality_signals.get("job_guidance_primary_validation_metric")
-    validation_metric = record.get("reported_validation_metric")
+    validation_metric = record.get("validation_metric") or record.get("reported_validation_metric")
     if validation_metric is None and isinstance(validation_signal, dict):
         validation_metric = validation_signal.get("reported_validation_metric")
     agent_elapsed = metrics.get("agent_elapsed_seconds")
