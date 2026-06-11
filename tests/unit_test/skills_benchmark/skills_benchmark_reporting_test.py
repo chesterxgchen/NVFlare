@@ -229,6 +229,48 @@ def test_structure_tree_falls_back_to_final_workspace_when_changed_python_is_emp
     assert "requirements.txt" in report
 
 
+def test_workspace_delta_issue_allows_final_structure_and_runtime_artifacts():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import run_quality_issues
+
+    run = {
+        "available": True,
+        "record": {
+            "workspace_delta": {
+                "changed_file_count": 0,
+                "runtime_artifact_count": 37,
+                "final_structure_files": [
+                    {"path": "nvflare_jobs/ames_fedavg/client.py"},
+                    {"path": "nvflare_jobs/ames_fedavg/job.py"},
+                ],
+            }
+        },
+    }
+
+    issues = run_quality_issues(run)
+
+    assert not any("workspace_delta" in issue for issue in issues)
+
+
+def test_workspace_delta_issue_allows_manifest_counts_without_file_lists():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import run_quality_issues
+
+    run = {
+        "available": True,
+        "record": {
+            "workspace_delta": {
+                "changed_file_count": 0,
+                "copied_file_count": 37,
+                "final_structure_file_count": 5,
+                "runtime_artifact_count": 37,
+            }
+        },
+    }
+
+    issues = run_quality_issues(run)
+
+    assert not any("workspace_delta" in issue for issue in issues)
+
+
 def test_status_summary_is_human_readable_for_failures():
     from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE
     from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import status_summary
@@ -958,6 +1000,48 @@ def test_completed_job_run_status_reason_includes_recovered_dependency_failure()
     assert "earlier missing Python dependency `torch` was recovered" in reason
     assert "a dependency install command later succeeded" in reason
     assert "inspect recovered command failures" in job_run_action(run)
+
+
+def test_failure_analysis_keeps_recovered_bash_issue_for_passed_run():
+    from assist_tools.skills_benchmark.skills.harness.modes import WITH_SKILLS_MODE
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import failure_analysis_section
+
+    permission_result = {
+        "message": {
+            "content": [
+                {
+                    "content": "Claude requested permissions to use Bash, but you haven't granted it yet.",
+                    "type": "tool_result",
+                }
+            ]
+        },
+        "type": "user",
+    }
+    final_result = {
+        "final_message": "Completed simulation.",
+        "permission_denials": [
+            {"tool_name": "Bash", "tool_input": {"command": "rm -rf /tmp/workspace && python job.py"}}
+        ],
+        "subtype": "success",
+        "type": "result",
+    }
+    run = {
+        "available": True,
+        "label": "With skills",
+        "activity": {"hint_counts": {"python_job_py": 1, "simulation": 1}},
+        "agent_events_text": "\n".join(json.dumps(event) for event in (permission_result, final_result)),
+        "container_exit": {"exit_code": 0},
+        "record": {},
+        "run": {"final_container_exit_code": 0},
+    }
+
+    section = failure_analysis_section({WITH_SKILLS_MODE: run}, [WITH_SKILLS_MODE])
+
+    assert "Outcome: passed" in section
+    assert "Recovered Bash/tool issue" in section
+    assert "Bash tool was blocked 1 time(s)" in section
+    assert "Denied command: `rm -rf /tmp/workspace && python job.py`" in section
+    assert "costs extra tool turns, tokens, and elapsed time" in section
 
 
 def test_failure_analysis_reports_dependency_install_evidence_for_missing_module():

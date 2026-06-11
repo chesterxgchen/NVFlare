@@ -560,11 +560,43 @@ def bash_permission_denial_count(run: dict[str, Any]) -> int:
     return max(result_permission_denial_count(run), raw_count)
 
 
-def bash_blocked_diagnostic(run: dict[str, Any]) -> str | None:
+def permission_denial_commands(run: dict[str, Any]) -> list[str]:
+    commands = []
+    for line in str(run.get("agent_events_text") or "").splitlines():
+        try:
+            payload = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        denials = payload.get("permission_denials")
+        if not isinstance(denials, list):
+            continue
+        for denial in denials:
+            if not isinstance(denial, dict):
+                continue
+            tool_input = denial.get("tool_input")
+            if isinstance(tool_input, dict):
+                command = str(tool_input.get("command") or "").strip()
+                if command and command not in commands:
+                    commands.append(command)
+    return commands
+
+
+def bash_blocked_diagnostic(run: dict[str, Any], *, recovered: bool = False) -> str | None:
     """Return a diagnostic string if Bash was blocked due to permission approval failures."""
     blocked_count = bash_permission_denial_count(run)
     if blocked_count == 0:
         return None
+    if recovered:
+        denied_commands = permission_denial_commands(run)
+        command = f" Denied command: `{truncate(denied_commands[0], 180)}`." if denied_commands else ""
+        return (
+            f"Bash tool was blocked {blocked_count} time(s) earlier in this run, but a later simulator/job "
+            f"command completed.{command} This usually means Claude rejected that specific command shape "
+            "rather than Bash being unavailable for the whole run; it is still reported because the recovery "
+            "costs extra tool turns, tokens, and elapsed time."
+        )
     hint_counts = run.get("activity", {}).get("hint_counts") or {}
     sim_count = hint_counts.get("simulation", 0)
     py_count = hint_counts.get("python_job_py", 0)
@@ -577,7 +609,7 @@ def bash_blocked_diagnostic(run: dict[str, Any]) -> str | None:
         f"Bash tool was blocked {blocked_count} time(s) with 'requested permissions' errors. "
         f"In Claude Code --print (non-interactive) mode, tools require explicit allow rules even with "
         f"--dangerously-skip-permissions. Check that (1) BENCHMARK_AGENT_HOME/settings.json has "
-        f"Bash(*) in permissions.allow, (2) --allowedTools includes Bash(*) in the agent launch argv, "
+        f"`Bash(*)` in permissions.allow, (2) --allowedTools includes `Bash(*)` in the agent launch argv, "
         f"and (3) no deny/ask rules exist at /etc/claude-code/managed-settings.json inside Docker. "
         f"Rebuild the Docker image after any agent config changes.{impact}"
     )
@@ -912,9 +944,11 @@ def run_quality_issues(run: dict[str, Any]) -> list[str]:
             f"Failed check `fl_metric_scalar`: no FL-level scalar value was found for expected metric `{expected}`."
         )
     delta = record.get("workspace_delta") if isinstance(record.get("workspace_delta"), dict) else {}
-    changed_count = delta.get("changed_file_count")
-    if changed_count == 0:
-        issues.append("Failed check `workspace_delta`: no generated or modified workspace files were captured.")
+    if delta and not workspace_delta_has_artifact_evidence(delta):
+        issues.append(
+            "Failed check `workspace_delta`: no generated workspace files, final job structure, or runtime artifacts "
+            "were captured."
+        )
     return issues
 
 
@@ -1281,6 +1315,27 @@ def run_workspace_delta(run: dict[str, Any]) -> dict[str, Any]:
         return delta
     delta = run.get("workspace_delta")
     return delta if isinstance(delta, dict) else {}
+
+
+def workspace_delta_has_artifact_evidence(delta: dict[str, Any]) -> bool:
+    changed = as_number(delta.get("changed_file_count")) or 0
+    workspace_changes = as_number(delta.get("workspace_change_count")) or 0
+    runtime = as_number(delta.get("runtime_artifact_count")) or 0
+    copied = as_number(delta.get("copied_file_count")) or 0
+    final_structure = as_number(delta.get("final_structure_file_count")) or 0
+    final_manifest = as_number(delta.get("final_file_manifest_count")) or 0
+    final_structure_files = delta.get("final_structure_files")
+    final_files = delta.get("final_files")
+    return (
+        changed > 0
+        or workspace_changes > 0
+        or runtime > 0
+        or copied > 0
+        or final_structure > 0
+        or final_manifest > 0
+        or (isinstance(final_structure_files, list) and bool(final_structure_files))
+        or (isinstance(final_files, list) and bool(final_files))
+    )
 
 
 def run_source_input_delta(run: dict[str, Any]) -> dict[str, Any]:
@@ -2229,7 +2284,14 @@ def failure_analysis_section(runs: dict[str, dict[str, Any]], modes: list[str]) 
         signal = quality_signal(record)
         if signal.get("evidence"):
             lines.append(f"- Metric evidence: {signal['evidence']}")
-        if status_kind != "passed":
+        if status_kind == "passed":
+            bash_blocked = bash_blocked_diagnostic(run, recovered=True)
+            if bash_blocked:
+                lines.append(f"- Recovered Bash/tool issue: {bash_blocked}")
+            for diagnostic in command_failure_diagnostics(run):
+                if "not recovered in this run" not in diagnostic:
+                    lines.append(f"- Recovered command evidence: {diagnostic}")
+        else:
             bash_blocked = bash_blocked_diagnostic(run)
             if bash_blocked:
                 lines.append(f"- Bash blocking: {bash_blocked}")
