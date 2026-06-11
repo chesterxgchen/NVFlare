@@ -22,6 +22,10 @@ After selecting a candidate recipe, inspect its parameters:
 nvflare recipe show <recipe-name> --format json
 ```
 
+Prefer recipe CLI metadata before Python introspection. If Python introspection
+is still needed, do not guess top-level exports: the base `Recipe` class lives in
+`nvflare.recipe.spec`, not `nvflare.recipe`.
+
 ## Quick Algorithm Guide
 
 If the user does not know which FL algorithm they need, explain the choices in

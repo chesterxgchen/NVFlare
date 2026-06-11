@@ -43,6 +43,10 @@ runtime locations under `/tmp/nvflare/` unless the user provides another path:
   otherwise use `python -m pip install -r <file>` or the repository's documented
   equivalent. If an import still fails, verify which environment received the
   install before rerunning the failed check.
+- Once an applicable requirements file is found and framework imports are
+  missing, install it before any Python command that imports framework-specific
+  NVFLARE modules such as `nvflare.app_opt.pt.*`, recipe classes, or generated
+  client/model code.
 - Treat missing dependencies as blockers only when no applicable dependency file
   exists, install fails, system/GPU resources are unavailable, or required
   approval/network access is unavailable.
