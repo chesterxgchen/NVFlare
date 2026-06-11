@@ -40,14 +40,17 @@ runtime locations under `/tmp/nvflare/` unless the user provides another path:
   unavailable.
 - Dependency installation is recipe-, framework-, and algorithm-independent and
   applies to all generated NVFLARE jobs.
-- Before treating dependency or import failures as blockers, discover
+- Before running import-sensitive checks, export, or simulation, discover
   source-provided dependency files such as `requirements.txt`,
   `requirements-train.txt`, or other `requirements*.txt` files needed by the
-  training code. Install the applicable files into the active validation
-  environment with
+  training code. If an applicable requirements file exists, install it into the
+  same active Python environment that will run validation before executing
+  `python job.py` or simulator commands. Prefer
+  `uv pip install -r <requirements-file>` when `uv` is available; otherwise use
   `python -m pip install -r <requirements-file>` or the repository's documented
-  equivalent, then rerun the failed compile, import, export, or simulation
-  check.
+  equivalent. If a dependency/import failure still occurs, rerun the failed
+  compile, import, export, or simulation check only after confirming which
+  environment received the installation.
 - Report missing dependencies as blockers only when no applicable dependency
   file exists, dependency installation fails, the requirement needs unavailable
   system/GPU resources, or user approval/network access is required and not
@@ -58,9 +61,11 @@ runtime locations under `/tmp/nvflare/` unless the user provides another path:
   `/tmp/nvflare/workspaces/<job_name>/server/simulate_job/metrics/` by default.
   Use `metrics_summary.json` for final/best aggregate metrics and
   `round_metrics.jsonl` for per-round and per-site metric evidence when those
-  files exist. If they are absent, report that metrics artifacts were not
-  produced and fall back to bounded stdout/stderr or server logs as secondary
-  evidence.
+  files exist. In the final response, report both categories separately:
+  final/best metrics from `metrics_summary.json`, and round/per-site metrics
+  from `round_metrics.jsonl`. List both artifact paths when both files are
+  present. If either file is absent, say which metric artifact was missing and
+  fall back to bounded stdout/stderr or server logs as secondary evidence.
 - Report command, status, result directory, and dependency or data blockers.
 
 ## Preflight Before Full Simulation
@@ -68,7 +73,8 @@ runtime locations under `/tmp/nvflare/` unless the user provides another path:
 Before `python job.py`, run cheap checks first:
 
 - Install applicable source-provided Python requirement files for the training
-  code before running import-sensitive checks.
+  code before running import-sensitive checks; prefer `uv pip install -r ...`
+  when `uv` is available, and otherwise use `python -m pip install -r ...`.
 - Compile generated Python files.
 - Construct the recipe and export to a temporary directory.
 - Inspect exported server config for model path and constructor args.
@@ -110,7 +116,9 @@ Before calling a generated job correct, report:
 - metric values or a clear explanation that metrics were unavailable;
 - exact result paths, including simulation workspace, generated result files,
   server-side metrics artifacts, logs, and global-model artifact paths used as
-  evidence;
+  evidence. When present, include both `metrics_summary.json` for final/best
+  metrics and `round_metrics.jsonl` for round/per-site metrics in the artifact
+  paths;
 - unresolved blockers such as unavailable data, missing dependencies, or
   required user approval.
 
