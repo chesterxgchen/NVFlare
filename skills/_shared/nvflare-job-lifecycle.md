@@ -34,47 +34,34 @@ runtime locations under `/tmp/nvflare/` unless the user provides another path:
 
 ## Local Validation
 
-- Use `python job.py` for local recipe or SimEnv validation when the generated
-  job file supports direct execution.
+- Use `python job.py` for local recipe or SimEnv validation when supported.
 - Prefer synthetic data flags or small fixtures when the original dataset is
   unavailable.
-- Dependency installation is recipe-, framework-, and algorithm-independent and
-  applies to all generated NVFLARE jobs.
-- Before running import-sensitive checks, export, or simulation, discover
-  source-provided dependency files such as `requirements.txt`,
-  `requirements-train.txt`, or other `requirements*.txt` files needed by the
-  training code. If an applicable requirements file exists, install it into the
-  same active Python environment that will run validation before executing
-  `python job.py` or simulator commands. Prefer
-  `uv pip install -r <requirements-file>` when `uv` is available; otherwise use
-  `python -m pip install -r <requirements-file>` or the repository's documented
-  equivalent. If a dependency/import failure still occurs, rerun the failed
-  compile, import, export, or simulation check only after confirming which
-  environment received the installation.
-- Report missing dependencies as blockers only when no applicable dependency
-  file exists, dependency installation fails, the requirement needs unavailable
-  system/GPU resources, or user approval/network access is required and not
-  available.
-- For simulation metrics, inspect the server-side simulation workspace after a
-  successful run. Aggregation recipes that emit standard metrics artifacts write
-  them under
-  `/tmp/nvflare/workspaces/<job_name>/server/simulate_job/metrics/` by default.
-  Use `metrics_summary.json` for final/best aggregate metrics and
-  `round_metrics.jsonl` for per-round and per-site metric evidence when those
-  files exist. In the final response, report both categories separately:
-  final/best metrics from `metrics_summary.json`, and round/per-site metrics
-  from `round_metrics.jsonl`. List both artifact paths when both files are
-  present. If either file is absent, say which metric artifact was missing and
-  fall back to bounded stdout/stderr or server logs as secondary evidence.
+- Before import checks, export, or simulation, install applicable
+  source-provided `requirements*.txt` files into the same active Python
+  environment. Prefer `uv pip install -r <file>` when `uv` is available;
+  otherwise use `python -m pip install -r <file>` or the repository's documented
+  equivalent. If an import still fails, verify which environment received the
+  install before rerunning the failed check.
+- Treat missing dependencies as blockers only when no applicable dependency file
+  exists, install fails, system/GPU resources are unavailable, or required
+  approval/network access is unavailable.
+- Keep validation commands single-purpose. Run cleanup, dependency install,
+  export, and simulation as separate commands; do not combine destructive
+  cleanup and execution such as `rm -rf <workspace> && python job.py`.
+- After successful simulation, inspect the server workspace metrics directory.
+  Standard aggregation recipes write
+  `/tmp/nvflare/workspaces/<job_name>/server/simulate_job/metrics/metrics_summary.json`
+  for final/best aggregate metrics and `round_metrics.jsonl` for per-round or
+  per-site evidence when present. Report both categories and paths separately;
+  if either file is absent, say so and fall back to bounded stdout/stderr or
+  server logs.
 - Report command, status, result directory, and dependency or data blockers.
 
 ## Preflight Before Full Simulation
 
 Before `python job.py`, run cheap checks first:
 
-- Install applicable source-provided Python requirement files for the training
-  code before running import-sensitive checks; prefer `uv pip install -r ...`
-  when `uv` is available, and otherwise use `python -m pip install -r ...`.
 - Compile generated Python files.
 - Construct the recipe and export to a temporary directory.
 - Inspect exported server config for model path and constructor args.
@@ -114,11 +101,9 @@ Before calling a generated job correct, report:
 - export command, export directory, and exported folder inspection result when
   export is in scope;
 - metric values or a clear explanation that metrics were unavailable;
-- exact result paths, including simulation workspace, generated result files,
-  server-side metrics artifacts, logs, and global-model artifact paths used as
-  evidence. When present, include both `metrics_summary.json` for final/best
-  metrics and `round_metrics.jsonl` for round/per-site metrics in the artifact
-  paths;
+- exact evidence paths: simulation workspace, generated result files,
+  server-side metrics artifacts, logs, and global-model artifacts. Include both
+  `metrics_summary.json` and `round_metrics.jsonl` paths when present;
 - unresolved blockers such as unavailable data, missing dependencies, or
   required user approval.
 
