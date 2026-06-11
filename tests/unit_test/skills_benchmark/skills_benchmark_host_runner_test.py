@@ -307,6 +307,50 @@ def test_enforce_result_size_budget_reports_oversized_results(tmp_path):
     assert payload["budget_bytes"] == 1
 
 
+def test_emit_case_failure_summary_prints_actionable_error(tmp_path):
+    from types import SimpleNamespace
+
+    from assist_tools.skills_benchmark.skills.harness.host import runner
+
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+    result_dir.joinpath("run_summary.json").write_text(
+        json.dumps(
+            {
+                "agent_process_exit_code": 1,
+                "final_container_exit_code": 1,
+                "failure_root_cause": "agent_auth_failure",
+            }
+        ),
+        encoding="utf-8",
+    )
+    result_dir.joinpath("agent_exit_summary.json").write_text(
+        json.dumps(
+            {
+                "failure_category": "agent_auth_failure",
+                "stderr_excerpt": "failed to read auth token\nsecond detail\nthird detail\nfourth detail\nfifth detail\n",
+            }
+        ),
+        encoding="utf-8",
+    )
+    log = tmp_path / "console.log"
+
+    runner.emit_case_failure_summary(
+        SimpleNamespace(mode="with_skills", result_dir=result_dir),
+        1,
+        logs=(log,),
+        prefix="run_00002",
+    )
+
+    text = log.read_text(encoding="utf-8")
+    assert "[run_00002] Run failed: mode=with_skills; final_status=1" in text
+    assert "Failure exit codes: agent_process_exit=1; final_container_exit=1" in text
+    assert "Failure category: agent_auth_failure" in text
+    assert "failed to read auth token" in text
+    assert "fifth detail" not in text
+    assert "Failure artifacts:" in text
+
+
 def test_directory_size_bytes_does_not_traverse_symlinked_directories(tmp_path):
     from assist_tools.skills_benchmark.skills.harness.host.runner import directory_size_bytes
 
