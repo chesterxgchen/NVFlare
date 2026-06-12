@@ -467,17 +467,30 @@ def python_script_name(command: str) -> str:
     return Path(match.group(1)).name.lower() if match else ""
 
 
-def is_job_entrypoint_command(command: str) -> bool:
+def job_entrypoint_match(command: str) -> str:
+    """Return direct, ambiguous, or empty for Python scripts that look like job runners."""
     script_name = python_script_name(command)
     if not script_name:
-        return False
+        return ""
     stem = Path(script_name).stem
     if stem == "job":
-        return True
+        return "direct"
     tokens = re.split(r"[_.-]+", stem)
-    if tokens[-1:] == ["job"]:
-        return True
-    return "job" in tokens and bool(set(tokens) & {"run", "start", "launch", "execute"})
+    helper_tokens = {"check", "validate", "verify", "test", "tests", "setup", "config", "lint", "probe"}
+    action_tokens = {"run", "start", "launch", "execute"}
+    if tokens[0] == "job":
+        return "" if helper_tokens.intersection(tokens[1:]) else "direct"
+    if tokens in (["run", "job"], ["start", "job"], ["launch", "job"], ["execute", "job"]):
+        return "direct"
+    if "job" not in tokens or helper_tokens.intersection(tokens):
+        return ""
+    if tokens[-1:] == ["job"] or action_tokens.intersection(tokens):
+        return "ambiguous"
+    return ""
+
+
+def is_job_entrypoint_command(command: str) -> bool:
+    return bool(job_entrypoint_match(command))
 
 
 def is_simulation_entrypoint_command(command: str) -> bool:
@@ -534,8 +547,11 @@ def job_command_succeeded(event: dict[str, Any]) -> bool:
     command = str(event.get("command") or "")
     if not command_succeeded(event):
         return False
-    if is_job_entrypoint_command(command):
+    job_match = job_entrypoint_match(command)
+    if job_match == "direct":
         return True
+    if job_match == "ambiguous":
+        return job_output_succeeded(str(event.get("output") or ""))
     if is_simulation_entrypoint_command(command):
         return job_output_succeeded(str(event.get("output") or ""))
     return False

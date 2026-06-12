@@ -1082,6 +1082,36 @@ def test_job_run_status_ignores_successful_simulation_helper_scripts():
                 "type": "command_execution",
             }
         },
+        {
+            "item": {
+                "aggregated_output": "job helper ok",
+                "command": "python validate_job.py",
+                "exit_code": 0,
+                "id": "item_6",
+                "status": "completed",
+                "type": "command_execution",
+            }
+        },
+        {
+            "item": {
+                "aggregated_output": "job helper ok",
+                "command": "python check_job.py",
+                "exit_code": 0,
+                "id": "item_7",
+                "status": "completed",
+                "type": "command_execution",
+            }
+        },
+        {
+            "item": {
+                "aggregated_output": "job tests passed",
+                "command": "python run_job_tests.py",
+                "exit_code": 0,
+                "id": "item_8",
+                "status": "completed",
+                "type": "command_execution",
+            }
+        },
     ]
     run = {
         "available": True,
@@ -1092,6 +1122,9 @@ def test_job_run_status_ignores_successful_simulation_helper_scripts():
                 "python check_nvflare_install.py",
                 "python validate_job_config.py",
                 "python check_job_setup.py",
+                "python validate_job.py",
+                "python check_job.py",
+                "python run_job_tests.py",
             ]
         },
         "agent_events_text": "\n".join(json.dumps(event) for event in events),
@@ -1116,6 +1149,50 @@ def test_job_run_status_requires_success_evidence_for_simulation_script():
     run = {
         "available": True,
         "activity": {"commands": ["python run_nvflare_simulation.py"]},
+        "agent_events_text": json.dumps(event),
+    }
+
+    assert job_run_status(run) == "started_failed"
+
+
+def test_job_run_status_detects_leading_job_entrypoint():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_run_status
+
+    event = {
+        "item": {
+            "aggregated_output": "vertical job completed",
+            "command": "python job_vertical.py",
+            "exit_code": 0,
+            "id": "item_1",
+            "status": "completed",
+            "type": "command_execution",
+        }
+    }
+    run = {
+        "available": True,
+        "activity": {"commands": ["python job_vertical.py"]},
+        "agent_events_text": json.dumps(event),
+    }
+
+    assert job_run_status(run) == "completed"
+
+
+def test_job_run_status_requires_success_evidence_for_ambiguous_job_suffix_script():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_run_status
+
+    event = {
+        "item": {
+            "aggregated_output": "configuration loaded successfully",
+            "command": "python fedavg_job.py",
+            "exit_code": 0,
+            "id": "item_1",
+            "status": "completed",
+            "type": "command_execution",
+        }
+    }
+    run = {
+        "available": True,
+        "activity": {"commands": ["python fedavg_job.py"]},
         "agent_events_text": json.dumps(event),
     }
 
