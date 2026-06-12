@@ -479,7 +479,7 @@ def job_entrypoint_match(command: str) -> str:
     helper_tokens = {"check", "validate", "verify", "test", "tests", "setup", "config", "lint", "probe"}
     action_tokens = {"run", "start", "launch", "execute"}
     if tokens[0] == "job":
-        return "" if helper_tokens.intersection(tokens[1:]) else "direct"
+        return "" if helper_tokens.intersection(tokens[1:]) else "ambiguous"
     if tokens in (["run", "job"], ["start", "job"], ["launch", "job"], ["execute", "job"]):
         return "direct"
     if "job" not in tokens or helper_tokens.intersection(tokens):
@@ -511,7 +511,12 @@ def is_simulation_or_job_command(command: str) -> bool:
 def job_output_succeeded(output: str) -> bool:
     return bool(
         re.search(
-            r"\bFinished\s+FedAvg\b|\bSimulation workspace:\s*|\bResult workspace:\s*",
+            r"\bFinished\s+FedAvg\b|"
+            r"\bSimulation workspace\s*:\s*|"
+            r"\bResult workspace\s*:\s*|"
+            r"\bResult can be found in\s*:?\s+\S+|"
+            r"\bResult location\s*:\s*\S+|"
+            r"\b(?:Job\s+)?Status(?:\s+is)?\s*:\s*(?:FINISHED:COMPLETED|FINISHED_OK|COMPLETED)\b",
             strip_ansi(output),
             flags=re.IGNORECASE,
         )

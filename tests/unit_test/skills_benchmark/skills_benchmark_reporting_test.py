@@ -1160,7 +1160,7 @@ def test_job_run_status_detects_leading_job_entrypoint():
 
     event = {
         "item": {
-            "aggregated_output": "vertical job completed",
+            "aggregated_output": "Job Status: FINISHED:COMPLETED\nResult can be found in: /tmp/nvflare/fedxgb",
             "command": "python job_vertical.py",
             "exit_code": 0,
             "id": "item_1",
@@ -1171,6 +1171,50 @@ def test_job_run_status_detects_leading_job_entrypoint():
     run = {
         "available": True,
         "activity": {"commands": ["python job_vertical.py"]},
+        "agent_events_text": json.dumps(event),
+    }
+
+    assert job_run_status(run) == "completed"
+
+
+def test_job_run_status_requires_success_evidence_for_leading_job_entrypoint():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_run_status
+
+    event = {
+        "item": {
+            "aggregated_output": "usage: job_vertical.py [--run_psi] [--run_training]\nerror: select a run mode",
+            "command": "python job_vertical.py",
+            "exit_code": 0,
+            "id": "item_1",
+            "status": "completed",
+            "type": "command_execution",
+        }
+    }
+    run = {
+        "available": True,
+        "activity": {"commands": ["python job_vertical.py"]},
+        "agent_events_text": json.dumps(event),
+    }
+
+    assert job_run_status(run) == "started_failed"
+
+
+def test_job_run_status_detects_ambiguous_job_suffix_with_success_evidence():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_run_status
+
+    event = {
+        "item": {
+            "aggregated_output": "Job Status is: FINISHED:COMPLETED\nResult location: /tmp/nvflare/results",
+            "command": "python fedavg_job.py",
+            "exit_code": 0,
+            "id": "item_1",
+            "status": "completed",
+            "type": "command_execution",
+        }
+    }
+    run = {
+        "available": True,
+        "activity": {"commands": ["python fedavg_job.py"]},
         "agent_events_text": json.dumps(event),
     }
 
