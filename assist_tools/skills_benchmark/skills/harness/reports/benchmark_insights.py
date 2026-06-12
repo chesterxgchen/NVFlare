@@ -250,7 +250,9 @@ def collect_benchmark_runs(root: Path) -> dict[str, dict[str, Any]]:
             "skills": "with skills" if spec.skills_enabled else "without skills",
             "agent": agent,
             "agent_model": agent_model,
-            "model_source": first_non_empty(summary.get("model_source"), record.get("model_source"), run_plan_entry.get("model_source")),
+            "model_source": first_non_empty(
+                summary.get("model_source"), record.get("model_source"), run_plan_entry.get("model_source")
+            ),
             "run": summary,
             "record": record,
             "container_exit": load_json(mode_dir / "container_exit_code.json", {}) if mode_dir.exists() else {},
@@ -508,7 +510,26 @@ def is_simulation_or_job_command(command: str) -> bool:
     return is_job_entrypoint_command(command) or is_simulation_entrypoint_command(command)
 
 
+def job_output_has_failure_status(output: str) -> bool:
+    """Return True when an explicit job status line reports a terminal failure state.
+
+    NVFLARE result-location lines are printed for any terminal status, including failures
+    (e.g. ``FINISHED:EXECUTION_EXCEPTION``), so a failed status must veto result-path evidence.
+    """
+    return bool(
+        re.search(
+            r"\b(?:Job\s+)?Status(?:\s+is)?\s*:\s*"
+            r"(?:FINISHED:(?!COMPLETED\b)[A-Z_]+|ABORTED|ABANDONED|FAILED_TO_RUN)\b",
+            strip_ansi(output),
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def job_output_succeeded(output: str) -> bool:
+    text = strip_ansi(output)
+    if job_output_has_failure_status(text):
+        return False
     return bool(
         re.search(
             r"\bFinished\s+FedAvg\b|"
@@ -517,7 +538,7 @@ def job_output_succeeded(output: str) -> bool:
             r"\bResult can be found in\s*:?\s+\S+|"
             r"\bResult location\s*:\s*\S+|"
             r"\b(?:Job\s+)?Status(?:\s+is)?\s*:\s*(?:FINISHED:COMPLETED|FINISHED_OK|COMPLETED)\b",
-            strip_ansi(output),
+            text,
             flags=re.IGNORECASE,
         )
     )
@@ -872,7 +893,9 @@ def job_run_action(run: dict[str, Any]) -> str:
         failure_category = agent_failure_category(run)
         if exit_code(run) not in (None, 0) and failure_category and failure_category != "agent_unknown_failure":
             if failure_category == "agent_auth_failure":
-                return "Authenticate the selected agent in the mounted benchmark home, then rerun; the job never started."
+                return (
+                    "Authenticate the selected agent in the mounted benchmark home, then rerun; the job never started."
+                )
             return "Fix the agent startup failure, then rerun; the job never started."
         if bash_permission_denial_count(run):
             return "Fix agent Bash/tool permissions and rerun; no FL metrics can be trusted until the job executes."
@@ -1609,7 +1632,9 @@ def structure_required_display(run: dict[str, Any]) -> str:
     score = structure_score(run)
     if score is None:
         return "not captured"
-    present = [filename for filename in REQUIRED_STRUCTURE_FILES if current_workspace_structure_file_matches(run, filename)]
+    present = [
+        filename for filename in REQUIRED_STRUCTURE_FILES if current_workspace_structure_file_matches(run, filename)
+    ]
     missing = [filename for filename in REQUIRED_STRUCTURE_FILES if filename not in present]
     text = f"{len(present)}/{len(REQUIRED_STRUCTURE_FILES)} present"
     if missing:

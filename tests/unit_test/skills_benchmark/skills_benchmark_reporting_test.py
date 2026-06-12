@@ -1243,6 +1243,38 @@ def test_job_run_status_requires_success_evidence_for_ambiguous_job_suffix_scrip
     assert job_run_status(run) == "started_failed"
 
 
+def test_job_run_status_rejects_result_path_with_failed_status():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_run_status
+
+    event = {
+        "item": {
+            "aggregated_output": (
+                "Result can be found in: /tmp/nvflare/fedxgb\n" "Job Status is: FINISHED:EXECUTION_EXCEPTION"
+            ),
+            "command": "python fedavg_job.py",
+            "exit_code": 0,
+            "id": "item_1",
+            "status": "completed",
+            "type": "command_execution",
+        }
+    }
+    run = {
+        "available": True,
+        "activity": {"commands": ["python fedavg_job.py"]},
+        "agent_events_text": json.dumps(event),
+    }
+
+    assert job_run_status(run) == "started_failed"
+
+
+def test_job_output_failure_status_vetoes_result_location():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_output_succeeded
+
+    assert not job_output_succeeded("Result location: /tmp/r\nJob Status: FINISHED:EXECUTION_EXCEPTION")
+    assert not job_output_succeeded("Result can be found in: /tmp/r\nStatus is: FINISHED:ABORTED")
+    assert job_output_succeeded("Result location: /tmp/r\nJob Status: FINISHED:COMPLETED")
+
+
 def test_recovered_by_later_success_requires_simulation_success_evidence():
     from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import command_failure_diagnostics
 
