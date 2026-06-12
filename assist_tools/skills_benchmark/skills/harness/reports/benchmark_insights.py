@@ -463,7 +463,10 @@ def command_recovery_key(command: str) -> str:
 
 
 def is_simulation_or_job_command(command: str) -> bool:
-    return bool(re.search(r"\bpython(?:3)?\s+[A-Za-z0-9_./-]*job[A-Za-z0-9_./-]*\.py\b", str(command)))
+    text = str(command)
+    if re.search(r"\bpython(?:3)?\s+[A-Za-z0-9_./-]*job[A-Za-z0-9_./-]*\.py\b", text):
+        return True
+    return bool(re.search(r"\bpython(?:3)?\s+[A-Za-z0-9_./-]*simulat[A-Za-z0-9_./-]*\.py\b", text))
 
 
 def job_output_succeeded(output: str) -> bool:

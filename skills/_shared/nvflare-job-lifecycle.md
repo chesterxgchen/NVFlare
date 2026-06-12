@@ -54,6 +54,13 @@ runtime locations under `/tmp/nvflare/` unless the user provides another path:
 - generated validation outputs or evaluation records:
   `/tmp/nvflare/results/<job_name>/`.
 
+If the user explicitly requests an output or workspace location, use it. Do not
+create project-local runtime/output folders unless the user requested that
+location or the repository documents it as the intended runtime output area.
+This includes ad hoc folders such as `fl_workspace/`, `outputs/`, or similar
+simulation/export/result directories. Report runtime artifact paths separately
+from generated source files.
+
 ## Local Validation
 
 - Use `python job.py` for local recipe or SimEnv validation when supported.

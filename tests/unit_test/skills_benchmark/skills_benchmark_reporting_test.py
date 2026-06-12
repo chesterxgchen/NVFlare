@@ -998,6 +998,58 @@ def test_job_run_status_uses_claude_bash_output_to_detect_completed_simulation()
     assert job_run_status_reason(run) == "simulation completed — FL workflow reached Finished state"
 
 
+def test_job_run_status_detects_generated_simulation_entrypoint():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
+        job_run_status,
+        job_run_status_reason,
+    )
+
+    event = {
+        "item": {
+            "aggregated_output": (
+                "Finished FedAvg.\n"
+                "Simulation workspace: outputs/nvflare_workspace/ames_fedavg\n"
+                "Final weighted validation metrics: AUROC 0.7592"
+            ),
+            "command": "python3 run_nvflare_simulation.py",
+            "exit_code": 0,
+            "id": "item_1",
+            "status": "completed",
+            "type": "command_execution",
+        }
+    }
+    run = {
+        "available": True,
+        "activity": {"commands": ["python3 run_nvflare_simulation.py"]},
+        "agent_events_text": json.dumps(event),
+    }
+
+    assert job_run_status(run) == "completed"
+    assert job_run_status_reason(run) == "simulation completed — FL workflow reached Finished state"
+
+
+def test_job_run_status_ignores_successful_nvflare_helper_script():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_run_status
+
+    event = {
+        "item": {
+            "aggregated_output": "nvflare import ok",
+            "command": "python check_nvflare_install.py",
+            "exit_code": 0,
+            "id": "item_1",
+            "status": "completed",
+            "type": "command_execution",
+        }
+    }
+    run = {
+        "available": True,
+        "activity": {"commands": ["python check_nvflare_install.py"]},
+        "agent_events_text": json.dumps(event),
+    }
+
+    assert job_run_status(run) == "not_started"
+
+
 def test_job_run_status_reason_includes_failed_job_command_error():
     from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
         job_run_action,
