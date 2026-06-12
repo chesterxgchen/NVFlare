@@ -1275,6 +1275,17 @@ def test_job_output_failure_status_vetoes_result_location():
     assert job_output_succeeded("Result location: /tmp/r\nJob Status: FINISHED:COMPLETED")
 
 
+def test_job_output_failure_status_vetoes_legacy_terminal_statuses():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_output_succeeded
+
+    assert not job_output_succeeded("Result location: /tmp/r\nJob Status: FAILED")
+    assert not job_output_succeeded("Result can be found in: /tmp/r\nJob Status is: FINISHED_EXCEPTION")
+    assert not job_output_succeeded("Result location: /tmp/r\nStatus: ABANDONED")
+    assert not job_output_succeeded("Result location: /tmp/r\nStatus: ABORTED")
+    # Legacy success form must still pass.
+    assert job_output_succeeded("Result location: /tmp/r\nJob Status: FINISHED_OK")
+
+
 def test_recovered_by_later_success_requires_simulation_success_evidence():
     from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import command_failure_diagnostics
 

@@ -515,11 +515,15 @@ def job_output_has_failure_status(output: str) -> bool:
 
     NVFLARE result-location lines are printed for any terminal status, including failures
     (e.g. ``FINISHED:EXECUTION_EXCEPTION``), so a failed status must veto result-path evidence.
+    Covers both the ``FINISHED:<state>`` enum forms (job_def.RunStatus) and the legacy bare
+    terminal statuses the CLI/flare_api still emit (``FINISHED_EXCEPTION``, ``FAILED``,
+    ``ABORTED``, ``ABANDONED``). Success statuses (``FINISHED:COMPLETED``, ``FINISHED_OK``)
+    are deliberately excluded.
     """
     return bool(
         re.search(
             r"\b(?:Job\s+)?Status(?:\s+is)?\s*:\s*"
-            r"(?:FINISHED:(?!COMPLETED\b)[A-Z_]+|ABORTED|ABANDONED|FAILED_TO_RUN)\b",
+            r"(?:FINISHED:(?!COMPLETED\b)[A-Z_]+|FINISHED_EXCEPTION|FAILED(?:_TO_RUN)?|ABORTED|ABANDONED)\b",
             strip_ansi(output),
             flags=re.IGNORECASE,
         )
