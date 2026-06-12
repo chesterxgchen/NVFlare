@@ -469,7 +469,15 @@ def python_script_name(command: str) -> str:
 
 def is_job_entrypoint_command(command: str) -> bool:
     script_name = python_script_name(command)
-    return bool(script_name and "job" in Path(script_name).stem)
+    if not script_name:
+        return False
+    stem = Path(script_name).stem
+    if stem == "job":
+        return True
+    tokens = re.split(r"[_.-]+", stem)
+    if tokens[-1:] == ["job"]:
+        return True
+    return "job" in tokens and bool(set(tokens) & {"run", "start", "launch", "execute"})
 
 
 def is_simulation_entrypoint_command(command: str) -> bool:
@@ -562,7 +570,14 @@ def recovered_by_later_success(event: dict[str, Any], events: list[dict[str, Any
     for candidate in events:
         if int(candidate.get("index") or 0) <= index:
             continue
-        if command_recovery_key(str(candidate.get("command") or "")) == key and command_succeeded(candidate):
+        candidate_command = str(candidate.get("command") or "")
+        if command_recovery_key(candidate_command) != key:
+            continue
+        if is_simulation_or_job_command(candidate_command):
+            if job_command_succeeded(candidate):
+                return True
+            continue
+        if command_succeeded(candidate):
             return True
     return False
 

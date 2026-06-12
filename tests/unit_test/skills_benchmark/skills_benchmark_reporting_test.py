@@ -1061,7 +1061,27 @@ def test_job_run_status_ignores_successful_simulation_helper_scripts():
                 "status": "completed",
                 "type": "command_execution",
             }
-        }
+        },
+        {
+            "item": {
+                "aggregated_output": "job config ok",
+                "command": "python validate_job_config.py",
+                "exit_code": 0,
+                "id": "item_4",
+                "status": "completed",
+                "type": "command_execution",
+            }
+        },
+        {
+            "item": {
+                "aggregated_output": "job setup ok",
+                "command": "python check_job_setup.py",
+                "exit_code": 0,
+                "id": "item_5",
+                "status": "completed",
+                "type": "command_execution",
+            }
+        },
     ]
     run = {
         "available": True,
@@ -1070,6 +1090,8 @@ def test_job_run_status_ignores_successful_simulation_helper_scripts():
                 "python check_simulation_config.py",
                 "python validate_simulator_install.py",
                 "python check_nvflare_install.py",
+                "python validate_job_config.py",
+                "python check_job_setup.py",
             ]
         },
         "agent_events_text": "\n".join(json.dumps(event) for event in events),
@@ -1098,6 +1120,41 @@ def test_job_run_status_requires_success_evidence_for_simulation_script():
     }
 
     assert job_run_status(run) == "started_failed"
+
+
+def test_recovered_by_later_success_requires_simulation_success_evidence():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import command_failure_diagnostics
+
+    failed_event = {
+        "item": {
+            "aggregated_output": "Traceback (most recent call last):\nRuntimeError: simulation failed",
+            "command": "python run_nvflare_simulation.py",
+            "exit_code": 1,
+            "id": "item_1",
+            "status": "failed",
+            "type": "command_execution",
+        }
+    }
+    incomplete_success_event = {
+        "item": {
+            "aggregated_output": "configuration loaded successfully",
+            "command": "python run_nvflare_simulation.py",
+            "exit_code": 0,
+            "id": "item_2",
+            "status": "completed",
+            "type": "command_execution",
+        }
+    }
+    run = {
+        "available": True,
+        "activity": {"commands": ["python run_nvflare_simulation.py", "python run_nvflare_simulation.py"]},
+        "agent_events_text": "\n".join(json.dumps(event) for event in (failed_event, incomplete_success_event)),
+    }
+
+    diagnostics = command_failure_diagnostics(run)
+
+    assert diagnostics
+    assert "not recovered in this run" in diagnostics[0]
 
 
 def test_job_run_status_reason_includes_failed_job_command_error():
