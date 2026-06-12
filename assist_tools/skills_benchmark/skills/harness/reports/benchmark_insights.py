@@ -462,11 +462,29 @@ def command_recovery_key(command: str) -> str:
     return first_word.group(1) if first_word else command[:80]
 
 
+def python_script_name(command: str) -> str:
+    match = re.search(r"\bpython(?:3)?\s+([A-Za-z0-9_./-]+\.py)\b", str(command))
+    return Path(match.group(1)).name.lower() if match else ""
+
+
+def is_job_entrypoint_command(command: str) -> bool:
+    script_name = python_script_name(command)
+    return bool(script_name and "job" in Path(script_name).stem)
+
+
+def is_simulation_entrypoint_command(command: str) -> bool:
+    script_name = python_script_name(command)
+    if not script_name:
+        return False
+    stem = Path(script_name).stem
+    if "simulat" not in stem:
+        return False
+    tokens = set(re.split(r"[_.-]+", stem))
+    return bool(tokens & {"run", "start", "launch", "execute"}) or stem in {"simulate", "simulation", "simulator"}
+
+
 def is_simulation_or_job_command(command: str) -> bool:
-    text = str(command)
-    if re.search(r"\bpython(?:3)?\s+[A-Za-z0-9_./-]*job[A-Za-z0-9_./-]*\.py\b", text):
-        return True
-    return bool(re.search(r"\bpython(?:3)?\s+[A-Za-z0-9_./-]*simulat[A-Za-z0-9_./-]*\.py\b", text))
+    return is_job_entrypoint_command(command) or is_simulation_entrypoint_command(command)
 
 
 def job_output_succeeded(output: str) -> bool:
@@ -502,6 +520,17 @@ def missing_python_module_name(output: str) -> str:
         return match.group(1)
     match = re.search(r"No module named ['\"]([^'\"]+)['\"]", text)
     return match.group(1) if match else ""
+
+
+def job_command_succeeded(event: dict[str, Any]) -> bool:
+    command = str(event.get("command") or "")
+    if not command_succeeded(event):
+        return False
+    if is_job_entrypoint_command(command):
+        return True
+    if is_simulation_entrypoint_command(command):
+        return job_output_succeeded(str(event.get("output") or ""))
+    return False
 
 
 def command_error_summary(output: str) -> str:
@@ -543,7 +572,7 @@ def recovered_by_later_successful_job(event: dict[str, Any], events: list[dict[s
     for candidate in events:
         if int(candidate.get("index") or 0) <= index:
             continue
-        if command_succeeded(candidate) and is_simulation_or_job_command(str(candidate.get("command") or "")):
+        if job_command_succeeded(candidate):
             return True
     return False
 
@@ -563,7 +592,7 @@ def metric_log_lines(output: str, limit: int = 4) -> list[str]:
 
 def last_successful_job_event(run: dict[str, Any]) -> dict[str, Any] | None:
     for event in reversed(agent_command_events(run)):
-        if command_succeeded(event) and is_simulation_or_job_command(str(event.get("command") or "")):
+        if job_command_succeeded(event):
             command = str(event.get("command") or "")
             if "--help" not in command and "--export" not in command:
                 return event

@@ -1028,13 +1028,63 @@ def test_job_run_status_detects_generated_simulation_entrypoint():
     assert job_run_status_reason(run) == "simulation completed — FL workflow reached Finished state"
 
 
-def test_job_run_status_ignores_successful_nvflare_helper_script():
+def test_job_run_status_ignores_successful_simulation_helper_scripts():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_run_status
+
+    events = [
+        {
+            "item": {
+                "aggregated_output": "simulation config ok",
+                "command": "python check_simulation_config.py",
+                "exit_code": 0,
+                "id": "item_1",
+                "status": "completed",
+                "type": "command_execution",
+            }
+        },
+        {
+            "item": {
+                "aggregated_output": "simulator import ok",
+                "command": "python validate_simulator_install.py",
+                "exit_code": 0,
+                "id": "item_2",
+                "status": "completed",
+                "type": "command_execution",
+            }
+        },
+        {
+            "item": {
+                "aggregated_output": "nvflare import ok",
+                "command": "python check_nvflare_install.py",
+                "exit_code": 0,
+                "id": "item_3",
+                "status": "completed",
+                "type": "command_execution",
+            }
+        }
+    ]
+    run = {
+        "available": True,
+        "activity": {
+            "commands": [
+                "python check_simulation_config.py",
+                "python validate_simulator_install.py",
+                "python check_nvflare_install.py",
+            ]
+        },
+        "agent_events_text": "\n".join(json.dumps(event) for event in events),
+    }
+
+    assert job_run_status(run) == "not_started"
+
+
+def test_job_run_status_requires_success_evidence_for_simulation_script():
     from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_run_status
 
     event = {
         "item": {
-            "aggregated_output": "nvflare import ok",
-            "command": "python check_nvflare_install.py",
+            "aggregated_output": "configuration loaded successfully",
+            "command": "python run_nvflare_simulation.py",
             "exit_code": 0,
             "id": "item_1",
             "status": "completed",
@@ -1043,11 +1093,11 @@ def test_job_run_status_ignores_successful_nvflare_helper_script():
     }
     run = {
         "available": True,
-        "activity": {"commands": ["python check_nvflare_install.py"]},
+        "activity": {"commands": ["python run_nvflare_simulation.py"]},
         "agent_events_text": json.dumps(event),
     }
 
-    assert job_run_status(run) == "not_started"
+    assert job_run_status(run) == "started_failed"
 
 
 def test_job_run_status_reason_includes_failed_job_command_error():
