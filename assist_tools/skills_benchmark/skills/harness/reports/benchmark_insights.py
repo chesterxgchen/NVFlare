@@ -1520,15 +1520,20 @@ def basename_count_display(paths: list[str], limit: int = 6) -> str:
     return ", ".join(entries)
 
 
-def structure_file_matches(run: dict[str, Any], filename: str) -> list[str]:
-    paths = unique_paths(manifest_paths(run, "final_structure_files") + manifest_paths(run, "runtime_artifacts"))
-    return [path for path in paths if Path(path).name == filename]
+def current_workspace_structure_file_matches(run: dict[str, Any], filename: str) -> list[str]:
+    paths = unique_paths(manifest_paths(run, "final_structure_files"))
+    return [path for path in paths if Path(path).name == filename and len(Path(path).parts) == 1]
+
+
+def nested_structure_file_matches(run: dict[str, Any], filename: str) -> list[str]:
+    paths = unique_paths(manifest_paths(run, "final_structure_files") + manifest_paths(run, "changed_files"))
+    return [path for path in paths if Path(path).name == filename and len(Path(path).parts) > 1]
 
 
 def structure_score(run: dict[str, Any]) -> float | None:
     if not run.get("available"):
         return None
-    present = sum(1 for filename in REQUIRED_STRUCTURE_FILES if structure_file_matches(run, filename))
+    present = sum(1 for filename in REQUIRED_STRUCTURE_FILES if current_workspace_structure_file_matches(run, filename))
     return present / len(REQUIRED_STRUCTURE_FILES)
 
 
@@ -1536,19 +1541,46 @@ def structure_required_display(run: dict[str, Any]) -> str:
     score = structure_score(run)
     if score is None:
         return "not captured"
-    present = [filename for filename in REQUIRED_STRUCTURE_FILES if structure_file_matches(run, filename)]
+    present = [filename for filename in REQUIRED_STRUCTURE_FILES if current_workspace_structure_file_matches(run, filename)]
     missing = [filename for filename in REQUIRED_STRUCTURE_FILES if filename not in present]
     text = f"{len(present)}/{len(REQUIRED_STRUCTURE_FILES)} present"
     if missing:
         text += "; missing " + ", ".join(missing)
+    nested = {
+        filename: nested_structure_file_matches(run, filename)
+        for filename in REQUIRED_STRUCTURE_FILES
+        if nested_structure_file_matches(run, filename)
+    }
+    if nested:
+        folders = sorted({str(Path(path).parent) for paths in nested.values() for path in paths})
+        text += "; nested copies ignored for current-structure score: " + ", ".join(folders[:3])
+        if len(folders) > 3:
+            text += f", +{len(folders) - 3} more"
     return text
 
 
 def structure_optional_display(run: dict[str, Any]) -> str:
     if structure_score(run) is None:
         return "not captured"
-    present = [filename for filename in OPTIONAL_STRUCTURE_FILES if structure_file_matches(run, filename)]
+    present = [
+        filename for filename in OPTIONAL_STRUCTURE_FILES if current_workspace_structure_file_matches(run, filename)
+    ]
     return ", ".join(present) if present else "none"
+
+
+def nested_generated_structure_display(run: dict[str, Any]) -> str:
+    folders: dict[str, set[str]] = {}
+    for filename in REQUIRED_STRUCTURE_FILES:
+        for path in nested_structure_file_matches(run, filename):
+            folders.setdefault(str(Path(path).parent), set()).add(filename)
+    if not folders:
+        return "none"
+    entries = []
+    for folder in sorted(folders)[:4]:
+        entries.append(f"{folder} ({', '.join(sorted(folders[folder]))})")
+    if len(folders) > 4:
+        entries.append(f"+{len(folders) - 4} more")
+    return "; ".join(entries)
 
 
 def structure_inventory_display(run: dict[str, Any], key: str, suffixes: tuple[str, ...]) -> str:
@@ -1606,6 +1638,7 @@ def tree_paths_for_keys(
 def structure_correctness_table(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
     rows = [
         ("Required converted files", structure_required_display),
+        ("Nested generated job source", nested_generated_structure_display),
         ("Optional helper files", structure_optional_display),
         ("Final workspace Python inventory", lambda run: structure_inventory_display(run, "final_files", (".py",))),
         (

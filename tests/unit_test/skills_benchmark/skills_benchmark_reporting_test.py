@@ -246,6 +246,36 @@ def test_structure_tree_falls_back_to_final_workspace_when_changed_python_is_emp
     assert "requirements.txt" in report
 
 
+def test_structure_score_does_not_count_nested_job_source_as_current_structure():
+    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
+        nested_generated_structure_display,
+        structure_required_display,
+        structure_score,
+    )
+
+    run = {
+        "available": True,
+        "workspace_delta": {
+            "final_structure_files": [
+                {"path": "model.py"},
+                {"path": "nvflare_jobs/ames_fedavg/client.py"},
+                {"path": "nvflare_jobs/ames_fedavg/job.py"},
+                {"path": "nvflare_jobs/ames_fedavg/model.py"},
+            ],
+            "changed_files": [
+                {"path": "nvflare_jobs/ames_fedavg/client.py"},
+                {"path": "nvflare_jobs/ames_fedavg/job.py"},
+                {"path": "nvflare_jobs/ames_fedavg/model.py"},
+            ],
+        },
+    }
+
+    assert structure_score(run) == 1 / 3
+    assert structure_required_display(run).startswith("1/3 present; missing client.py, job.py")
+    assert "nested copies ignored" in structure_required_display(run)
+    assert nested_generated_structure_display(run) == "nvflare_jobs/ames_fedavg (client.py, job.py, model.py)"
+
+
 def test_workspace_delta_issue_allows_final_structure_and_runtime_artifacts():
     from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import run_quality_issues
 
