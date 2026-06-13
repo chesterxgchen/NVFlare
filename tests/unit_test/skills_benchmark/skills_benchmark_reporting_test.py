@@ -1893,6 +1893,29 @@ def test_runtime_path_note_includes_baseline_fallback_command_time():
     assert "`python run_experiment.py` (180s, exit 0)" in note
 
 
+def test_fewer_turns_note_does_not_invent_command_runtime_cause():
+    from skills.harness.reports.benchmark_insights import _why_slower
+
+    with_run = {
+        "label": "With skills",
+        "run": {"elapsed_seconds": 120},
+        "activity": {"event_types": {"assistant": 2}},
+        "agent_events_text": "",
+    }
+    base_run = {
+        "label": "No skills baseline",
+        "run": {"elapsed_seconds": 100},
+        "activity": {"event_types": {"assistant": 4}},
+        "agent_events_text": "",
+    }
+
+    explanation = "\n".join(_why_slower(with_run, base_run))
+
+    assert "Fewer conversation turns" in explanation
+    assert "turn count did not cause the slowdown" in explanation
+    assert "better explained by captured command/runtime duration" not in explanation
+
+
 def test_why_slower_does_not_blame_code_quality_when_runtime_excluding_install_is_faster(tmp_path):
     from skills.harness.reports.benchmark_insights import _why_slower
 

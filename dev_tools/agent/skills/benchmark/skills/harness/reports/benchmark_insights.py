@@ -3241,8 +3241,7 @@ def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]
         else:
             lines.append(
                 f"- **Fewer conversation turns** ({with_turns} vs {base_turns}, {turns_delta}): "
-                "turn count did not cause the slowdown; the elapsed-time difference is better explained by captured "
-                "command/runtime duration."
+                "turn count did not cause the slowdown."
             )
     if with_think != base_think:
         think_delta = with_think - base_think
