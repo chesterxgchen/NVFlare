@@ -328,7 +328,7 @@ def test_cost_comparison_keeps_attempted_install_with_missing_timing_unknown():
     assert "| Runtime seconds | 100 | NA | NA |" in section
     assert "| Dependency install seconds | 0 | NA | NA |" in section
     accounting = _elapsed_time_accounting_note(runs[WITH_SKILLS_MODE], runs[NO_SKILLS_MODE])
-    assert "dependency install NA; runtime after install NA; captured non-install commands NA" in accounting
+    assert "| With skills | 120s | NA | NA | NA |" in accounting
     assert "NAs" not in accounting
 
 
@@ -1793,13 +1793,14 @@ while flare.is_running():
 
     assert "Long-running commands dominate the slowdown" in explanation
     assert "Elapsed time accounting" in explanation
-    assert "With skills: total 3200s; dependency install 1200s; runtime after install 2000s" in explanation
-    assert "captured non-install commands 1800s" in explanation
-    assert "No skills baseline: total 300s; dependency install 229s; runtime after install 71s" in explanation
-    assert "captured command spans identify slow operations but are not guaranteed to add up exactly" in explanation
+    assert "| Run | Total | Dependency install | Runtime after install | Captured non-install commands |" in explanation
+    assert "| With skills | 3200s | 1200s | 2000s | 1800s |" in explanation
+    assert "| No skills baseline | 300s | 229s | 71s | 120s |" in explanation
+    assert "Captured command spans identify slow operations but are not guaranteed to add up exactly" in explanation
     assert "Longest command comparison" in explanation
-    assert "With skills: `python job.py` (1800s, exit 0); `uv pip install -r requirements-train.txt`" in explanation
-    assert "No skills baseline: `python3 -m pip install -r requirements-train.txt`" in explanation
+    assert "| Rank | With skills | No skills baseline |" in explanation
+    assert "| 1 | `python job.py` (1800s, exit 0) | `python3 -m pip install -r requirements-train.txt`" in explanation
+    assert "| 2 | `uv pip install -r requirements-train.txt`" in explanation
     assert "`python3 run_nvflare_fedavg.py` (120s, exit 0)" in explanation
     assert "uv pip install -r requirements-train.txt" in explanation
     assert "python job.py" in explanation
@@ -1815,6 +1816,7 @@ while flare.is_running():
     assert "baseline longest install log showed no captured network retry/timeout markers" in explanation
     assert "targeted package install" in explanation
     assert "NVFLARE runtime path diverged" in explanation
+    assert "| Run | Runtime path | Evidence command |" in explanation
     assert "recipe.execute(SimEnv(...))" in explanation
     assert "PTInProcessClientAPIExecutor" in explanation
     assert "nvflare.cli simulator ... -t 3" in explanation
@@ -1889,7 +1891,7 @@ def test_runtime_path_note_includes_baseline_fallback_command_time():
 
     assert "NVFLARE runtime path diverged" in note
     assert "`python job.py` (842s, exit 0)" in note
-    assert "baseline had no classified successful job/simulator command" in note
+    assert "no classified successful job/simulator command" in note
     assert "`python run_experiment.py` (180s, exit 0)" in note
 
 

@@ -2777,13 +2777,32 @@ def _time_accounting_display(run: dict[str, Any]) -> str:
 def _elapsed_time_accounting_note(with_run: dict[str, Any], base_run: dict[str, Any]) -> str:
     with_label = with_run.get("label") or "With skills"
     base_label = base_run.get("label") or "No skills baseline"
-    return (
-        "- **Elapsed time accounting**: "
-        f"{with_label}: {_time_accounting_display(with_run)}. "
-        f"{base_label}: {_time_accounting_display(base_run)}. "
-        "`Runtime seconds` is the wall-clock remainder after captured dependency-install time; "
-        "captured command spans identify slow operations but are not guaranteed to add up exactly to total elapsed time."
+    rows = [
+        (with_label, with_run),
+        (base_label, base_run),
+    ]
+    lines = [
+        "**Elapsed time accounting**",
+        "",
+        "| Run | Total | Dependency install | Runtime after install | Captured non-install commands |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for label, run in rows:
+        lines.append(
+            f"| {markdown_cell(label)} | "
+            f"{fmt_seconds_with_unit(run_summary(run).get('elapsed_seconds'))} | "
+            f"{fmt_seconds_with_unit(_dependency_install_total_seconds(run))} | "
+            f"{fmt_seconds_with_unit(_elapsed_excluding_dependency_install(run))} | "
+            f"{fmt_seconds_with_unit(_non_dependency_command_seconds(run))} |"
+        )
+    lines.extend(
+        [
+            "",
+            "`Runtime after install` is total elapsed time minus captured dependency-install command time. "
+            "Captured command spans identify slow operations but are not guaranteed to add up exactly to total elapsed time.",
+        ]
     )
+    return "\n".join(lines)
 
 
 def _top_command_spans(run: dict[str, Any], *, limit: int = 3, min_seconds: float = 30.0) -> list[dict[str, Any]]:
@@ -2817,11 +2836,18 @@ def _longest_command_comparison_note(with_run: dict[str, Any], base_run: dict[st
     base_spans = _top_command_spans(base_run)
     if not with_spans and not base_spans:
         return ""
-    return (
-        "- **Longest command comparison**: "
-        f"{_format_command_span_list(with_label, with_spans)}. "
-        f"{_format_command_span_list(base_label, base_spans)}."
-    )
+    limit = max(len(with_spans), len(base_spans))
+    lines = [
+        "**Longest command comparison**",
+        "",
+        f"| Rank | {markdown_cell(with_label)} | {markdown_cell(base_label)} |",
+        "|---:|---|---|",
+    ]
+    for index in range(limit):
+        with_display = _format_command_span(with_spans[index]) if index < len(with_spans) else "not captured"
+        base_display = _format_command_span(base_spans[index]) if index < len(base_spans) else "not captured"
+        lines.append(f"| {index + 1} | {markdown_cell(with_display)} | {markdown_cell(base_display)} |")
+    return "\n".join(lines)
 
 
 def _longest_span(spans: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -3083,24 +3109,48 @@ def _runtime_path_slowdown_note(with_run: dict[str, Any], base_run: dict[str, An
     with_path = _job_runtime_path(with_job)
     base_path = _job_runtime_path(base_job)
     if with_path or base_path:
-        with_part = (
-            f"with-skills used {with_path or 'a captured job/simulator command'} via {_format_command_span(with_job)}"
-        )
+        rows = [
+            (
+                "With skills",
+                with_path or "captured job/simulator command",
+                _format_command_span(with_job),
+            )
+        ]
         if base_job:
-            base_part = (
-                f"baseline used {base_path or 'a captured job/simulator command'} via "
-                f"{_format_command_span(base_job)}"
+            rows.append(
+                (
+                    "No skills baseline",
+                    base_path or "captured job/simulator command",
+                    _format_command_span(base_job),
+                )
             )
         else:
             base_fallback = _longest_span(_successful_non_install_command_spans(base_run))
             if base_fallback:
-                base_part = (
-                    "baseline had no classified successful job/simulator command; "
-                    f"longest successful non-install command was {_format_command_span(base_fallback)}"
+                rows.append(
+                    (
+                        "No skills baseline",
+                        "no classified successful job/simulator command",
+                        f"longest successful non-install command: {_format_command_span(base_fallback)}",
+                    )
                 )
             else:
-                base_part = "baseline had no captured successful job/simulator command"
-        lines.append(f"- **NVFLARE runtime path diverged**: {with_part}; {base_part}.")
+                rows.append(
+                    (
+                        "No skills baseline",
+                        "no captured successful job/simulator command",
+                        "not captured",
+                    )
+                )
+        table = [
+            "**NVFLARE runtime path diverged**",
+            "",
+            "| Run | Runtime path | Evidence command |",
+            "|---|---|---|",
+        ]
+        for label, path, command in rows:
+            table.append(f"| {markdown_cell(label)} | {markdown_cell(path)} | {markdown_cell(command)} |")
+        lines.append("\n".join(table))
     with_rounds = _round_durations_from_output(str(with_job.get("output") or ""))
     base_rounds = _round_durations_from_output(str(base_job.get("output") or "")) if base_job else []
     if with_rounds:
@@ -3221,14 +3271,19 @@ def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]
             f"+{fmt_number(round(command_seconds_delta))}s): the extra wall time came from tools the agent ran, "
             f"not from harness setup or report generation."
         )
-    lines.append(_elapsed_time_accounting_note(with_run, base_run))
+    lines.extend(["", _elapsed_time_accounting_note(with_run, base_run), ""])
     longest_command_note = _longest_command_comparison_note(with_run, base_run)
     if longest_command_note:
-        lines.append(longest_command_note)
+        lines.extend([longest_command_note, ""])
     dependency_note = _dependency_install_slowdown_note(with_run, base_run)
     if dependency_note:
         lines.append(dependency_note)
-    lines.extend(_runtime_path_slowdown_note(with_run, base_run))
+    runtime_notes = _runtime_path_slowdown_note(with_run, base_run)
+    if runtime_notes:
+        if lines[-1] != "":
+            lines.append("")
+        lines.extend(runtime_notes)
+        lines.append("")
     lines.extend(_code_quality_slowdown_notes(with_run, base_run))
     if with_turns != base_turns:
         turns_delta = with_turns - base_turns
