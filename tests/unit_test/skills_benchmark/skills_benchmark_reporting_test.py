@@ -1296,7 +1296,12 @@ def test_failure_analysis_reports_recovered_job_failure_and_metric_gap():
 
 def test_job_run_status_section_reports_bash_blocked_not_started(tmp_path):
     from skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
-    from skills.harness.reports.benchmark_insights import benchmark_report, job_run_status, job_run_status_section
+    from skills.harness.reports.benchmark_insights import (
+        bash_blocked_diagnostic,
+        benchmark_report,
+        job_run_status,
+        job_run_status_section,
+    )
 
     permission_result = {
         "message": {
@@ -1342,6 +1347,9 @@ def test_job_run_status_section_reports_bash_blocked_not_started(tmp_path):
     assert "With skills: not_started (Bash blocked 1 time(s)" in report
     assert "| With skills | not_started | Bash blocked 1 time(s)" in section
     assert "Fix agent Bash/tool permissions and rerun" in section
+    diagnostic = bash_blocked_diagnostic(run)
+    assert "--tools" in diagnostic
+    assert "--allowedTools" not in diagnostic
     assert "python job.py" not in section
 
 
@@ -1830,6 +1838,83 @@ while flare.is_running():
     assert "Quality-versus-speed tradeoff: useful validation work also adds per-round workload" in explanation
     assert "may explain part of the long per-round wait" in explanation
     assert "Dependency cost is separate from code efficiency" in explanation
+
+
+def test_why_section_reports_runtime_regression_when_total_time_is_not_slower():
+    from skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import why_section
+
+    def command_events(command, start, end, item_id, output="ok"):
+        return [
+            {
+                "timestamp": start,
+                "type": "item.started",
+                "item": {
+                    "command": command,
+                    "id": item_id,
+                    "status": "in_progress",
+                    "type": "command_execution",
+                },
+            },
+            {
+                "timestamp": end,
+                "type": "item.completed",
+                "item": {
+                    "aggregated_output": output,
+                    "command": command,
+                    "exit_code": 0,
+                    "id": item_id,
+                    "status": "completed",
+                    "type": "command_execution",
+                },
+            },
+        ]
+
+    with_events = command_events(
+        "uv pip install -r requirements-train.txt",
+        "2026-06-13T00:00:00Z",
+        "2026-06-13T00:06:40Z",
+        "with_install",
+    ) + command_events(
+        "python job.py",
+        "2026-06-13T00:06:45Z",
+        "2026-06-13T00:08:25Z",
+        "with_job",
+        output="Finished FedAvg.\n",
+    )
+    base_events = command_events(
+        "python -m pip install -r requirements-train.txt",
+        "2026-06-13T00:00:00Z",
+        "2026-06-13T00:09:10Z",
+        "base_install",
+    ) + command_events(
+        "python run_job.py",
+        "2026-06-13T00:09:15Z",
+        "2026-06-13T00:10:05Z",
+        "base_job",
+        output="Finished FedAvg.\n",
+    )
+    runs = {
+        NO_SKILLS_MODE: {
+            "label": "No skills baseline",
+            "run": {"elapsed_seconds": 600, "token_count": 1000},
+            "activity": {},
+            "agent_events_text": "\n".join(json.dumps(event) for event in base_events),
+        },
+        WITH_SKILLS_MODE: {
+            "label": "With skills",
+            "run": {"elapsed_seconds": 500, "token_count": 1000},
+            "activity": {},
+            "agent_events_text": "\n".join(json.dumps(event) for event in with_events),
+        },
+    }
+
+    section = why_section(runs, [NO_SKILLS_MODE, WITH_SKILLS_MODE])
+
+    assert "## Why" in section
+    assert "Why With skills has longer runtime after install" in section
+    assert "| With skills | 500s | 400s | 100s | 100s |" in section
+    assert "| No skills baseline | 600s | 550s | 50s | 50s |" in section
 
 
 def test_runtime_path_note_includes_baseline_fallback_command_time():

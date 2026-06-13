@@ -133,6 +133,7 @@ def test_claude_adapter_launch_spec_uses_stream_json_without_prompt_text(tmp_pat
     assert "claude-test" in spec.argv
     assert spec.argv[spec.argv.index("--model") + 1] == "claude-test"
     assert spec.argv.index("--model") < spec.argv.index("--print")
+    assert spec.argv[-1] == "--print"
 
 
 def test_claude_adapter_uses_cli_default_model_when_unspecified():

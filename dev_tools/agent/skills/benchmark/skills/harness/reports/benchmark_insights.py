@@ -858,7 +858,7 @@ def bash_blocked_diagnostic(run: dict[str, Any], *, recovered: bool = False) -> 
         f"Bash tool was blocked {blocked_count} time(s) with 'requested permissions' errors. "
         f"In Claude Code --print (non-interactive) mode, tools require explicit allow rules even with "
         f"--dangerously-skip-permissions. Check that (1) BENCHMARK_AGENT_HOME/settings.json has "
-        f"`Bash(*)` in permissions.allow, (2) --allowedTools includes `Bash(*)` in the agent launch argv, "
+        f"`Bash(*)` in permissions.allow, (2) the agent launch argv uses the configured `--tools` mode, "
         f"and (3) no deny/ask rules exist at /etc/claude-code/managed-settings.json inside Docker. "
         f"Rebuild the Docker image after any agent config changes.{impact}"
     )
@@ -3250,6 +3250,10 @@ def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]
     base_time = as_number(run_summary(base_run).get("elapsed_seconds")) or 0
     time_delta = with_time - base_time
     pct = round(time_delta / base_time * 100) if base_time > 0 else 0
+    with_runtime = _elapsed_excluding_dependency_install(with_run)
+    base_runtime = _elapsed_excluding_dependency_install(base_run)
+    runtime_delta = with_runtime - base_runtime if with_runtime is not None and base_runtime is not None else None
+    runtime_pct = round(runtime_delta / base_runtime * 100) if runtime_delta is not None and base_runtime else 0
 
     with_turns = _assistant_turns(with_run)
     base_turns = _assistant_turns(base_run)
@@ -3264,7 +3268,16 @@ def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]
     base_command_seconds = _command_span_total_seconds(base_run)
     command_seconds_delta = with_command_seconds - base_command_seconds
 
-    lines = [f"**Why {with_label} is slower** (+{fmt_number(time_delta)}s / +{pct}% vs {base_label}):", ""]
+    if time_delta > 0:
+        heading = f"**Why {with_label} is slower** (+{fmt_number(time_delta)}s / +{pct}% vs {base_label}):"
+    elif runtime_delta is not None and runtime_delta > 0:
+        heading = (
+            f"**Why {with_label} has longer runtime after install** "
+            f"(+{fmt_number(runtime_delta)}s / +{runtime_pct}% vs {base_label}):"
+        )
+    else:
+        heading = f"**Why {with_label} needs more work**:"
+    lines = [heading, ""]
     if command_seconds_delta > 60:
         lines.append(
             f"- **Long-running commands dominate the slowdown** "
@@ -3482,10 +3495,14 @@ def why_section(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
     base_run = runs.get(base_mode, {})
     with_time = as_number(run_summary(with_run).get("elapsed_seconds"))
     base_time = as_number(run_summary(base_run).get("elapsed_seconds"))
+    with_runtime = _elapsed_excluding_dependency_install(with_run)
+    base_runtime = _elapsed_excluding_dependency_install(base_run)
     with_tokens = as_number(run_summary(with_run).get("token_count"))
     base_tokens = as_number(run_summary(base_run).get("token_count"))
     sections: list[list[str]] = []
-    if with_time is not None and base_time is not None and with_time > base_time:
+    elapsed_is_slower = with_time is not None and base_time is not None and with_time > base_time
+    runtime_is_slower = with_runtime is not None and base_runtime is not None and with_runtime > base_runtime
+    if elapsed_is_slower or runtime_is_slower:
         sections.append(_why_slower(with_run, base_run))
     if with_tokens is not None and base_tokens is not None and with_tokens > base_tokens:
         sections.append(_why_more_tokens(with_run, base_run))
