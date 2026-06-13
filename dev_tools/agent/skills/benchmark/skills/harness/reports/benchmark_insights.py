@@ -2844,8 +2844,9 @@ def _longest_command_comparison_note(with_run: dict[str, Any], base_run: dict[st
         "|---:|---|---|",
     ]
     for index in range(limit):
-        with_display = _format_command_span(with_spans[index]) if index < len(with_spans) else "not captured"
-        base_display = _format_command_span(base_spans[index]) if index < len(base_spans) else "not captured"
+        missing = "no timed command span >=30s captured"
+        with_display = _format_command_span(with_spans[index]) if index < len(with_spans) else missing
+        base_display = _format_command_span(base_spans[index]) if index < len(base_spans) else missing
         lines.append(f"| {index + 1} | {markdown_cell(with_display)} | {markdown_cell(base_display)} |")
     return "\n".join(lines)
 

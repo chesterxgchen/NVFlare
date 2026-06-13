@@ -1895,6 +1895,53 @@ def test_runtime_path_note_includes_baseline_fallback_command_time():
     assert "`python run_experiment.py` (180s, exit 0)" in note
 
 
+def test_longest_command_table_empty_cells_preserve_threshold():
+    from skills.harness.reports.benchmark_insights import _longest_command_comparison_note
+
+    def command_events(command, start, end, item_id):
+        return [
+            {
+                "timestamp": start,
+                "type": "item.started",
+                "item": {
+                    "command": command,
+                    "id": item_id,
+                    "status": "in_progress",
+                    "type": "command_execution",
+                },
+            },
+            {
+                "timestamp": end,
+                "type": "item.completed",
+                "item": {
+                    "aggregated_output": "ok",
+                    "command": command,
+                    "exit_code": 0,
+                    "id": item_id,
+                    "status": "completed",
+                    "type": "command_execution",
+                },
+            },
+        ]
+
+    with_events = command_events("python long_one.py", "2026-06-13T08:00:00Z", "2026-06-13T08:02:00Z", "w1")
+    with_events += command_events("python long_two.py", "2026-06-13T08:03:00Z", "2026-06-13T08:04:00Z", "w2")
+    base_events = command_events("python base.py", "2026-06-13T08:00:00Z", "2026-06-13T08:01:00Z", "b1")
+
+    note = _longest_command_comparison_note(
+        {
+            "label": "With skills",
+            "agent_events_text": "\n".join(json.dumps(event) for event in with_events),
+        },
+        {
+            "label": "No skills baseline",
+            "agent_events_text": "\n".join(json.dumps(event) for event in base_events),
+        },
+    )
+
+    assert "| 2 | `python long_two.py` (60s, exit 0) | no timed command span >=30s captured |" in note
+
+
 def test_fewer_turns_note_does_not_invent_command_runtime_cause():
     from skills.harness.reports.benchmark_insights import _why_slower
 
