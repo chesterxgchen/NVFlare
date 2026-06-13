@@ -1799,7 +1799,7 @@ while flare.is_running():
 
     explanation = "\n".join(_why_slower(with_run, base_run))
 
-    assert "Long-running commands dominate the slowdown" in explanation
+    assert "Long-running commands dominate the wall-clock slowdown" in explanation
     assert "Elapsed time accounting" in explanation
     assert "| Run | Total | Dependency install | Runtime after install | Captured non-install commands |" in explanation
     assert "| With skills | 3200s | 1200s | 2000s | 1800s |" in explanation
@@ -1873,24 +1873,24 @@ def test_why_section_reports_runtime_regression_when_total_time_is_not_slower():
     with_events = command_events(
         "uv pip install -r requirements-train.txt",
         "2026-06-13T00:00:00Z",
-        "2026-06-13T00:06:40Z",
+        "2026-06-13T00:00:50Z",
         "with_install",
     ) + command_events(
         "python job.py",
-        "2026-06-13T00:06:45Z",
-        "2026-06-13T00:08:25Z",
+        "2026-06-13T00:01:00Z",
+        "2026-06-13T00:07:40Z",
         "with_job",
         output="Finished FedAvg.\n",
     )
     base_events = command_events(
         "python -m pip install -r requirements-train.txt",
         "2026-06-13T00:00:00Z",
-        "2026-06-13T00:09:10Z",
+        "2026-06-13T00:05:00Z",
         "base_install",
     ) + command_events(
         "python run_job.py",
-        "2026-06-13T00:09:15Z",
-        "2026-06-13T00:10:05Z",
+        "2026-06-13T00:05:05Z",
+        "2026-06-13T00:05:45Z",
         "base_job",
         output="Finished FedAvg.\n",
     )
@@ -1898,13 +1898,13 @@ def test_why_section_reports_runtime_regression_when_total_time_is_not_slower():
         NO_SKILLS_MODE: {
             "label": "No skills baseline",
             "run": {"elapsed_seconds": 600, "token_count": 1000},
-            "activity": {},
+            "activity": {"event_types": {"assistant": 2}},
             "agent_events_text": "\n".join(json.dumps(event) for event in base_events),
         },
         WITH_SKILLS_MODE: {
             "label": "With skills",
             "run": {"elapsed_seconds": 500, "token_count": 1000},
-            "activity": {},
+            "activity": {"event_types": {"assistant": 5}},
             "agent_events_text": "\n".join(json.dumps(event) for event in with_events),
         },
     }
@@ -1913,8 +1913,13 @@ def test_why_section_reports_runtime_regression_when_total_time_is_not_slower():
 
     assert "## Why" in section
     assert "Why With skills has longer runtime after install" in section
-    assert "| With skills | 500s | 400s | 100s | 100s |" in section
-    assert "| No skills baseline | 600s | 550s | 50s | 50s |" in section
+    assert "| With skills | 500s | 50s | 450s | 400s |" in section
+    assert "| No skills baseline | 600s | 300s | 300s | 40s |" in section
+    assert "Long-running commands dominate the runtime-after-install regression" in section
+    assert "extra non-install runtime came from tools" in section
+    assert "extra wall time came from tools" not in section
+    assert "runtime-after-install overhead" in section
+    assert "wall-clock overhead;" not in section
 
 
 def test_runtime_path_note_includes_baseline_fallback_command_time():

@@ -3267,10 +3267,18 @@ def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]
     with_command_seconds = _command_span_total_seconds(with_run)
     base_command_seconds = _command_span_total_seconds(base_run)
     command_seconds_delta = with_command_seconds - base_command_seconds
+    elapsed_is_slower = time_delta > 0
+    runtime_is_slower = runtime_delta is not None and runtime_delta > 0
 
-    if time_delta > 0:
+    if elapsed_is_slower and runtime_is_slower:
+        heading = (
+            f"**Why {with_label} is slower and has longer runtime after install** "
+            f"(+{fmt_number(time_delta)}s total / +{pct}%; "
+            f"+{fmt_number(runtime_delta)}s runtime / +{runtime_pct}% vs {base_label}):"
+        )
+    elif elapsed_is_slower:
         heading = f"**Why {with_label} is slower** (+{fmt_number(time_delta)}s / +{pct}% vs {base_label}):"
-    elif runtime_delta is not None and runtime_delta > 0:
+    elif runtime_is_slower:
         heading = (
             f"**Why {with_label} has longer runtime after install** "
             f"(+{fmt_number(runtime_delta)}s / +{runtime_pct}% vs {base_label}):"
@@ -3279,11 +3287,13 @@ def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]
         heading = f"**Why {with_label} needs more work**:"
     lines = [heading, ""]
     if command_seconds_delta > 60:
+        command_driver = "wall-clock slowdown" if elapsed_is_slower else "runtime-after-install regression"
+        command_effect = "extra wall time" if elapsed_is_slower else "extra non-install runtime"
         lines.append(
-            f"- **Long-running commands dominate the slowdown** "
+            f"- **Long-running commands dominate the {command_driver}** "
             f"({fmt_number(round(with_command_seconds))}s vs {fmt_number(round(base_command_seconds))}s paired command time, "
-            f"+{fmt_number(round(command_seconds_delta))}s): the extra wall time came from tools the agent ran, "
-            f"not from harness setup or report generation."
+            f"+{fmt_number(round(command_seconds_delta))}s): the {command_effect} came from tools the agent ran, "
+            f"not from report generation."
         )
     lines.extend(["", _elapsed_time_accounting_note(with_run, base_run), ""])
     longest_command_note = _longest_command_comparison_note(with_run, base_run)
@@ -3302,10 +3312,11 @@ def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]
     if with_turns != base_turns:
         turns_delta = with_turns - base_turns
         if turns_delta > 0:
+            turn_effect = "wall-clock overhead" if elapsed_is_slower else "runtime-after-install overhead"
             lines.append(
                 f"- **More conversation turns** ({with_turns} vs {base_turns}, +{turns_delta}): "
                 f"each turn is an API round-trip to the model. {turns_delta} extra turns account for most of the "
-                f"wall-clock overhead; the per-turn latency itself is largely unchanged."
+                f"{turn_effect}; the per-turn latency itself is largely unchanged."
             )
         else:
             lines.append(
@@ -3479,10 +3490,10 @@ def interpretation_section(runs: dict[str, dict[str, Any]], modes: list[str]) ->
 
 
 def why_section(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
-    """Explain why the with-skills run is slower or uses more tokens.
+    """Explain why the with-skills run is slower, has longer runtime, or uses more tokens.
 
-    Only rendered when with_skills is actually worse than the baseline on a
-    given dimension — if skills help, there is nothing to explain here.
+    Only rendered when with_skills is actually worse than the baseline on total
+    elapsed time, runtime after dependency install, or token usage.
     """
     from ..modes import WITH_SKILLS_MODE
 
