@@ -656,6 +656,51 @@ def inspect_docker_image(image: str) -> tuple[bool, str]:
     return result.returncode == 0, result.stderr.strip()
 
 
+def docker_context_name() -> str:
+    try:
+        result = subprocess.run(
+            ["docker", "context", "show"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError as exc:
+        return f"unavailable ({type(exc).__name__}: {exc})"
+    if result.returncode == 0:
+        return result.stdout.strip() or "unknown"
+    detail = result.stderr.strip() or result.stdout.strip()
+    return f"unavailable ({detail})" if detail else "unavailable"
+
+
+def docker_benchmark_image_list() -> list[str]:
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "image",
+                "ls",
+                "agent-skills-benchmark",
+                "--format",
+                "{{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedSince}}\t{{.Size}}",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except OSError as exc:
+        return [f"unavailable ({type(exc).__name__}: {exc})"]
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        return [f"unavailable ({detail})"] if detail else ["unavailable"]
+    return [line for line in result.stdout.splitlines() if line.strip()]
+
+
 def preflight_docker_images(
     entries: Iterable[dict[str, object]],
     *,
@@ -664,31 +709,48 @@ def preflight_docker_images(
     runtime_auth_options: RuntimeAuthOptions | None = None,
 ) -> None:
     images_by_run: dict[str, list[str]] = {}
+    agents_by_image: dict[str, set[str]] = {}
     inspect_results: dict[str, dict[str, object]] = {}
+    docker_context = docker_context_name()
+    local_benchmark_images = docker_benchmark_image_list()
     for entry in entries:
         config = case_config_for_entry(entry, result_root, runtime_auth_options)
         images_by_run.setdefault(config.run_image, []).append(str(entry.get("run_id")))
+        agents_by_image.setdefault(config.run_image, set()).add(config.agent)
     for image in sorted(images_by_run):
         available, detail = inspect_docker_image(image)
         inspect_results[image] = {
             "available": available,
+            "agents": sorted(agents_by_image.get(image, set())),
             "detail": detail,
             "run_ids": images_by_run[image],
         }
     missing = [image for image, result in inspect_results.items() if not result["available"]]
     payload = {
         "status": "fail" if missing else "pass",
+        "docker_context": docker_context,
         "images": inspect_results,
+        "local_benchmark_images": local_benchmark_images,
         "missing_images": missing,
     }
     write_json(result_root / "docker_image_preflight.json", payload)
     if not missing:
         return
     message = (
-        "Benchmark Docker image(s) are missing locally: "
+        "Benchmark Docker image(s) are missing locally or could not be inspected: "
         + ", ".join(missing)
-        + ". Run ./bin/build.sh from dev_tools/agent/skills/benchmark before running the benchmark."
+        + f". Docker context: {docker_context}. "
+        + "Selected benchmark agent(s): "
+        + ", ".join(sorted({agent for image in missing for agent in agents_by_image.get(image, set())}) or ["unknown"])
+        + ". "
+        + "Run ./bin/build.sh from dev_tools/agent/skills/benchmark before running the benchmark, "
+        + "and verify the same Docker context is used for build and run."
     )
+    details = [f"{image}: {str(inspect_results[image].get('detail') or 'not found')}" for image in missing]
+    if details:
+        message += " Inspect details: " + "; ".join(details)
+    if local_benchmark_images:
+        message += " Local agent-skills-benchmark tags: " + "; ".join(local_benchmark_images)
     emit(message, logs=logs, stderr=True)
     raise ScenarioValidationError(message)
 

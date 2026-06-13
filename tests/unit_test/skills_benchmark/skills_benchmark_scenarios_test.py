@@ -810,6 +810,12 @@ def test_execute_run_plan_fails_preflight_before_missing_docker_image(tmp_path, 
     result_root = tmp_path / "results"
     called = {"run_case": False}
 
+    monkeypatch.setattr(runner, "docker_context_name", lambda: "test-context")
+    monkeypatch.setattr(
+        runner,
+        "docker_benchmark_image_list",
+        lambda: ["agent-skills-benchmark:claude-skills abc123 1 minute ago 1GB"],
+    )
     monkeypatch.setattr(runner, "inspect_docker_image", lambda image: (False, "image not found"))
 
     def fake_run_case(*args, **kwargs):
@@ -821,14 +827,22 @@ def test_execute_run_plan_fails_preflight_before_missing_docker_image(tmp_path, 
     try:
         runner.execute_run_plan(compilation, result_root=result_root)
     except ScenarioValidationError as exc:
-        assert "Benchmark Docker image(s) are missing locally" in str(exc)
+        message = str(exc)
+        assert "Benchmark Docker image(s) are missing locally or could not be inspected" in message
+        assert "Docker context: test-context" in message
+        assert "Selected benchmark agent(s): codex" in message
+        assert "image not found" in message
+        assert "agent-skills-benchmark:claude-skills" in message
     else:
         raise AssertionError("missing Docker images should fail before any benchmark run starts")
 
     assert called["run_case"] is False
     preflight = json.loads((result_root / "docker_image_preflight.json").read_text(encoding="utf-8"))
     assert preflight["status"] == "fail"
+    assert preflight["docker_context"] == "test-context"
+    assert preflight["local_benchmark_images"] == ["agent-skills-benchmark:claude-skills abc123 1 minute ago 1GB"]
     assert preflight["missing_images"] == ["agent-skills-benchmark:codex-skills"]
+    assert preflight["images"]["agent-skills-benchmark:codex-skills"]["agents"] == ["codex"]
     summary = json.loads((result_root / "scenario_summary.json").read_text(encoding="utf-8"))
     assert summary["status"] == "failed"
     assert summary["harness_failure"]["failure_category"] == "harness_preflight_failure"

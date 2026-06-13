@@ -149,6 +149,9 @@ def test_benchmark_reports_read_canonical_record_layout(tmp_path):
     insights = benchmark_report(tmp_path, runs)
     assert "## Run Identity" in insights
     assert "| No skills baseline | codex | default | scenario | without_skills |" in insights
+    assert "## Cost And Work Comparison" in insights
+    assert "| Dependency install seconds |" in insights
+    assert "| Run | Elapsed seconds | Tokens | Commands |" not in insights
 
     metrics_report.write_reports(tmp_path, "Synthetic Metrics")
 
@@ -201,6 +204,74 @@ def test_numeric_comparison_uses_mode_names_not_row_order():
         "elapsed_seconds_with_skills_minus_without_skills": 3,
         "token_count_with_skills_minus_without_skills": 50,
     }
+
+
+def test_cost_comparison_separates_dependency_install_time():
+    from skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import chart_value_display, cost_comparison_section
+
+    def event_lines(command: str, start: str, end: str, item_id: str) -> list[str]:
+        return [
+            json.dumps(
+                {
+                    "timestamp": start,
+                    "type": "item.started",
+                    "item": {"command": command, "id": item_id, "type": "command_execution"},
+                }
+            ),
+            json.dumps(
+                {
+                    "timestamp": end,
+                    "type": "item.completed",
+                    "item": {
+                        "aggregated_output": "ok",
+                        "command": command,
+                        "exit_code": 0,
+                        "id": item_id,
+                        "status": "completed",
+                        "type": "command_execution",
+                    },
+                }
+            ),
+        ]
+
+    runs = {
+        NO_SKILLS_MODE: {
+            "label": "No skills baseline",
+            "run": {"elapsed_seconds": 100, "token_count": 10},
+            "activity": {"command_count": 2, "unique_command_count": 2},
+            "workspace_delta": {},
+            "agent_events_text": "\n".join(
+                event_lines("uv pip install -r requirements.txt", "2026-06-13T00:00:00Z", "2026-06-13T00:00:15Z", "a")
+                + event_lines("python job.py", "2026-06-13T00:00:20Z", "2026-06-13T00:01:30Z", "b")
+            ),
+        },
+        WITH_SKILLS_MODE: {
+            "label": "With skills",
+            "run": {"elapsed_seconds": 300, "token_count": 12},
+            "activity": {"command_count": 2, "unique_command_count": 2},
+            "workspace_delta": {},
+            "agent_events_text": "\n".join(
+                event_lines(
+                    "uv pip install -r requirements-train.txt",
+                    "2026-06-13T00:00:00Z",
+                    "2026-06-13T00:02:00Z",
+                    "a",
+                )
+                + event_lines("python job.py", "2026-06-13T00:02:10Z", "2026-06-13T00:04:50Z", "b")
+            ),
+        },
+    }
+
+    section = cost_comparison_section(runs, [NO_SKILLS_MODE, WITH_SKILLS_MODE])
+
+    assert "`Runtime seconds` is total elapsed time minus captured dependency-install command time" in section
+    assert "`Dependency install seconds` is captured dependency-install command time" in section
+    assert "| Total time seconds | 100 | 300 | 200 |" in section
+    assert "| Runtime seconds | 85 | 180 | 95 |" in section
+    assert "| Dependency install seconds | 15 | 120 | 105 |" in section
+    assert "| Non-install command seconds | 70 | 160 | 90 |" in section
+    assert chart_value_display(1009.055, "seconds") == "1009"
 
 
 def test_structure_tree_falls_back_to_final_workspace_when_changed_python_is_empty():
@@ -268,6 +339,266 @@ def test_structure_score_does_not_count_nested_job_source_as_current_structure()
     assert structure_required_display(run).startswith("1/3 present; missing client.py, job.py")
     assert "nested copies ignored" in structure_required_display(run)
     assert nested_generated_structure_display(run) == "nvflare_jobs/ames_fedavg (client.py, job.py, model.py)"
+
+
+def test_generated_code_quality_section_reports_evidence_without_gate_language(tmp_path):
+    from skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import generated_code_quality_section
+
+    def command_event(command: str, output: str, exit_code: int = 0) -> str:
+        status = "completed" if exit_code == 0 else "failed"
+        return json.dumps(
+            {
+                "item": {
+                    "aggregated_output": output,
+                    "command": command,
+                    "exit_code": exit_code,
+                    "id": "item_1",
+                    "status": status,
+                    "type": "command_execution",
+                },
+                "type": "item.completed",
+            }
+        )
+
+    def run_with_client(
+        mode: str, client_source: str, install_command: str, install_output: str, rel_path: str = "client.py"
+    ) -> dict:
+        mode_dir = tmp_path / mode
+        client_path = mode_dir / "workspace_delta" / "changed_files" / rel_path
+        log_path = mode_dir / "workspace_delta" / "runtime_artifacts" / "site-1" / "log.txt"
+        client_path.parent.mkdir(parents=True)
+        log_path.parent.mkdir(parents=True)
+        client_path.write_text(client_source, encoding="utf-8")
+        log_path.write_text("[site-1] round 1 epoch 01 train_loss=0.4 device=cpu\n", encoding="utf-8")
+        return {
+            "available": True,
+            "label": mode,
+            "skills": "with skills" if mode == WITH_SKILLS_MODE else "without skills",
+            "mode_dir": mode_dir,
+            "workspace_delta": {
+                "changed_files": [
+                    {
+                        "artifact_path": f"changed_files/{rel_path}",
+                        "path": rel_path,
+                    }
+                ],
+                "runtime_artifacts": [
+                    {
+                        "artifact_path": "runtime_artifacts/site-1/log.txt",
+                        "path": "site-1/log.txt",
+                        "source_path": "/tmp/nvflare/workspaces/job/site-1/log.txt",
+                    }
+                ],
+            },
+            "agent_events_text": command_event(install_command, install_output),
+        }
+
+    repeated_setup_client = """
+import nvflare.client as flare
+def partition_frame(frame, site_index, num_clients): return frame
+while flare.is_running():
+    input_model = flare.receive()
+    train_frame, valid_frame, test_frame = load_data_frames(args.data_dir)
+    train_frame = partition_frame(train_frame, site_index, args.num_clients)
+    train_loader = make_loader(train_frame)
+    criterion, optimizer, _ = build_loss_and_optimizer(model, train_frame, args, device)
+    valid_metrics = evaluate(model, valid_loader, criterion, device)
+    test_metrics = evaluate(model, test_loader, criterion, device)
+    append_record(results_path, {"metrics": test_metrics})
+"""
+    lean_client = """
+import nvflare.client as flare
+train_frame = load_split(args.data_dir, "train")
+local_train = site_shard(train_frame, site_name)
+train_loader = DataLoader(local_train)
+criterion, optimizer, pos_weight_value = build_loss_and_optimizer(model, local_train, args, device)
+while flare.is_running():
+    input_model = flare.receive()
+    for epoch in range(1, args.local_epochs + 1):
+        print(f"[{site_name}] round {round_num} epoch {epoch:02d}")
+    global_metrics = evaluate(model, valid_loader, criterion, device)
+    local_metrics = evaluate(model, valid_loader, criterion, device)
+"""
+    runs = {
+        NO_SKILLS_MODE: run_with_client(
+            NO_SKILLS_MODE,
+            lean_client,
+            "python -m pip install torch --index-url https://download.pytorch.org/whl/cpu",
+            "Successfully installed torch-2.12.0+cpu",
+            rel_path="run_nvflare_fedavg.py",
+        ),
+        WITH_SKILLS_MODE: run_with_client(
+            WITH_SKILLS_MODE,
+            repeated_setup_client,
+            "uv pip install -r requirements-train.txt",
+            "Successfully installed nvidia-cublas-13.1 nvidia-cudnn-cu13-9.20 triton-3.7 torch-2.12",
+        ),
+    }
+
+    section = generated_code_quality_section(runs, [NO_SKILLS_MODE, WITH_SKILLS_MODE])
+
+    assert "These are evidence signals" in section
+    assert "They do not change pass/fail quality gates" in section
+    assert "Overall code quality signal" in section
+    assert "/7 evidence points" in section
+    assert "explicit sharding" in section
+    assert "API pattern" in section
+    assert "context: Client API loop pattern" in section
+    assert "Loss/optimizer lifecycle" in section
+    assert "Data/DataLoader lifecycle" in section
+    assert "poor: loss/optimizer rebuilt inside FL loop" in section
+    assert "good: loss/optimizer built outside FL loop" in section
+    assert "good: data loaded before FL loop, DataLoader built before FL loop" in section
+    assert "poor: data loaded inside FL loop, DataLoader built inside FL loop" in section
+    assert "good: 2 evaluate call(s) in FL loop, test evaluation inside FL loop" in section
+    assert "runtime logs show per-epoch progress" in section
+    assert "runtime artifacts captured separately from temp/runtime paths" in section
+    assert "CPU-only framework wheel" in section
+    assert "accelerator-capable dependency stack" in section
+    assert "skill requirements install not followed" not in section
+    assert "CPU-only framework installs are faster, but they should only be treated as comparable" in section
+
+
+def test_generated_code_quality_does_not_claim_loop_placement_when_loop_missing(tmp_path):
+    from skills.harness.modes import NO_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import generated_code_quality_section
+
+    mode_dir = tmp_path / NO_SKILLS_MODE
+    source_path = mode_dir / "workspace_delta" / "changed_files" / "run_nvflare_fedavg.py"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text(
+        """
+from torch.utils.data import DataLoader
+
+train_frame = load_split(args.data_dir, "train")
+train_loader = DataLoader(train_frame)
+test_frame = load_split(args.data_dir, "test")
+test_loader = DataLoader(test_frame)
+criterion, optimizer = build_loss_and_optimizer(model, train_frame, args, device)
+metric = evaluate(model, test_loader, criterion, device)
+""",
+        encoding="utf-8",
+    )
+    run = {
+        "available": True,
+        "label": NO_SKILLS_MODE,
+        "mode_dir": mode_dir,
+        "workspace_delta": {
+            "changed_files": [
+                {
+                    "artifact_path": "changed_files/run_nvflare_fedavg.py",
+                    "path": "run_nvflare_fedavg.py",
+                }
+            ]
+        },
+    }
+
+    section = generated_code_quality_section({NO_SKILLS_MODE: run}, [NO_SKILLS_MODE])
+
+    assert "caution: loss/optimizer setup present; FL loop not captured" in section
+    assert "caution: data loading present, DataLoader construction present; FL loop not captured" in section
+    assert "good: 1 evaluate call(s) in generated code, test evaluation present, FL loop not captured" in section
+    assert "data loaded before FL loop; FL loop not captured" not in section
+    assert "evaluate call(s) in FL loop" not in section
+    assert "test evaluation inside FL loop" not in section
+
+
+def test_generated_code_quality_detects_model_learner_api_pattern_without_filename_bias(tmp_path):
+    from skills.harness.modes import NO_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import generated_code_quality_section
+
+    mode_dir = tmp_path / NO_SKILLS_MODE
+    source_path = mode_dir / "workspace_delta" / "changed_files" / "custom_training_component.py"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text(
+        """
+from nvflare.app_common.abstract.fl_model import FLModel
+from nvflare.app_common.abstract.model_learner import ModelLearner
+
+class CustomTrainingComponent(ModelLearner):
+    def initialize(self):
+        train_frame, valid_frame, test_frame = load_data_frames(self.data_dir)
+        self._train_loader, self._valid_loader, self._test_loader = build_data_loaders(
+            train_frame, valid_frame, test_frame, self.vocab, self._args
+        )
+        self._criterion, _, _ = build_loss_and_optimizer(self._model, train_frame, self._args, self._device)
+
+    def train(self, model: FLModel) -> FLModel:
+        optimizer = torch.optim.AdamW(self._model.parameters())
+        train_one_epoch(self._model, self._train_loader, self._criterion, optimizer, self._device)
+        valid_metrics = evaluate(self._model, self._valid_loader, self._criterion, self._device)
+        return FLModel(metrics=valid_metrics)
+""",
+        encoding="utf-8",
+    )
+    run = {
+        "available": True,
+        "label": NO_SKILLS_MODE,
+        "mode_dir": mode_dir,
+        "workspace_delta": {
+            "changed_files": [
+                {
+                    "artifact_path": "changed_files/custom_training_component.py",
+                    "path": "custom_training_component.py",
+                }
+            ]
+        },
+    }
+
+    section = generated_code_quality_section({NO_SKILLS_MODE: run}, [NO_SKILLS_MODE])
+
+    assert "context: ModelLearner pattern" in section
+    assert "poor: loss/optimizer rebuilt inside FL loop" in section
+    assert "good: data loaded before FL loop, DataLoader built before FL loop" in section
+
+
+def test_dependency_strategy_scores_with_skills_cpu_shortcut_as_instruction_failure():
+    from skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import generated_code_quality_section
+
+    def run(mode: str, command: str, output: str) -> dict:
+        return {
+            "available": True,
+            "label": mode,
+            "skills": "with skills" if mode == WITH_SKILLS_MODE else "without skills",
+            "agent_events_text": json.dumps(
+                {
+                    "item": {
+                        "aggregated_output": output,
+                        "command": command,
+                        "exit_code": 0,
+                        "id": "item_1",
+                        "status": "completed",
+                        "type": "command_execution",
+                    },
+                    "type": "item.completed",
+                }
+            ),
+            "workspace_delta": {},
+        }
+
+    section = generated_code_quality_section(
+        {
+            NO_SKILLS_MODE: run(
+                NO_SKILLS_MODE,
+                "python3 -m pip install torch --index-url https://download.pytorch.org/whl/cpu",
+                "Successfully installed torch-2.12.0+cpu",
+            ),
+            WITH_SKILLS_MODE: run(
+                WITH_SKILLS_MODE,
+                "python3 -m pip install torch --index-url https://download.pytorch.org/whl/cpu",
+                "Successfully installed torch-2.12.0+cpu",
+            ),
+        },
+        [NO_SKILLS_MODE, WITH_SKILLS_MODE],
+    )
+
+    assert "caution: targeted package install, CPU-only framework wheel, succeeded" in section
+    assert (
+        "poor: targeted package install, CPU-only framework wheel, succeeded, skill requirements install not followed"
+        in section
+    )
 
 
 def test_workspace_delta_issue_allows_final_structure_and_runtime_artifacts():
@@ -429,7 +760,7 @@ def test_shared_lifecycle_requires_dependency_preflight_before_missing_dependenc
 
     assert "source-provided `requirements*.txt` files" in lifecycle
     assert "uv pip install -r <file>" in lifecycle
-    assert "python -m pip install -r <file>" in lifecycle
+    assert "<python> -m pip install -r <file>" in lifecycle
     assert "framework-specific" in lifecycle
     assert "NVFLARE modules" in lifecycle
     assert "`nvflare.app_opt.pt.*`" in lifecycle
@@ -1006,6 +1337,55 @@ def test_job_run_status_detects_generated_simulation_entrypoint():
     assert job_run_status_reason(run) == "simulation completed — FL workflow reached Finished state"
 
 
+def test_job_run_status_detects_wrapper_that_invokes_nvflare_simulator():
+    from skills.harness.reports.benchmark_insights import job_run_status, job_run_status_reason
+
+    event = {
+        "item": {
+            "aggregated_output": (
+                "Running: /workspace/venv/bin/python3 -m nvflare.cli simulator "
+                "/workspace/fl_job/ames_fedavg -w /workspace/fl_workspace -n 3 -t 3\n"
+                "Finished FedAvg.\n"
+                "Simulation workspace: /workspace/fl_workspace\n"
+            ),
+            "command": "python3 run_nvflare_fedavg.py",
+            "exit_code": 0,
+            "id": "item_1",
+            "status": "completed",
+            "type": "command_execution",
+        }
+    }
+    run = {
+        "available": True,
+        "activity": {"commands": ["python3 run_nvflare_fedavg.py"]},
+        "agent_events_text": json.dumps(event),
+    }
+
+    assert job_run_status(run) == "completed"
+    assert job_run_status_reason(run) == "simulation completed — FL workflow reached Finished state"
+
+
+def test_job_run_status_uses_metric_artifact_to_avoid_not_started_contradiction():
+    from skills.harness.reports.benchmark_insights import job_run_status, job_run_status_reason
+
+    run = {
+        "available": True,
+        "activity": {"commands": ["/bin/bash -lc 'rg --files'"]},
+        "validation_metric": {
+            "name": "AUROC",
+            "reported_values": [0.7652],
+            "source": "metrics_artifact",
+            "source_path": "/workspace/results/workspace_delta/runtime_artifacts/server/metrics/summary.json",
+        },
+    }
+
+    assert job_run_status(run) == "completed"
+    reason = job_run_status_reason(run)
+    assert "job execution inferred from captured runtime metric artifact" in reason
+    assert "summary.json" in reason
+    assert "command detector did not identify" in reason
+
+
 def test_job_run_status_ignores_successful_simulation_helper_scripts():
     from skills.harness.reports.benchmark_insights import job_run_status
 
@@ -1109,6 +1489,301 @@ def test_job_run_status_ignores_successful_simulation_helper_scripts():
     }
 
     assert job_run_status(run) == "not_started"
+
+
+def test_why_slower_reports_long_running_command_spans(tmp_path):
+    from skills.harness.reports.benchmark_insights import _why_slower
+
+    def command_events(command, start, end, item_id="item_1", output="ok", exit_code=0):
+        status = "completed" if exit_code == 0 else "failed"
+        return [
+            {
+                "timestamp": start,
+                "type": "item.started",
+                "item": {
+                    "command": command,
+                    "id": item_id,
+                    "status": "in_progress",
+                    "type": "command_execution",
+                },
+            },
+            {
+                "timestamp": end,
+                "type": "item.completed",
+                "item": {
+                    "aggregated_output": output,
+                    "command": command,
+                    "exit_code": exit_code,
+                    "id": item_id,
+                    "status": status,
+                    "type": "command_execution",
+                },
+            },
+        ]
+
+    def source_fields(mode: str, source: str) -> dict:
+        mode_dir = tmp_path / mode
+        source_path = mode_dir / "workspace_delta" / "changed_files" / "client.py"
+        source_path.parent.mkdir(parents=True)
+        source_path.write_text(source, encoding="utf-8")
+        return {
+            "mode_dir": mode_dir,
+            "workspace_delta": {
+                "changed_files": [
+                    {
+                        "artifact_path": "changed_files/client.py",
+                        "path": "client.py",
+                    }
+                ]
+            },
+        }
+
+    cuda_install_output = (
+        "Downloading nvidia-cublas (517.7MiB)\n"
+        "WARNING: Connection timed out while downloading.\n"
+        "WARNING: Attempting to resume incomplete download (211.0 MB/426.4 MB, attempt 1)\n"
+        "WARNING: Retrying after connection broken by "
+        "NameResolutionError(\"Failed to resolve 'files.pythonhosted.org'\")\n"
+        "Downloading nvidia-cudnn-cu13 (424.0MiB)\n"
+        "Downloading triton (179.7MiB)\n"
+        "Installed torch==2.12.0\n"
+    )
+    in_process_output = (
+        "2026-06-13 08:50:40,563 - INFO - Round 1 started.\n"
+        "2026-06-13 09:06:12,642 - INFO - [server] download tx T1 done: status=finished elapsed=905.27s\n"
+        "2026-06-13 09:06:28,198 - INFO - Aggregated 3/3 results\n"
+        "PTInProcessClientAPIExecutor - INFO - Waiting for result from peer\n"
+        "Finished FedAvg.\n"
+    )
+    simulator_output = (
+        "Running: /workspace/venv/bin/python3 -m nvflare.cli simulator /workspace/fl_job -w /workspace/fl_workspace -n 3 -t 3\n"
+        "2026-06-13 08:01:40,056 - INFO - Round 2 started.\n"
+        "2026-06-13 08:01:45,239 - INFO - [server] download tx T2 done: status=finished elapsed=8.53s\n"
+        "2026-06-13 08:02:01,678 - INFO - Aggregated 3/3 results\n"
+        "PTClientAPILauncherExecutor - INFO - received result\n"
+        "Finished FedAvg.\n"
+        "Simulation workspace: /workspace/fl_workspace\n"
+    )
+    with_events = command_events(
+        "uv pip install -r requirements-train.txt",
+        "2026-06-13T08:00:00Z",
+        "2026-06-13T08:20:00Z",
+        output=cuda_install_output,
+    ) + command_events(
+        "python job.py",
+        "2026-06-13T08:21:00Z",
+        "2026-06-13T08:51:00Z",
+        item_id="item_2",
+        output=in_process_output,
+    )
+    base_events = (
+        command_events(
+            "python3 -m pip install -r requirements-train.txt",
+            "2026-06-13T08:00:00Z",
+            "2026-06-13T08:03:22Z",
+            output="Downloading torch and nvidia-cudnn-cu13\n",
+            exit_code=-1,
+        )
+        + command_events(
+            "python3 -m pip install torch --index-url https://download.pytorch.org/whl/cpu",
+            "2026-06-13T08:03:30Z",
+            "2026-06-13T08:03:57Z",
+            item_id="item_2",
+            output="Successfully installed torch-2.12.0+cpu\n",
+        )
+        + command_events(
+            "python3 run_nvflare_fedavg.py",
+            "2026-06-13T08:04:00Z",
+            "2026-06-13T08:06:00Z",
+            item_id="item_3",
+            output=simulator_output,
+        )
+    )
+    with_run = {
+        "label": "With skills",
+        "run": {"elapsed_seconds": 3200},
+        "activity": {},
+        "agent_events_text": "\n".join(json.dumps(event) for event in with_events),
+        **source_fields(
+            "with_skills",
+            """
+import nvflare.client as flare
+train_frame = load_split(args.data_dir, "train")
+train_loader = DataLoader(train_frame)
+while flare.is_running():
+    criterion, optimizer = build_loss_and_optimizer(model, train_frame, args, device)
+    test_metrics = evaluate(model, test_loader, criterion, device)
+    append_record(results_path, {"metrics": test_metrics})
+""",
+        ),
+    }
+    base_run = {
+        "label": "No skills baseline",
+        "run": {"elapsed_seconds": 300},
+        "activity": {},
+        "agent_events_text": "\n".join(json.dumps(event) for event in base_events),
+        **source_fields(
+            "without_skills",
+            """
+import nvflare.client as flare
+train_frame = load_split(args.data_dir, "train")
+train_loader = DataLoader(train_frame)
+criterion, optimizer = build_loss_and_optimizer(model, train_frame, args, device)
+while flare.is_running():
+    train_one_epoch(model, train_loader, criterion, optimizer, device)
+""",
+        ),
+    }
+
+    explanation = "\n".join(_why_slower(with_run, base_run))
+
+    assert "Long-running commands dominate the slowdown" in explanation
+    assert "uv pip install -r requirements-train.txt" in explanation
+    assert "python job.py" in explanation
+    assert "Dependency install path differed" in explanation
+    assert "requirements-file install" in explanation
+    assert "downloaded packages included" in explanation
+    assert "nvidia-cublas" in explanation
+    assert "Installer form differed" in explanation
+    assert "Network/download evidence" in explanation
+    assert "connection timeout" in explanation
+    assert "resumed incomplete download" in explanation
+    assert "DNS resolution failure" in explanation
+    assert "baseline longest install log showed no captured network retry/timeout markers" in explanation
+    assert "targeted package install" in explanation
+    assert "NVFLARE runtime path diverged" in explanation
+    assert "recipe.execute(SimEnv(...))" in explanation
+    assert "PTInProcessClientAPIExecutor" in explanation
+    assert "nvflare.cli simulator ... -t 3" in explanation
+    assert "external client processes" in explanation
+    assert "Slow FL round evidence" in explanation
+    assert "Transfer/wait evidence" in explanation
+    assert "training/validation work, NVFLARE result transfer, synchronization wait" in explanation
+    assert "should be investigated separately from generated-code efficiency" in explanation
+    assert "Generated-code efficiency issue aligns with slower non-install runtime" in explanation
+    assert "loss/optimizer lifecycle" in explanation
+    assert "Quality-versus-speed tradeoff: useful validation work also adds per-round workload" in explanation
+    assert "may explain part of the long per-round wait" in explanation
+    assert "Dependency cost is separate from code efficiency" in explanation
+
+
+def test_why_slower_does_not_blame_code_quality_when_runtime_excluding_install_is_faster(tmp_path):
+    from skills.harness.reports.benchmark_insights import _why_slower
+
+    def command_events(command, start, end, item_id, output="ok"):
+        return [
+            {
+                "timestamp": start,
+                "type": "item.started",
+                "item": {
+                    "command": command,
+                    "id": item_id,
+                    "status": "in_progress",
+                    "type": "command_execution",
+                },
+            },
+            {
+                "timestamp": end,
+                "type": "item.completed",
+                "item": {
+                    "aggregated_output": output,
+                    "command": command,
+                    "exit_code": 0,
+                    "id": item_id,
+                    "status": "completed",
+                    "type": "command_execution",
+                },
+            },
+        ]
+
+    def run_with_client(mode: str, source: str, events: list[dict], elapsed_seconds: int) -> dict:
+        mode_dir = tmp_path / mode
+        source_path = mode_dir / "workspace_delta" / "changed_files" / "client.py"
+        source_path.parent.mkdir(parents=True)
+        source_path.write_text(source, encoding="utf-8")
+        return {
+            "label": mode,
+            "run": {"elapsed_seconds": elapsed_seconds},
+            "activity": {},
+            "agent_events_text": "\n".join(json.dumps(event) for event in events),
+            "mode_dir": mode_dir,
+            "workspace_delta": {
+                "changed_files": [
+                    {
+                        "artifact_path": "changed_files/client.py",
+                        "path": "client.py",
+                    }
+                ]
+            },
+        }
+
+    with_source = """
+import nvflare.client as flare
+train_frame = load_split(args.data_dir, "train")
+train_loader = DataLoader(train_frame)
+while flare.is_running():
+    criterion, optimizer = build_loss_and_optimizer(model, train_frame, args, device)
+    test_metrics = evaluate(model, test_loader, criterion, device)
+"""
+    base_source = """
+import nvflare.client as flare
+train_frame = load_split(args.data_dir, "train")
+train_loader = DataLoader(train_frame)
+criterion, optimizer = build_loss_and_optimizer(model, train_frame, args, device)
+while flare.is_running():
+    train_one_epoch(model, train_loader, criterion, optimizer, device)
+"""
+    with_events = command_events(
+        "pip install -r requirements-train.txt",
+        "2026-06-13T00:00:00Z",
+        "2026-06-13T00:21:58Z",
+        "item_1",
+        output="Downloading nvidia-cublas\nSuccessfully installed torch\n",
+    ) + command_events(
+        "python job.py",
+        "2026-06-13T00:22:00Z",
+        "2026-06-13T00:24:00Z",
+        "item_2",
+        output="Finished FedAvg.\n",
+    )
+    base_events = command_events(
+        "python -m pip install -r requirements-train.txt",
+        "2026-06-13T00:00:00Z",
+        "2026-06-13T00:06:30Z",
+        "item_1",
+        output="Successfully installed torch\n",
+    ) + command_events(
+        "python run_nvflare_fedavg.py",
+        "2026-06-13T00:07:00Z",
+        "2026-06-13T00:23:40Z",
+        "item_2",
+        output="Finished FedAvg.\n",
+    )
+
+    explanation = "\n".join(
+        _why_slower(
+            run_with_client("with_skills", with_source, with_events, elapsed_seconds=1855),
+            run_with_client("without_skills", base_source, base_events, elapsed_seconds=1399),
+        )
+    )
+
+    assert "Dependency install path differed" in explanation
+    assert "Generated-code efficiency issue is not the measured slowdown driver" in explanation
+    assert "runtime excluding dependency install is 537s vs 1009s" in explanation
+    assert "Quality evidence did not make non-install runtime slower in this run" in explanation
+    assert "Generated-code efficiency issue aligns with slower non-install runtime" not in explanation
+    assert "may explain part of the long per-round wait" not in explanation
+
+
+def test_dependency_install_detection_ignores_process_grep():
+    from skills.harness.reports.benchmark_insights import is_dependency_install_command
+
+    assert is_dependency_install_command("uv pip install -r requirements-train.txt")
+    assert is_dependency_install_command("python3 -m pip install torch")
+    assert not is_dependency_install_command("python -m pip show nvflare torch")
+    assert not is_dependency_install_command(
+        "for p in /proc/[0-9]*; do tr '\\0' ' ' < \"$p/cmdline\" | grep -E 'python3 -m pip|pip install'; done"
+    )
 
 
 def test_job_run_status_requires_success_evidence_for_simulation_script():

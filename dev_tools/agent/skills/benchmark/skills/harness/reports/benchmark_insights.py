@@ -20,6 +20,7 @@ import argparse
 import html
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,15 @@ TREE_RUNTIME_SUFFIXES = (".py",) + CONFIG_STRUCTURE_SUFFIXES
 OBSERVED_METRIC_NAMES = ("AUROC", "accuracy", "loss", "f1")
 ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
 MAX_AGENT_EVENTS_TEXT_BYTES = 20 * 1024 * 1024
+
+
+def parse_event_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00").replace(",", "."))
+    except ValueError:
+        return None
 
 
 def read_text(path: Path, *, max_bytes: int | None = None) -> str:
@@ -71,6 +81,11 @@ def fmt_number(value: Any) -> str:
     if number.is_integer():
         return str(int(number))
     return f"{number:.4f}"
+
+
+def fmt_seconds(value: Any) -> str:
+    number = as_number(value)
+    return "NA" if number is None else str(round(number))
 
 
 def as_number(value: Any) -> float | None:
@@ -165,6 +180,8 @@ def sanitized_validation_metric(metric: dict[str, Any]) -> dict[str, Any]:
         entries = [entry]
     sanitized = reported_metric_payload(name, entries)
     sanitized["source"] = metric.get("source") or sanitized.get("source")
+    if metric.get("source_path"):
+        sanitized["source_path"] = metric.get("source_path")
     return sanitized
 
 
@@ -245,6 +262,7 @@ def collect_benchmark_runs(root: Path) -> dict[str, dict[str, Any]]:
         )
         runs[mode] = {
             "available": mode_dir.exists(),
+            "mode_dir": mode_dir,
             "mode": mode,
             "label": spec.label,
             "skills": "with skills" if spec.skills_enabled else "without skills",
@@ -436,6 +454,46 @@ def agent_command_events(run: dict[str, Any]) -> list[dict[str, Any]]:
     return events
 
 
+def agent_command_spans(run: dict[str, Any]) -> list[dict[str, Any]]:
+    spans = []
+    pending: dict[str, dict[str, Any]] = {}
+    for line in str(run.get("agent_events_text") or "").splitlines():
+        try:
+            payload = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        item = payload.get("item")
+        if not isinstance(item, dict) or item.get("type") != "command_execution":
+            continue
+        command = str(item.get("command") or "")
+        item_id = str(item.get("id") or "")
+        if not command or not item_id:
+            continue
+        timestamp = parse_event_timestamp(payload.get("timestamp") or payload.get("harness_timestamp"))
+        event_type = str(payload.get("type") or "")
+        if event_type == "item.started":
+            pending[item_id] = {"command": command, "start": timestamp}
+            continue
+        if event_type != "item.completed":
+            continue
+        start = pending.pop(item_id, {}).get("start")
+        duration = (timestamp - start).total_seconds() if timestamp and start else None
+        spans.append(
+            {
+                "command": command,
+                "duration_seconds": duration,
+                "exit_code": item.get("exit_code"),
+                "id": item_id,
+                "index": len(spans),
+                "output": strip_ansi(str(item.get("aggregated_output") or "")),
+                "status": str(item.get("status") or ""),
+            }
+        )
+    return spans
+
+
 def command_failed(event: dict[str, Any]) -> bool:
     exit_value = event.get("exit_code")
     if isinstance(exit_value, bool):
@@ -510,6 +568,17 @@ def is_simulation_or_job_command(command: str) -> bool:
     return is_job_entrypoint_command(command) or is_simulation_entrypoint_command(command)
 
 
+def invokes_nvflare_simulator(command: str, output: str) -> bool:
+    text = f"{command}\n{output}"
+    return bool(
+        re.search(
+            r"\b(?:python(?:3)?\s+-m\s+)?nvflare(?:\.cli)?\s+simulator\b",
+            strip_ansi(text),
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def job_output_has_failure_status(output: str) -> bool:
     """Return True when an explicit job status line reports a terminal failure state.
 
@@ -553,7 +622,7 @@ def is_material_failed_command(event: dict[str, Any]) -> bool:
     output = str(event.get("output") or "")
     if is_simulation_or_job_command(command):
         return True
-    if re.search(r"\bpip\s+install\b", command):
+    if is_dependency_install_command(command):
         return True
     return bool(
         re.search(
@@ -575,15 +644,18 @@ def missing_python_module_name(output: str) -> str:
 
 def job_command_succeeded(event: dict[str, Any]) -> bool:
     command = str(event.get("command") or "")
+    output = str(event.get("output") or "")
     if not command_succeeded(event):
         return False
     job_match = job_entrypoint_match(command)
     if job_match == "direct":
         return True
     if job_match == "ambiguous":
-        return job_output_succeeded(str(event.get("output") or ""))
+        return job_output_succeeded(output)
     if is_simulation_entrypoint_command(command):
-        return job_output_succeeded(str(event.get("output") or ""))
+        return job_output_succeeded(output)
+    if invokes_nvflare_simulator(command, output):
+        return job_output_succeeded(output)
     return False
 
 
@@ -755,6 +827,16 @@ def bash_blocked_diagnostic(run: dict[str, Any], *, recovered: bool = False) -> 
     )
 
 
+def artifact_validation_metric_evidence(run: dict[str, Any]) -> str:
+    metric = run.get("validation_metric") if isinstance(run.get("validation_metric"), dict) else {}
+    if metric.get("source") != "metrics_artifact" or not metric.get("reported_values"):
+        return ""
+    source_path = str(metric.get("source_path") or "")
+    if source_path:
+        return f"captured validation metric artifact `{truncate(source_path, 180)}`"
+    return "captured validation metric artifact"
+
+
 def job_run_status(run: dict[str, Any]) -> str:
     """Return one of 'completed', 'started_failed', 'not_started', or 'unknown'."""
     if not run.get("available"):
@@ -762,9 +844,12 @@ def job_run_status(run: dict[str, Any]) -> str:
     executed_events = [
         event
         for event in agent_command_events(run)
-        if is_simulation_or_job_command(str(event.get("command") or ""))
-        and "--help" not in str(event.get("command") or "")
+        if "--help" not in str(event.get("command") or "")
         and "--export" not in str(event.get("command") or "")
+        and (
+            is_simulation_or_job_command(str(event.get("command") or ""))
+            or invokes_nvflare_simulator(str(event.get("command") or ""), str(event.get("output") or ""))
+        )
     ]
     attempted_commands = [
         command
@@ -772,10 +857,12 @@ def job_run_status(run: dict[str, Any]) -> str:
         if is_simulation_or_job_command(command) and "--help" not in command and "--export" not in command
     ]
     attempted = bool(executed_events or attempted_commands)
-    if not attempted:
-        return "not_started"
     if last_successful_job_event(run):
         return "completed"
+    if artifact_validation_metric_evidence(run):
+        return "completed"
+    if not attempted:
+        return "not_started"
     return "started_failed"
 
 
@@ -855,6 +942,12 @@ def job_run_status_reason(run: dict[str, Any]) -> str:
         event = last_successful_job_event(run)
         output = str(event.get("output") or "") if event else ""
         recovered_issue = completed_job_recovered_issue_summary(run)
+        artifact_evidence = artifact_validation_metric_evidence(run)
+        if artifact_evidence and not event:
+            return (
+                "job execution inferred from captured runtime metric artifact — "
+                f"{artifact_evidence}; command detector did not identify a direct job.py or simulator command"
+            )
         if "Finished" in output:
             reason = "simulation completed — FL workflow reached Finished state"
             return f"{reason}; {recovered_issue}" if recovered_issue else reason
@@ -1789,6 +1882,512 @@ def structure_trees_section(runs: dict[str, dict[str, Any]], modes: list[str]) -
     return "\n".join(lines)
 
 
+def _workspace_artifact_path(run: dict[str, Any], item: dict[str, Any]) -> Path | None:
+    mode_dir = run.get("mode_dir")
+    if not isinstance(mode_dir, Path):
+        return None
+    artifact_path = item.get("artifact_path") if isinstance(item, dict) else None
+    if not artifact_path:
+        return None
+    return mode_dir / "workspace_delta" / str(artifact_path)
+
+
+def _workspace_file_text(run: dict[str, Any], filename: str, *, max_bytes: int = 256_000) -> str:
+    delta = run_workspace_delta(run)
+    for key in ("changed_files", "final_structure_files"):
+        values = delta.get(key)
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if not isinstance(item, dict) or Path(str(item.get("path") or "")).name != filename:
+                continue
+            path = _workspace_artifact_path(run, item)
+            if path and path.exists():
+                return read_text(path, max_bytes=max_bytes)
+    return ""
+
+
+def _workspace_python_sources(run: dict[str, Any]) -> list[tuple[str, str]]:
+    delta = run_workspace_delta(run)
+    sources = []
+    seen: set[str] = set()
+    for key in ("changed_files", "final_structure_files"):
+        values = delta.get(key)
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            rel_path = str(item.get("path") or "")
+            if not rel_path or rel_path in seen or Path(rel_path).suffix != ".py":
+                continue
+            path = _workspace_artifact_path(run, item)
+            if path and path.exists():
+                sources.append((rel_path, read_text(path, max_bytes=128_000)))
+                seen.add(rel_path)
+    return sources
+
+
+def _all_python_workspace_text(run: dict[str, Any], *, max_files: int = 8) -> str:
+    snippets = []
+    for rel_path, text in _workspace_python_sources(run):
+        snippets.append(f"# {rel_path}\n{text}")
+        if len(snippets) >= max_files:
+            return "\n\n".join(snippets)
+    return "\n\n".join(snippets)
+
+
+def _first_match(pattern: str, text: str, *, flags: int = re.IGNORECASE | re.MULTILINE) -> str:
+    match = re.search(pattern, text, flags=flags)
+    return match.group(0).strip() if match else ""
+
+
+def _data_split_signal(run: dict[str, Any]) -> str:
+    text = _workspace_file_text(run, "client.py") or _all_python_workspace_text(run)
+    if not text:
+        return "not captured"
+    signals = []
+    if re.search(r"\b(?:site_index|site_name|client_id|rank)\b", text, flags=re.IGNORECASE):
+        signals.append("site-aware")
+    if re.search(
+        r"\b(?:array_split|iloc\s*\[.*::|partition(?:_\w*)?|\w*shard\w*|split_indices)\b",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        signals.append("explicit sharding")
+    if re.search(r"\bvalid(?:_frame|_loader|ation)?\b", text, flags=re.IGNORECASE):
+        signals.append("validation data referenced")
+    if re.search(r"\btest(?:_frame|_loader)?\b", text, flags=re.IGNORECASE):
+        signals.append("test data referenced")
+    if not signals:
+        return "no explicit client data split detected"
+    return ", ".join(dict.fromkeys(signals))
+
+
+def _api_pattern_signal(run: dict[str, Any]) -> str:
+    text = _generated_python_source_text(run)
+    if not text:
+        return "not captured"
+    if "flare.is_running" in text or re.search(r"\bflare\.(?:receive|send)\s*\(", text):
+        return "Client API loop pattern"
+    if re.search(r"\bclass\s+\w+\s*\([^)]*ModelLearner", text) or re.search(
+        r"\bdef\s+train\s*\([^)]*\bFLModel\b", text
+    ):
+        return "ModelLearner pattern"
+    if "FLModel" in text:
+        return "FLModel-based pattern"
+    return "no explicit NVFLARE client API pattern detected"
+
+
+def _generated_python_source_text(run: dict[str, Any]) -> str:
+    client_text = _workspace_file_text(run, "client.py")
+    if client_text:
+        return client_text
+    ranked = sorted(_workspace_python_sources(run), key=lambda item: _client_training_source_score(*item), reverse=True)
+    if ranked and _client_training_source_score(*ranked[0]) > 0:
+        return f"# {ranked[0][0]}\n{ranked[0][1]}"
+    return _all_python_workspace_text(run)
+
+
+def _client_training_source_score(rel_path: str, text: str) -> int:
+    score = 0
+    name = Path(rel_path).name.lower()
+    lowered = text.lower()
+    if name == "client.py":
+        score += 80
+    if "flare.is_running" in text:
+        score += 90
+    if re.search(r"\bdef\s+train\s*\([^)]*\bFLModel\b", text):
+        score += 90
+    if "flmodel" in lowered or "params_type" in lowered:
+        score += 50
+    if "modellearner" in lowered or "learner" in name:
+        score += 40
+    if "current_round" in text or "total_rounds" in text:
+        score += 30
+    if "site_name" in text or "client_index" in text:
+        score += 20
+    if re.search(DATA_LOAD_PATTERN, text) or re.search(DATA_LOADER_PATTERN, text):
+        score += 10
+    if re.search(LOSS_OPTIMIZER_BUILD_PATTERN, text):
+        score += 10
+    if re.search(r"\bevaluate\s*\(", text):
+        score += 10
+    if re.search(r"(^|/)(?:server|app_server)(/|$)", rel_path):
+        score -= 20
+    return score
+
+
+def _fl_client_loop_body(source_text: str) -> tuple[str, bool]:
+    loop_match = re.search(
+        r"\bwhile\s+flare\.is_running\s*\(\)\s*:(?P<body>.*?)(?:\n# [^\n]+\.py\n|\Z)",
+        source_text,
+        flags=re.DOTALL,
+    )
+    if loop_match:
+        return loop_match.group("body"), True
+    train_match = re.search(
+        r"(?m)^[ \t]+def\s+train\s*\([^)]*\bFLModel\b[^)]*\)\s*(?:->[^\n:]+)?\s*:\s*(?P<body>.*?)(?=^[ \t]+def\s+|\nclass\s+|\Z)",
+        source_text,
+        flags=re.DOTALL,
+    )
+    if train_match:
+        return train_match.group("body"), True
+    return "", False
+
+
+LOSS_OPTIMIZER_BUILD_PATTERN = (
+    r"\bbuild_loss_and_optimizer\s*\("
+    r"|\b(?:criterion|loss_fn|loss_func|loss_function)\s*="
+    r"|\boptimizer\s*="
+    r"|\btorch\.optim\."
+    r"|\boptim\.[A-Za-z_][A-Za-z0-9_]*\s*\("
+)
+DATA_LOAD_PATTERN = r"\bload_(?:split|data_frames)\s*\(|\bread_csv\s*\(|\bload_dataset\s*\("
+DATA_LOADER_PATTERN = r"\bmake_loader\s*\(|\bbuild_data_loaders\s*\(|\bDataLoader\s*\("
+
+
+def _loss_optimizer_lifecycle_signal(run: dict[str, Any]) -> str:
+    source_text = _generated_python_source_text(run)
+    if not source_text:
+        return "not captured"
+    loop_body, loop_found = _fl_client_loop_body(source_text)
+    if loop_found and re.search(LOSS_OPTIMIZER_BUILD_PATTERN, loop_body):
+        return "loss/optimizer rebuilt inside FL loop"
+    if re.search(LOSS_OPTIMIZER_BUILD_PATTERN, source_text):
+        return (
+            "loss/optimizer built outside FL loop"
+            if loop_found
+            else "loss/optimizer setup present; FL loop not captured"
+        )
+    return "no loss/optimizer lifecycle signal detected"
+
+
+def _data_loader_lifecycle_signal(run: dict[str, Any]) -> str:
+    source_text = _generated_python_source_text(run)
+    if not source_text:
+        return "not captured"
+    loop_body, loop_found = _fl_client_loop_body(source_text)
+    signals = []
+    if not loop_found:
+        if re.search(DATA_LOAD_PATTERN, source_text):
+            signals.append("data loading present")
+        if re.search(DATA_LOADER_PATTERN, source_text):
+            signals.append("DataLoader construction present")
+        if signals:
+            return f"{', '.join(signals)}; FL loop not captured"
+        return "no data/DataLoader lifecycle signal detected"
+    if loop_found and re.search(DATA_LOAD_PATTERN, loop_body):
+        signals.append("data loaded inside FL loop")
+    elif re.search(DATA_LOAD_PATTERN, source_text):
+        signals.append("data loaded before FL loop")
+    if loop_found and re.search(DATA_LOADER_PATTERN, loop_body):
+        signals.append("DataLoader built inside FL loop")
+    elif re.search(DATA_LOADER_PATTERN, source_text):
+        signals.append("DataLoader built before FL loop")
+    if signals:
+        return ", ".join(signals)
+    return "no data/DataLoader lifecycle signal detected"
+
+
+def _metric_work_signal(run: dict[str, Any]) -> str:
+    client_text = _generated_python_source_text(run)
+    if not client_text:
+        return "not captured"
+    body, loop_found = _fl_client_loop_body(client_text)
+    if not loop_found:
+        body = client_text
+    eval_calls = len(re.findall(r"\bevaluate\s*\(", body))
+    signals = []
+    if eval_calls:
+        scope = "in FL loop" if loop_found else "in generated code"
+        signals.append(f"{eval_calls} evaluate call(s) {scope}")
+    if re.search(r"\btest_(?:frame|loader|metrics)\b", body, flags=re.IGNORECASE):
+        signals.append("test evaluation inside FL loop" if loop_found else "test evaluation present")
+    if re.search(r"\bglobal_metrics\b", body) and re.search(r"\blocal_metrics\b", body):
+        signals.append("global and local metrics reported")
+    if re.search(r"\bmetrics\.jsonl\b|append_record\s*\(", body):
+        signals.append("per-round metrics sidecar written")
+    if signals and not loop_found:
+        signals.append("FL loop not captured")
+    return ", ".join(signals) if signals else "no per-round metric workload detected"
+
+
+def _observability_signal(run: dict[str, Any]) -> str:
+    source_text = _generated_python_source_text(run)
+    mode_dir = run.get("mode_dir")
+    logs = ""
+    if isinstance(mode_dir, Path):
+        logs = "\n".join(
+            read_text(path, max_bytes=128_000)
+            for path in sorted(mode_dir.glob("workspace_delta/runtime_artifacts/**/log.txt"))
+        )
+    signals = []
+    if re.search(r"round\s+\{?.*epoch|epoch\s+\{?", source_text, flags=re.IGNORECASE):
+        signals.append("generated code prints per-epoch progress")
+    if re.search(r"\bmetrics?\.(?:jsonl|json|csv|tsv)\b|append_record\s*\(", source_text, flags=re.IGNORECASE):
+        signals.append("generated code writes per-round metric sidecar")
+    metric_artifacts = _metric_artifact_paths(run)
+    if metric_artifacts:
+        signals.append(f"captured metric artifact(s): {', '.join(metric_artifacts[:3])}")
+    if re.search(r"\bround\s+\d+\s+epoch\b", logs, flags=re.IGNORECASE):
+        signals.append("runtime logs show per-epoch progress")
+    if re.search(r"\bdevice=", logs):
+        signals.append(_first_match(r"\bdevice=[A-Za-z0-9_:-]+", logs))
+    if not signals:
+        return "limited per-round progress evidence"
+    return ", ".join(dict.fromkeys(signals))
+
+
+def _metric_artifact_paths(run: dict[str, Any]) -> list[str]:
+    delta = run_workspace_delta(run)
+    paths = []
+    seen: set[str] = set()
+    for key in ("runtime_artifacts", "changed_files", "final_structure_files"):
+        values = delta.get(key)
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            candidates = [str(item.get(name) or "") for name in ("path", "source_path", "artifact_path")]
+            if not any(
+                re.search(r"\bmetrics?\b|[_/-]metrics?[_./-]", value, flags=re.IGNORECASE) for value in candidates
+            ):
+                continue
+            display_path = candidates[0] or candidates[1] or candidates[2]
+            if not display_path or display_path in seen:
+                continue
+            seen.add(display_path)
+            paths.append(display_path)
+    return paths
+
+
+def _runtime_output_locality_signal(run: dict[str, Any]) -> str:
+    delta = run_workspace_delta(run)
+    runtime_artifacts = delta.get("runtime_artifacts") if isinstance(delta.get("runtime_artifacts"), list) else []
+    changed_paths = manifest_paths(run, "changed_files")
+    signals = []
+    source_paths = [
+        str(item.get("source_path") or "")
+        for item in runtime_artifacts
+        if isinstance(item, dict) and item.get("source_path")
+    ]
+    if source_paths:
+        if any(path.startswith("/tmp/") for path in source_paths):
+            signals.append("runtime artifacts captured separately from temp/runtime paths")
+        else:
+            signals.append("runtime artifacts captured separately")
+    if any(
+        re.search(r"(^|/)(?:server|site-[^/]+|simulate_job)(/|$)", path)
+        or re.search(r"(^|/)(?:log(?:_fl)?\.txt|metrics_summary\.json|round_metrics\.jsonl)$", path)
+        for path in changed_paths
+    ):
+        signals.append("runtime output appears in workspace changes")
+    return ", ".join(dict.fromkeys(signals)) if signals else "no runtime-output locality evidence"
+
+
+def _dependency_strategy_signal(run: dict[str, Any]) -> str:
+    install_events = dependency_install_events(run)
+    if not install_events:
+        return dependency_install_evidence_brief(run)
+    succeeded = [event for event in install_events if command_succeeded(event)]
+    failed = [event for event in install_events if command_failed(event)]
+    event = (succeeded or failed or install_events)[-1]
+    command = str(event.get("command") or "")
+    output = str(event.get("output") or "")
+    text = f"{command}\n{output}".lower()
+    parts = []
+    if "-r" in command and "requirements" in command:
+        parts.append("requirements-file install")
+    elif "pip install" in command:
+        parts.append("targeted package install")
+    if "download.pytorch.org/whl/cpu" in text or "+cpu" in text:
+        parts.append("CPU-only framework wheel")
+    if re.search(r"\bnvidia-(?:cuda|cudnn|cublas|cusolver|nccl|cufft|curand)|\btriton\b|cuda-toolkit", text):
+        parts.append("accelerator-capable dependency stack")
+    if command_succeeded(event):
+        parts.append("succeeded")
+    elif command_failed(event):
+        parts.append("failed")
+    if (
+        run.get("skills") == "with skills"
+        and "requirements-file install" not in parts
+        and "CPU-only framework wheel" in parts
+    ):
+        parts.append("skill requirements install not followed")
+    if not parts:
+        parts.append(dependency_install_evidence_brief(run))
+    return ", ".join(dict.fromkeys(parts))
+
+
+def _status_cell(status: str, evidence: str) -> str:
+    return f"{status}: {evidence}" if evidence else status
+
+
+def _assessment_from_data_split(evidence: str) -> str:
+    if evidence == "not captured":
+        return "unknown"
+    if "site-aware" in evidence and "explicit sharding" in evidence:
+        return "good"
+    if "site-aware" in evidence or "explicit sharding" in evidence:
+        return "caution"
+    return "poor"
+
+
+def _assessment_from_loss_optimizer_lifecycle(evidence: str) -> str:
+    if evidence == "not captured":
+        return "unknown"
+    if "rebuilt inside FL loop" in evidence:
+        return "poor"
+    if "FL loop not captured" in evidence:
+        return "caution"
+    if "built outside FL loop" in evidence or "before FL loop" in evidence:
+        return "good"
+    return "unknown"
+
+
+def _assessment_from_data_loader_lifecycle(evidence: str) -> str:
+    if evidence == "not captured":
+        return "unknown"
+    if "data loaded inside FL loop" in evidence or "DataLoader built inside FL loop" in evidence:
+        return "poor"
+    if "FL loop not captured" in evidence:
+        return "caution"
+    if "data loaded before FL loop" in evidence or "DataLoader built before FL loop" in evidence:
+        return "good"
+    return "unknown"
+
+
+def _assessment_from_metric_work(evidence: str) -> str:
+    if evidence == "not captured":
+        return "unknown"
+    if (
+        "sidecar written" in evidence
+        or "global and local metrics reported" in evidence
+        or "test evaluation" in evidence
+    ):
+        return "good"
+    if "evaluate call" in evidence:
+        return "caution"
+    return "poor"
+
+
+def _assessment_from_observability(evidence: str) -> str:
+    if evidence == "not captured":
+        return "unknown"
+    if "per-epoch progress" in evidence or "device=" in evidence or "metric" in evidence:
+        return "good"
+    if "limited" in evidence:
+        return "caution"
+    return "unknown"
+
+
+def _assessment_from_locality(evidence: str) -> str:
+    if evidence == "not captured" or "no runtime-output" in evidence:
+        return "unknown"
+    if "separately" in evidence:
+        return "good"
+    if "workspace changes" in evidence:
+        return "caution"
+    return "unknown"
+
+
+def _assessment_from_dependency(evidence: str) -> str:
+    lowered = evidence.lower()
+    if "skill requirements install not followed" in lowered or "failed" in lowered:
+        return "poor"
+    if "no dependency install" in lowered or "not captured" in lowered:
+        return "unknown"
+    if "requirements-file install" in lowered and "succeeded" in lowered:
+        return "good"
+    if "cpu-only framework wheel" in lowered:
+        return "caution"
+    if "succeeded" in lowered:
+        return "good"
+    return "unknown"
+
+
+CODE_QUALITY_ROWS = (
+    ("Client data split/use", _data_split_signal, _assessment_from_data_split),
+    ("Loss/optimizer lifecycle", _loss_optimizer_lifecycle_signal, _assessment_from_loss_optimizer_lifecycle),
+    ("Data/DataLoader lifecycle", _data_loader_lifecycle_signal, _assessment_from_data_loader_lifecycle),
+    ("Per-round metric workload", _metric_work_signal, _assessment_from_metric_work),
+    ("Runtime observability", _observability_signal, _assessment_from_observability),
+    ("Runtime/output locality", _runtime_output_locality_signal, _assessment_from_locality),
+    ("Dependency install strategy", _dependency_strategy_signal, _assessment_from_dependency),
+)
+CODE_QUALITY_CONTEXT_ROWS = (("API pattern", _api_pattern_signal),)
+CODE_QUALITY_POINTS = {"good": 1.0, "caution": 0.5, "poor": 0.0}
+
+
+def generated_code_quality_assessments(run: dict[str, Any]) -> list[tuple[str, str, str]]:
+    rows = []
+    for label, evidence_getter, assessment_getter in CODE_QUALITY_ROWS:
+        evidence = evidence_getter(run)
+        rows.append((label, assessment_getter(evidence), evidence))
+    return rows
+
+
+def generated_code_quality_overall(run: dict[str, Any]) -> str:
+    assessments = generated_code_quality_assessments(run)
+    known = [(status, evidence) for _, status, evidence in assessments if status in CODE_QUALITY_POINTS]
+    total = len(assessments)
+    if not known:
+        return "unknown: no generated-code evidence captured"
+    points = sum(CODE_QUALITY_POINTS[status] for status, _ in known)
+    score_ratio = points / total
+    if score_ratio >= 0.8:
+        label = "good"
+    elif score_ratio >= 0.5:
+        label = "caution"
+    else:
+        label = "poor"
+    unknown_count = total - len(known)
+    unknown_note = f"; {len(known)}/{total} scored, {unknown_count} unknown" if unknown_count else ""
+    return f"{label}: {points:.1f}/{total} evidence points{unknown_note}"
+
+
+def generated_code_quality_table(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
+    lines = [
+        "| Evidence signal | " + " | ".join(MODE_LABELS.get(mode, mode) for mode in modes) + " |",
+        "|---|" + "|".join("---" for _ in modes) + "|",
+        "| Overall code quality signal | "
+        + " | ".join(markdown_cell(generated_code_quality_overall(runs[mode])) for mode in modes)
+        + " |",
+    ]
+    for label, evidence_getter, assessment_getter in CODE_QUALITY_ROWS:
+        lines.append(
+            f"| {markdown_cell(label)} | "
+            + " | ".join(
+                markdown_cell(_status_cell(assessment_getter(evidence_getter(runs[mode])), evidence_getter(runs[mode])))
+                for mode in modes
+            )
+            + " |"
+        )
+    for label, evidence_getter in CODE_QUALITY_CONTEXT_ROWS:
+        lines.append(
+            f"| {markdown_cell(label)} | "
+            + " | ".join(markdown_cell(_status_cell("context", evidence_getter(runs[mode]))) for mode in modes)
+            + " |"
+        )
+    return "\n".join(lines)
+
+
+def generated_code_quality_section(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
+    return "\n".join(
+        [
+            "## Generated Code Quality Signals",
+            "",
+            "These are evidence signals for interpreting runtime and maintenance quality. They do not change pass/fail quality gates or the winner policy.",
+            "",
+            generated_code_quality_table(runs, modes),
+            "",
+            "Dependency policy note: accelerator-capable framework installs are valid for accelerator-backed training jobs but can dominate benchmark wall time when uncached. CPU-only framework installs are faster, but they should only be treated as comparable when the benchmark is intentionally CPU-only.",
+        ]
+    )
+
+
 def count_map(run: dict[str, Any], key: str) -> dict[str, Any]:
     activity = run_activity(run)
     value = activity.get(key)
@@ -1814,15 +2413,17 @@ def commands_for_run(run: dict[str, Any]) -> list[str]:
 
 def dependency_install_attempted(run: dict[str, Any]) -> bool:
     for command in commands_for_run(run):
-        lowered = command.lower()
-        if "pip install" in lowered or "uv pip install" in lowered or "python -m pip" in lowered:
+        if is_dependency_install_command(command):
             return True
     return False
 
 
 def is_dependency_install_command(command: str) -> bool:
     lowered = str(command).lower()
-    return "pip install" in lowered or "uv pip install" in lowered or "python -m pip" in lowered
+    install_pattern = r"\b(?:uv\s+)?pip\s+install\b|\bpython3?\s+-m\s+pip\s+install\b"
+    if re.search(r"\b(?:grep|rg|sed|awk)\b", lowered) and re.search(install_pattern, lowered):
+        return False
+    return bool(re.search(install_pattern, lowered))
 
 
 def dependency_install_events(run: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1989,24 +2590,47 @@ def cost_comparison_section(runs: dict[str, dict[str, Any]], modes: list[str]) -
     right_run = runs[right]
     left_summary = run_summary(left_run)
     right_summary = run_summary(right_run)
+    left_dependency_seconds = _dependency_install_total_seconds(left_run)
+    right_dependency_seconds = _dependency_install_total_seconds(right_run)
     rows = [
-        ("Elapsed seconds", left_summary.get("elapsed_seconds"), right_summary.get("elapsed_seconds")),
-        ("Total tokens", left_summary.get("token_count"), right_summary.get("token_count")),
-        ("Commands", run_activity(left_run).get("command_count"), run_activity(right_run).get("command_count")),
+        ("Total time seconds", left_summary.get("elapsed_seconds"), right_summary.get("elapsed_seconds"), "seconds"),
+        (
+            "Runtime seconds",
+            _elapsed_excluding_dependency_install(left_run),
+            _elapsed_excluding_dependency_install(right_run),
+            "seconds",
+        ),
+        ("Dependency install seconds", left_dependency_seconds, right_dependency_seconds, "seconds"),
+        (
+            "Non-install command seconds",
+            _non_dependency_command_seconds(left_run),
+            _non_dependency_command_seconds(right_run),
+            "seconds",
+        ),
+        ("Total tokens", left_summary.get("token_count"), right_summary.get("token_count"), "short"),
+        (
+            "Commands",
+            run_activity(left_run).get("command_count"),
+            run_activity(right_run).get("command_count"),
+            "number",
+        ),
         (
             "Unique commands",
             run_activity(left_run).get("unique_command_count"),
             run_activity(right_run).get("unique_command_count"),
+            "number",
         ),
         (
             "Changed/generated files",
             run_workspace_delta(left_run).get("changed_file_count"),
             run_workspace_delta(right_run).get("changed_file_count"),
+            "number",
         ),
         (
             "Runtime artifacts",
             run_workspace_delta(left_run).get("runtime_artifact_count"),
             run_workspace_delta(right_run).get("runtime_artifact_count"),
+            "number",
         ),
     ]
     lines = [
@@ -2014,14 +2638,18 @@ def cost_comparison_section(runs: dict[str, dict[str, Any]], modes: list[str]) -
         "",
         "Cost numbers are descriptive only. Quality gates decide whether a cost comparison is meaningful.",
         "",
+        "`Runtime seconds` is total elapsed time minus captured dependency-install command time. "
+        "`Dependency install seconds` is captured dependency-install command time. "
+        "`Non-install command seconds` is summed duration of captured non-install shell/tool commands, so it can be lower than runtime when the agent spends time reasoning, waiting, or using non-command tools.",
+        "",
         f"| Signal | {markdown_cell(left_run.get('label') or left)} | {markdown_cell(right_run.get('label') or right)} | Delta right-left |",
         "|---|---:|---:|---:|",
     ]
-    for label, left_value, right_value in rows:
+    for label, left_value, right_value, value_kind in rows:
         left_num = as_number(left_value)
         right_num = as_number(right_value)
         delta = right_num - left_num if left_num is not None and right_num is not None else None
-        formatter = fmt_short if label == "Total tokens" else fmt_number
+        formatter = fmt_short if value_kind == "short" else fmt_seconds if value_kind == "seconds" else fmt_number
         lines.append(
             f"| {markdown_cell(label)} | {formatter(left_value)} | {formatter(right_value)} | {formatter(delta)} |"
         )
@@ -2041,6 +2669,405 @@ def _assistant_turns(run: dict[str, Any]) -> int:
     return event_type_count(run, "assistant")
 
 
+def _command_span_total_seconds(run: dict[str, Any]) -> float:
+    return sum(
+        float(span["duration_seconds"])
+        for span in agent_command_spans(run)
+        if as_number(span.get("duration_seconds")) is not None
+    )
+
+
+def _dependency_install_total_seconds(run: dict[str, Any]) -> float | None:
+    spans = _dependency_install_spans(run)
+    values = [as_number(span.get("duration_seconds")) for span in spans]
+    durations = [value for value in values if value is not None]
+    return sum(durations) if durations else None
+
+
+def _non_dependency_command_seconds(run: dict[str, Any]) -> float | None:
+    spans = [
+        span for span in agent_command_spans(run) if not is_dependency_install_command(str(span.get("command") or ""))
+    ]
+    values = [as_number(span.get("duration_seconds")) for span in spans]
+    durations = [value for value in values if value is not None]
+    return sum(durations) if durations else None
+
+
+def _elapsed_excluding_dependency_install(run: dict[str, Any]) -> float | None:
+    elapsed = as_number(run_summary(run).get("elapsed_seconds"))
+    dependency_seconds = _dependency_install_total_seconds(run)
+    if elapsed is None or dependency_seconds is None:
+        return None
+    return max(0.0, elapsed - dependency_seconds)
+
+
+def _top_command_spans(run: dict[str, Any], *, limit: int = 3, min_seconds: float = 30.0) -> list[dict[str, Any]]:
+    spans = [
+        span
+        for span in agent_command_spans(run)
+        if (as_number(span.get("duration_seconds")) or 0) >= min_seconds
+        and str(span.get("status") or "") in {"completed", "failed"}
+    ]
+    return sorted(spans, key=lambda item: as_number(item.get("duration_seconds")) or 0, reverse=True)[:limit]
+
+
+def _format_command_span(span: dict[str, Any]) -> str:
+    seconds = as_number(span.get("duration_seconds")) or 0
+    command = truncate(span.get("command"), 120)
+    exit_code = span.get("exit_code")
+    exit_note = f", exit {exit_code}" if exit_code not in (None, "") else ""
+    return f"`{command}` ({fmt_number(round(seconds))}s{exit_note})"
+
+
+def _longest_span(spans: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not spans:
+        return None
+    return max(spans, key=lambda span: as_number(span.get("duration_seconds")) or 0)
+
+
+def _dependency_install_spans(run: dict[str, Any]) -> list[dict[str, Any]]:
+    return [span for span in agent_command_spans(run) if is_dependency_install_command(str(span.get("command") or ""))]
+
+
+def _dependency_package_examples(output: str, limit: int = 4) -> list[str]:
+    downloads: list[tuple[float, str]] = []
+    for match in re.finditer(
+        r"\bDownloading\s+([A-Za-z0-9_.+-]+)\s+\(([0-9.]+)([KMG]?i?B)\)",
+        strip_ansi(output),
+        flags=re.IGNORECASE,
+    ):
+        multiplier = {
+            "kb": 1 / 1024,
+            "kib": 1 / 1024,
+            "mb": 1,
+            "mib": 1,
+            "gb": 1024,
+            "gib": 1024,
+        }.get(match.group(3).lower(), 1)
+        downloads.append((float(match.group(2)) * multiplier, match.group(1)))
+    if downloads:
+        examples = []
+        for _, name in sorted(downloads, reverse=True):
+            if name not in examples:
+                examples.append(name)
+            if len(examples) >= limit:
+                return examples
+
+    examples = []
+    for pattern in (
+        r"\bDownloading\s+([A-Za-z0-9_.+-]+)",
+        r"^\s*\+\s+([A-Za-z0-9_.+-]+)==",
+        r"\bSuccessfully installed\s+(.+)",
+    ):
+        for match in re.finditer(pattern, strip_ansi(output), flags=re.IGNORECASE | re.MULTILINE):
+            if pattern.endswith("(.+)"):
+                names = [part.split("==", 1)[0].split("-", 1)[0] for part in match.group(1).split()]
+            else:
+                names = [match.group(1)]
+            for name in names:
+                clean = name.strip().strip(",")
+                if clean and clean not in examples:
+                    examples.append(clean)
+                if len(examples) >= limit:
+                    return examples
+    return examples
+
+
+def _targeted_followup_install_span(spans: list[dict[str, Any]]) -> dict[str, Any] | None:
+    candidates = [
+        span for span in spans if command_succeeded(span) and "-r" not in str(span.get("command") or "").lower()
+    ]
+    return _longest_span(candidates)
+
+
+def _failed_requirements_install_span(spans: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for span in spans:
+        command = str(span.get("command") or "").lower()
+        if "-r" in command and "requirements" in command and command_failed(span):
+            return span
+    return None
+
+
+def _install_strategy_label(span: dict[str, Any]) -> str:
+    command = str(span.get("command") or "").lower()
+    if re.search(r"\s-r\s+\S+|--requirement\s+\S+", command):
+        return "requirements-file install"
+    return "targeted package install"
+
+
+def _install_strategy_summary(spans: list[dict[str, Any]]) -> str:
+    if not spans:
+        return "no dependency install command captured"
+    counts: dict[str, int] = {}
+    failed = 0
+    for span in spans:
+        counts[_install_strategy_label(span)] = counts.get(_install_strategy_label(span), 0) + 1
+        if command_failed(span):
+            failed += 1
+    parts = [f"{count} {label}(s)" for label, count in sorted(counts.items())]
+    if failed:
+        parts.append(f"{failed} failed")
+    return ", ".join(parts)
+
+
+def _install_tool_label(span: dict[str, Any] | None) -> str:
+    if not span:
+        return "no install command"
+    command = str(span.get("command") or "").lower()
+    if re.search(r"\buv\s+pip\s+install\b", command):
+        return "uv pip"
+    if re.search(r"\bpython3?\s+-m\s+pip\s+install\b", command):
+        return "python -m pip"
+    if re.search(r"\bpip\s+install\b", command):
+        return "pip"
+    return "unknown installer"
+
+
+def _install_network_markers(span: dict[str, Any] | None) -> list[str]:
+    if not span:
+        return []
+    output = str(span.get("output") or "")
+    checks = [
+        ("connection timeout", r"connection timed out|read timed out|\btimed out\b"),
+        ("resumed incomplete download", r"attempting to resume incomplete download|resuming download"),
+        ("DNS resolution failure", r"NameResolutionError|failed to resolve|temporary failure in name resolution"),
+        ("download retry", r"\bRetrying\b|after connection broken"),
+    ]
+    markers = []
+    for label, pattern in checks:
+        if re.search(pattern, output, flags=re.IGNORECASE):
+            markers.append(label)
+    return markers
+
+
+def _install_network_marker_display(label: str, span: dict[str, Any] | None) -> str:
+    markers = _install_network_markers(span)
+    if markers:
+        return f"{label} install log showed {', '.join(markers)}"
+    if span:
+        return f"{label} install log showed no captured network retry/timeout markers"
+    return f"{label} had no captured install log"
+
+
+def _install_total_display(spans: list[dict[str, Any]]) -> str:
+    durations = [as_number(span.get("duration_seconds")) for span in spans]
+    total = sum(value for value in durations if value is not None)
+    return f"{fmt_number(round(total))}s across {len(spans)} install command(s)"
+
+
+def _dependency_install_slowdown_note(with_run: dict[str, Any], base_run: dict[str, Any]) -> str | None:
+    with_installs = _dependency_install_spans(with_run)
+    base_installs = _dependency_install_spans(base_run)
+    with_install = _longest_span(with_installs)
+    if not with_install:
+        return None
+    with_install_seconds = as_number(with_install.get("duration_seconds")) or 0
+    base_install_seconds = sum(as_number(span.get("duration_seconds")) or 0 for span in base_installs)
+    if with_install_seconds < 60 or with_install_seconds <= base_install_seconds * 2:
+        return None
+    package_examples = _dependency_package_examples(str(with_install.get("output") or ""))
+    package_note = f"; downloaded packages included {', '.join(package_examples)}" if package_examples else ""
+    base_install = _longest_span(base_installs)
+    base_note = (
+        f"; baseline longest install was {_format_command_span(base_install)}"
+        if base_install
+        else "; baseline had no captured dependency install command"
+    )
+    installer_note = ""
+    if base_install:
+        installer_note = (
+            f" Installer form differed: with-skills used {_install_tool_label(with_install)}; "
+            f"baseline longest install used {_install_tool_label(base_install)}."
+        )
+    network_note = ""
+    if _install_network_markers(with_install) or _install_network_markers(base_install):
+        network_note = (
+            " Network/download evidence: "
+            f"{_install_network_marker_display('with-skills', with_install)}; "
+            f"{_install_network_marker_display('baseline longest', base_install)}."
+        )
+    baseline_followup_note = ""
+    if len(base_installs) > 1:
+        baseline_followup_note = (
+            f" Baseline ran {len(base_installs)} install commands; after its longest install, later requirements installs "
+            "mostly reused already-installed packages when the log reported them as already satisfied."
+        )
+    return (
+        "- **Dependency install path differed**: "
+        f"with-skills spent {_install_total_display(with_installs)} "
+        f"({_install_strategy_summary(with_installs)}), while the baseline spent "
+        f"{_install_total_display(base_installs)} ({_install_strategy_summary(base_installs)}). "
+        f"The longest with-skills install was {_format_command_span(with_install)}{package_note}{base_note}."
+        f"{installer_note}{network_note}{baseline_followup_note}"
+    )
+
+
+def _successful_job_spans(run: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        span
+        for span in agent_command_spans(run)
+        if job_command_succeeded(span)
+        and "--help" not in str(span.get("command") or "")
+        and "--export" not in str(span.get("command") or "")
+    ]
+
+
+def _simulator_thread_flag(command: str, output: str) -> str:
+    match = re.search(r"\bnvflare(?:\.cli)?\s+simulator\b[^\n]*\s-t\s+(\d+)\b", f"{command}\n{output}")
+    return f" ... -t {match.group(1)}" if match else ""
+
+
+def _job_runtime_path(span: dict[str, Any] | None) -> str:
+    if not span:
+        return ""
+    command = str(span.get("command") or "")
+    output = str(span.get("output") or "")
+    if (
+        "PTClientAPILauncherExecutor" in output
+        or "_start_external_process" in output
+        or invokes_nvflare_simulator(command, output)
+    ):
+        thread_flag = _simulator_thread_flag(command, output)
+        return f"exported job + `nvflare.cli simulator{thread_flag}` with external client processes"
+    if "PTInProcessClientAPIExecutor" in output or re.search(r"\bpython(?:3)?\s+job\.py\b", command):
+        return "`recipe.execute(SimEnv(...))` with `PTInProcessClientAPIExecutor`"
+    return ""
+
+
+def _max_download_tx_elapsed(output: str) -> float | None:
+    values = [float(match.group(1)) for match in re.finditer(r"\bdownload tx\b[^\n]*\belapsed=([0-9.]+)s", output)]
+    return max(values) if values else None
+
+
+def _round_durations_from_output(output: str) -> list[tuple[int, float]]:
+    starts: dict[int, datetime] = {}
+    durations: list[tuple[int, float]] = []
+    current_round: int | None = None
+    last_timestamp: datetime | None = None
+    for line in strip_ansi(output).splitlines():
+        timestamp_match = re.match(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})", line)
+        if timestamp_match:
+            last_timestamp = parse_event_timestamp(timestamp_match.group(1))
+        round_match = re.search(r"\bRound\s+(\d+)\s+started\b", line)
+        if round_match and last_timestamp:
+            current_round = int(round_match.group(1))
+            starts[current_round] = last_timestamp
+            continue
+        if re.search(r"\bAggregated\s+(\d+)/\1\s+results\b", line) and current_round is not None and last_timestamp:
+            start = starts.get(current_round)
+            if start:
+                durations.append((current_round, (last_timestamp - start).total_seconds()))
+            current_round = None
+    return durations
+
+
+def _runtime_path_slowdown_note(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]:
+    with_job = _longest_span(_successful_job_spans(with_run))
+    base_job = _longest_span(_successful_job_spans(base_run))
+    if not with_job:
+        return []
+    lines = []
+    with_path = _job_runtime_path(with_job)
+    base_path = _job_runtime_path(base_job)
+    if with_path or base_path:
+        base_part = (
+            f"; baseline used {base_path} via {_format_command_span(base_job)}" if base_job and base_path else ""
+        )
+        lines.append(
+            f"- **NVFLARE runtime path diverged**: with-skills used {with_path or 'a different runtime path'} "
+            f"via {_format_command_span(with_job)}{base_part}."
+        )
+    with_rounds = _round_durations_from_output(str(with_job.get("output") or ""))
+    base_rounds = _round_durations_from_output(str(base_job.get("output") or "")) if base_job else []
+    if with_rounds:
+        with_round, with_max = max(with_rounds, key=lambda item: item[1])
+        base_max = max((duration for _, duration in base_rounds), default=None)
+        if with_max >= 300 and (base_max is None or with_max > base_max * 5):
+            base_text = f" vs baseline max round ~{fmt_number(round(base_max))}s" if base_max is not None else ""
+            lines.append(
+                f"- **Slow FL round evidence**: with-skills Round {with_round} took ~{fmt_number(round(with_max / 60))} "
+                f"minutes before all client results returned{base_text}. This elapsed round time can include useful "
+                "training/validation work, NVFLARE result transfer, synchronization wait, or a mixture of those."
+            )
+    with_tx = _max_download_tx_elapsed(str(with_job.get("output") or ""))
+    base_tx = _max_download_tx_elapsed(str(base_job.get("output") or "")) if base_job else None
+    if with_tx is not None and with_tx >= 120 and (base_tx is None or with_tx > base_tx * 5):
+        base_text = f" vs baseline max transfer {fmt_number(round(base_tx))}s" if base_tx is not None else ""
+        lines.append(
+            f"- **Transfer/wait evidence**: with-skills logged NVFLARE download transactions up to "
+            f"{fmt_number(round(with_tx))}s{base_text}. This points to runtime transfer/synchronization wait that "
+            "should be investigated separately from generated-code efficiency."
+        )
+    return lines
+
+
+def _code_quality_assessment_map(run: dict[str, Any]) -> dict[str, tuple[str, str]]:
+    return {label: (status, evidence) for label, status, evidence in generated_code_quality_assessments(run)}
+
+
+def _code_quality_slowdown_notes(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]:
+    with_quality = _code_quality_assessment_map(with_run)
+    base_quality = _code_quality_assessment_map(base_run)
+    lines = []
+    with_runtime = _elapsed_excluding_dependency_install(with_run)
+    base_runtime = _elapsed_excluding_dependency_install(base_run)
+    runtime_delta = with_runtime - base_runtime if with_runtime is not None and base_runtime is not None else None
+    runtime_slower = runtime_delta is not None and runtime_delta > 60
+
+    with_loss_status, with_loss = with_quality.get("Loss/optimizer lifecycle", ("unknown", ""))
+    base_loss_status, base_loss = base_quality.get("Loss/optimizer lifecycle", ("unknown", ""))
+    if with_loss_status == "poor" and base_loss_status != "poor":
+        if runtime_slower:
+            lines.append(
+                "- **Generated-code efficiency issue aligns with slower non-install runtime**: "
+                f"the code-quality signal flags With skills as `{with_loss_status}` for loss/optimizer lifecycle "
+                f"({with_loss}), while the baseline is `{base_loss_status}` ({base_loss}). "
+                f"Runtime excluding dependency install is {fmt_seconds(with_runtime)}s vs {fmt_seconds(base_runtime)}s, "
+                "so repeated setup inside the per-round training boundary is plausible runtime overhead. "
+                "This does not prove sole causality, but it is a generated-code issue worth investigating."
+            )
+        else:
+            lines.append(
+                "- **Generated-code efficiency issue is not the measured slowdown driver**: "
+                f"the code-quality signal flags With skills as `{with_loss_status}` for loss/optimizer lifecycle "
+                f"({with_loss}), while the baseline is `{base_loss_status}` ({base_loss}). "
+                f"However, runtime excluding dependency install is {fmt_seconds(with_runtime)}s vs "
+                f"{fmt_seconds(base_runtime)}s, so this should be read as a code-quality concern, not the cause "
+                "of the wall-time slowdown in this run."
+            )
+
+    with_metric_status, with_metric = with_quality.get("Per-round metric workload", ("unknown", ""))
+    base_metric_status, base_metric = base_quality.get("Per-round metric workload", ("unknown", ""))
+    if with_metric_status == "good" and base_metric_status in {"poor", "unknown"}:
+        if runtime_slower:
+            lines.append(
+                "- **Quality-versus-speed tradeoff: useful validation work also adds per-round workload**: "
+                f"With skills records `{with_metric}`, while the baseline records `{base_metric}`. "
+                "Test/validation evaluation and per-round metric artifacts are desirable quality evidence, "
+                "but they are additional work on every FL round and may explain part of the long per-round wait. "
+                "Read this alongside the efficiency issue above: validation work is useful, while rebuilding "
+                "setup objects inside the per-round boundary is avoidable overhead."
+            )
+        else:
+            lines.append(
+                "- **Quality evidence did not make non-install runtime slower in this run**: "
+                f"With skills records `{with_metric}`, while the baseline records `{base_metric}`. "
+                "That is useful validation evidence, but the captured runtime excluding dependency install is "
+                f"{fmt_seconds(with_runtime)}s vs {fmt_seconds(base_runtime)}s, so it should not be cited as the "
+                "wall-time slowdown cause for this run."
+            )
+
+    with_dependency_status, with_dependency = with_quality.get("Dependency install strategy", ("unknown", ""))
+    if "accelerator-capable dependency stack" in with_dependency:
+        lines.append(
+            "- **Dependency cost is separate from code efficiency**: "
+            f"the code-quality table records `{with_dependency_status}: {with_dependency}`. "
+            "That explains install-time cost. Generated-code lifecycle signals remain quality evidence, but they "
+            "should only be treated as runtime slowdown evidence when non-install runtime is also slower."
+        )
+    return lines
+
+
 def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]:
     with_label = with_run.get("label") or "With skills"
     base_label = base_run.get("label") or "No skills baseline"
@@ -2058,8 +3085,28 @@ def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]
     skill_delta = with_tools.get("Skill", 0) - base_tools.get("Skill", 0)
     agent_delta = with_tools.get("Agent", 0) - base_tools.get("Agent", 0)
     search_delta = with_tools.get("ToolSearch", 0) - base_tools.get("ToolSearch", 0)
+    with_command_seconds = _command_span_total_seconds(with_run)
+    base_command_seconds = _command_span_total_seconds(base_run)
+    command_seconds_delta = with_command_seconds - base_command_seconds
+    top_spans = _top_command_spans(with_run)
 
     lines = [f"**Why {with_label} is slower** (+{fmt_number(time_delta)}s / +{pct}% vs {base_label}):", ""]
+    if command_seconds_delta > 60:
+        lines.append(
+            f"- **Long-running commands dominate the slowdown** "
+            f"({fmt_number(round(with_command_seconds))}s vs {fmt_number(round(base_command_seconds))}s paired command time, "
+            f"+{fmt_number(round(command_seconds_delta))}s): the extra wall time came from tools the agent ran, "
+            f"not from harness setup or report generation."
+        )
+    if top_spans:
+        lines.append(
+            f"- **Longest {with_label} commands**: " + "; ".join(_format_command_span(span) for span in top_spans) + "."
+        )
+    dependency_note = _dependency_install_slowdown_note(with_run, base_run)
+    if dependency_note:
+        lines.append(dependency_note)
+    lines.extend(_runtime_path_slowdown_note(with_run, base_run))
+    lines.extend(_code_quality_slowdown_notes(with_run, base_run))
     if with_turns != base_turns:
         turns_delta = with_turns - base_turns
         lines.append(
@@ -2282,6 +3329,8 @@ def chart_number(value: Any, kind: str) -> float | None:
 def chart_value_display(value: Any, kind: str) -> str:
     if value is None:
         return "NA"
+    if kind == "seconds":
+        return fmt_seconds(value)
     if kind == "short":
         return fmt_short(value)
     if kind == "percent":
@@ -2293,9 +3342,19 @@ def chart_value_display(value: Any, kind: str) -> str:
 def benchmark_chart_metrics(runs: dict[str, dict[str, Any]], metric_name: str | None) -> list[dict[str, Any]]:
     return [
         {
-            "label": "Runtime seconds",
-            "kind": "number",
+            "label": "Total time seconds",
+            "kind": "seconds",
             "value": lambda run: run_summary(run).get("elapsed_seconds"),
+        },
+        {
+            "label": "Runtime seconds",
+            "kind": "seconds",
+            "value": _elapsed_excluding_dependency_install,
+        },
+        {
+            "label": "Dependency install",
+            "kind": "seconds",
+            "value": _dependency_install_total_seconds,
         },
         {
             "label": "Total tokens",
@@ -2528,19 +3587,6 @@ def failure_analysis_section(runs: dict[str, dict[str, Any]], modes: list[str]) 
     return "\n".join(lines).rstrip()
 
 
-def runtime_table(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
-    lines = ["| Run | Elapsed seconds | Tokens | Commands |", "|---|---:|---:|---:|"]
-    for mode in modes:
-        run = runs[mode]
-        summary = run.get("run") if isinstance(run.get("run"), dict) else {}
-        activity = run.get("activity") if isinstance(run.get("activity"), dict) else {}
-        lines.append(
-            f"| {markdown_cell(run['label'])} | {fmt_number(summary.get('elapsed_seconds'))} | "
-            f"{fmt_number(summary.get('token_count'))} | {fmt_number(activity.get('command_count'))} |"
-        )
-    return "\n".join(lines)
-
-
 def benchmark_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
     modes = mode_names(BENCHMARK_RUNS)
     missing_metrics = missing_result_metrics_section(runs, modes)
@@ -2621,6 +3667,8 @@ def benchmark_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
             "",
             structure_trees_section(runs, modes),
             "",
+            generated_code_quality_section(runs, modes),
+            "",
             "## Activity Insights",
             "",
             activity_insights_table(runs, modes),
@@ -2638,10 +3686,6 @@ def benchmark_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
         lines.extend([why, ""])
     lines.extend(
         [
-            "## Runtime",
-            "",
-            runtime_table(runs, modes),
-            "",
             interpretation_section(runs, modes),
             "",
             "## Artifacts",
