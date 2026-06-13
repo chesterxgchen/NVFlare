@@ -2693,6 +2693,7 @@ def cost_comparison_section(runs: dict[str, dict[str, Any]], modes: list[str]) -
         "`Runtime seconds` is total elapsed time minus captured dependency-install command time. "
         "`Dependency install seconds` is captured dependency-install command time. "
         "`Non-install command seconds` is summed duration of captured non-install shell/tool commands, so it can be lower than runtime when the agent spends time reasoning, waiting, or using non-command tools.",
+        "Command span timing is operation-level evidence, not a strict wall-clock partition; it can differ from total elapsed time when agent event timestamps overlap, are truncated, or come from a different clock than the harness timer.",
         "",
         f"| Signal | {markdown_cell(left_run.get('label') or left)} | {markdown_cell(right_run.get('label') or right)} | Delta right-left |",
         "|---|---:|---:|---:|",
@@ -2753,6 +2754,31 @@ def _elapsed_excluding_dependency_install(run: dict[str, Any]) -> float | None:
     if elapsed is None or dependency_seconds is None:
         return None
     return max(0.0, elapsed - dependency_seconds)
+
+
+def _time_accounting_display(run: dict[str, Any]) -> str:
+    elapsed = as_number(run_summary(run).get("elapsed_seconds"))
+    dependency_seconds = _dependency_install_total_seconds(run)
+    runtime_seconds = _elapsed_excluding_dependency_install(run)
+    non_install_seconds = _non_dependency_command_seconds(run)
+    return (
+        f"total {fmt_seconds(elapsed)}s; "
+        f"dependency install {fmt_seconds(dependency_seconds)}s; "
+        f"runtime after install {fmt_seconds(runtime_seconds)}s; "
+        f"captured non-install commands {fmt_seconds(non_install_seconds)}s"
+    )
+
+
+def _elapsed_time_accounting_note(with_run: dict[str, Any], base_run: dict[str, Any]) -> str:
+    with_label = with_run.get("label") or "With skills"
+    base_label = base_run.get("label") or "No skills baseline"
+    return (
+        "- **Elapsed time accounting**: "
+        f"{with_label}: {_time_accounting_display(with_run)}. "
+        f"{base_label}: {_time_accounting_display(base_run)}. "
+        "`Runtime seconds` is the wall-clock remainder after captured dependency-install time; "
+        "captured command spans identify slow operations but are not guaranteed to add up exactly to total elapsed time."
+    )
 
 
 def _top_command_spans(run: dict[str, Any], *, limit: int = 3, min_seconds: float = 30.0) -> list[dict[str, Any]]:
@@ -3152,6 +3178,7 @@ def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]
             f"+{fmt_number(round(command_seconds_delta))}s): the extra wall time came from tools the agent ran, "
             f"not from harness setup or report generation."
         )
+    lines.append(_elapsed_time_accounting_note(with_run, base_run))
     if top_spans:
         lines.append(
             f"- **Longest {with_label} commands**: " + "; ".join(_format_command_span(span) for span in top_spans) + "."

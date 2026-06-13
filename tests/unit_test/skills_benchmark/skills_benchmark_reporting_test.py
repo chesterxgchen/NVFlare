@@ -267,6 +267,7 @@ def test_cost_comparison_separates_dependency_install_time():
 
     assert "`Runtime seconds` is total elapsed time minus captured dependency-install command time" in section
     assert "`Dependency install seconds` is captured dependency-install command time" in section
+    assert "Command span timing is operation-level evidence, not a strict wall-clock partition" in section
     assert "| Total time seconds | 100 | 300 | 200 |" in section
     assert "| Runtime seconds | 85 | 180 | 95 |" in section
     assert "| Dependency install seconds | 15 | 120 | 105 |" in section
@@ -1788,6 +1789,11 @@ while flare.is_running():
     explanation = "\n".join(_why_slower(with_run, base_run))
 
     assert "Long-running commands dominate the slowdown" in explanation
+    assert "Elapsed time accounting" in explanation
+    assert "With skills: total 3200s; dependency install 1200s; runtime after install 2000s" in explanation
+    assert "captured non-install commands 1800s" in explanation
+    assert "No skills baseline: total 300s; dependency install 229s; runtime after install 71s" in explanation
+    assert "captured command spans identify slow operations but are not guaranteed to add up exactly" in explanation
     assert "uv pip install -r requirements-train.txt" in explanation
     assert "python job.py" in explanation
     assert "Dependency install path differed" in explanation
