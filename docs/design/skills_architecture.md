@@ -45,7 +45,7 @@ flowchart TB
 | Layer | When | Implemented pieces | Purpose |
 | --- | --- | --- | --- |
 | Authoring source | Dev-time | `skills/`, `SKILL.md`, `references/`, `evals/evals.json`, `BENCHMARK.md` | Human-readable skill instructions and supporting evidence. |
-| Engineering lint tool | Dev-time / CI | `nvflare.tool.agent_skill_checks`, `python -m nvflare.tool.agent_skill_checks`, pytest coverage | Deterministic admission checks for frontmatter, triggers, command drift, policy coverage, fixtures, process metrics, and doc links. The check itself is a CLI/library tool; pytest validates the tool behavior. |
+| Engineering lint tool | Dev-time / CI | `dev_tools/agent/skills/checks`, `python dev_tools/agent/skills/checks/cli.py`, pytest coverage | Deterministic admission checks for frontmatter, triggers, command drift, policy coverage, fixtures, process metrics, and doc links. The check itself is a repo-local CLI/library tool; pytest validates the tool behavior. |
 | Python packaging hook | Build-time | `setup.py`, `nvflare.tool.agent.bundled_skills`, `manifest.json` | Wheel-build hook that copies released skills into the NVFLARE package, or writes an empty bundle for no-skill builds. |
 | Skill install CLI | Install-time bridge | `nvflare agent skills install/list`, `skill_manager.py` | Managed installer that copies skills into Codex or Claude target directories with content hashes, locks, backups, local-modification checks, and symlink checks. |
 | Runtime agent surface | Runtime | Codex/Claude skill loading, `nvflare agent inspect`, `nvflare agent doctor`, recipe/job CLI | The agent reads skill instructions and uses NVFLARE commands to inspect, convert, validate, or diagnose. |
@@ -136,7 +136,7 @@ flowchart LR
 Dev-time / build-time:
 
 - Public skill source: `skills/`
-- Engineering lint tool and CI gate: `nvflare/tool/agent_skill_checks/`
+- Engineering lint tool and CI gate: `dev_tools/agent/skills/checks/`
 - Manifest builder: `nvflare/tool/agent/skill_manifest.py`
 - Packaging hook: `setup.py` (`AgentSkillsBuildPy`)
 
