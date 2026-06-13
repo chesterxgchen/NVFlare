@@ -1526,7 +1526,10 @@ def test_job_run_status_does_not_infer_completion_from_changed_file_metric_artif
             "name": "AUROC",
             "reported_values": [0.7652],
             "source": "metrics_artifact",
-            "source_path": "/workspace/results/workspace_delta/changed_files/metrics_summary.json",
+            "source_path": (
+                "/workspace/results/workspace_delta/changed_files/fl_workspace/ames_fedavg/"
+                "server/simulate_job/metrics/metrics_summary.json"
+            ),
         },
     }
 
