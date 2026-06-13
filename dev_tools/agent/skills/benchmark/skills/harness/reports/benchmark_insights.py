@@ -3266,9 +3266,22 @@ def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]
     search_delta = with_tools.get("ToolSearch", 0) - base_tools.get("ToolSearch", 0)
     with_command_seconds = _command_span_total_seconds(with_run)
     base_command_seconds = _command_span_total_seconds(base_run)
-    command_seconds_delta = with_command_seconds - base_command_seconds
     elapsed_is_slower = time_delta > 0
     runtime_is_slower = runtime_delta is not None and runtime_delta > 0
+    if elapsed_is_slower:
+        driver_with_command_seconds = with_command_seconds
+        driver_base_command_seconds = base_command_seconds
+        command_seconds_delta = driver_with_command_seconds - driver_base_command_seconds
+        command_span_label = "paired command time"
+    else:
+        driver_with_command_seconds = _non_dependency_command_seconds(with_run)
+        driver_base_command_seconds = _non_dependency_command_seconds(base_run)
+        command_seconds_delta = (
+            driver_with_command_seconds - driver_base_command_seconds
+            if driver_with_command_seconds is not None and driver_base_command_seconds is not None
+            else None
+        )
+        command_span_label = "paired non-install command time"
 
     if elapsed_is_slower and runtime_is_slower:
         heading = (
@@ -3286,12 +3299,13 @@ def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]
     else:
         heading = f"**Why {with_label} needs more work**:"
     lines = [heading, ""]
-    if command_seconds_delta > 60:
+    if command_seconds_delta is not None and command_seconds_delta > 60:
         command_driver = "wall-clock slowdown" if elapsed_is_slower else "runtime-after-install regression"
         command_effect = "extra wall time" if elapsed_is_slower else "extra non-install runtime"
         lines.append(
             f"- **Long-running commands dominate the {command_driver}** "
-            f"({fmt_number(round(with_command_seconds))}s vs {fmt_number(round(base_command_seconds))}s paired command time, "
+            f"({fmt_number(round(driver_with_command_seconds))}s vs "
+            f"{fmt_number(round(driver_base_command_seconds))}s {command_span_label}, "
             f"+{fmt_number(round(command_seconds_delta))}s): the {command_effect} came from tools the agent ran, "
             f"not from report generation."
         )

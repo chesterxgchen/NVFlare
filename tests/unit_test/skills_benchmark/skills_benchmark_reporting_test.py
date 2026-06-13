@@ -1916,6 +1916,8 @@ def test_why_section_reports_runtime_regression_when_total_time_is_not_slower():
     assert "| With skills | 500s | 50s | 450s | 400s |" in section
     assert "| No skills baseline | 600s | 300s | 300s | 40s |" in section
     assert "Long-running commands dominate the runtime-after-install regression" in section
+    assert "400s vs 40s paired non-install command time" in section
+    assert "450s vs 340s paired command time" not in section
     assert "extra non-install runtime came from tools" in section
     assert "extra wall time came from tools" not in section
     assert "runtime-after-install overhead" in section
