@@ -41,7 +41,7 @@ def base_scenario(tmp_path: Path) -> dict:
 
 
 def test_mode_ablation_expands_modes_and_target_record_paths(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
+    from skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     compilation = compile_scenario(raw, base_dir=tmp_path)
@@ -75,7 +75,7 @@ def test_mode_ablation_expands_modes_and_target_record_paths(tmp_path):
 
 
 def test_compile_scenario_file_writes_scenario_and_run_plan(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario_file
+    from skills.harness.scenarios import compile_scenario_file
 
     raw = base_scenario(tmp_path)
     scenario_path = tmp_path / "scenario.yaml"
@@ -93,7 +93,7 @@ def test_compile_scenario_file_writes_scenario_and_run_plan(tmp_path):
 
 
 def test_scenario_reproducibility_records_profile_image_targets(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
+    from skills.harness.scenarios import compile_scenario
 
     scenario = compile_scenario(base_scenario(tmp_path), base_dir=tmp_path).scenario
 
@@ -105,7 +105,7 @@ def test_scenario_reproducibility_records_profile_image_targets(tmp_path):
 
 
 def test_prompt_path_must_stay_inside_scenario_directory(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     base_dir = tmp_path / "scenario"
     base_dir.mkdir()
@@ -123,7 +123,7 @@ def test_prompt_path_must_stay_inside_scenario_directory(tmp_path):
 
 
 def test_prompt_template_renders_only_explicit_variables(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
+    from skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     template = tmp_path / "prompt_template.txt"
@@ -171,7 +171,7 @@ def test_prompt_template_renders_only_explicit_variables(tmp_path):
 
 
 def test_prompt_path_with_variables_is_rendered_as_template(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
+    from skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     prompt = tmp_path / "prompt.txt"
@@ -187,7 +187,7 @@ def test_prompt_path_with_variables_is_rendered_as_template(tmp_path):
 
 
 def test_inline_prompt_template_string_is_rejected(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["prompt"] = "Convert {job_name}."
@@ -202,9 +202,9 @@ def test_inline_prompt_template_string_is_rejected(tmp_path):
 
 
 def test_execute_run_plan_materializes_template_prompt_under_result_root(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.common import write_json
-    from assist_tools.skills_benchmark.skills.harness.host import runner
-    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
+    from skills.harness.common import write_json
+    from skills.harness.host import runner
+    from skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["comparison"] = {"type": "one", "mode": "with_skills"}
@@ -256,7 +256,7 @@ def test_execute_run_plan_materializes_template_prompt_under_result_root(tmp_pat
 
 
 def test_prompt_template_rejects_missing_unsafe_and_non_scalar_variables(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     template = tmp_path / "prompt_template.txt"
     template.write_text("Convert {job.name} with {metric}.\n", encoding="utf-8")
@@ -293,7 +293,7 @@ def test_prompt_template_rejects_missing_unsafe_and_non_scalar_variables(tmp_pat
 
 
 def test_prompt_template_literal_brace_errors_explain_escaping(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     template = tmp_path / "prompt_template.txt"
@@ -319,7 +319,7 @@ def test_prompt_template_literal_brace_errors_explain_escaping(tmp_path):
 
 
 def test_model_comparison_expands_comparison_models(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
+    from skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["agents"] = [{"name": "codex"}]
@@ -340,7 +340,7 @@ def test_model_comparison_expands_comparison_models(tmp_path):
 
 
 def test_model_comparison_dedupes_overlapping_top_level_models(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
+    from skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["agents"] = [{"name": "codex", "models": ["gpt-a", "gpt-b"]}]
@@ -357,13 +357,13 @@ def test_model_comparison_dedupes_overlapping_top_level_models(tmp_path):
 
 
 def test_model_slug_fallback_avoids_unhandled_missing_key():
-    from assist_tools.skills_benchmark.skills.harness.scenarios import model_slug_for
+    from skills.harness.scenarios import model_slug_for
 
     assert model_slug_for({"models": {}}, "codex", "gpt-test") == "gpt_test"
 
 
 def test_model_slug_key_is_visible_and_agent_scoped():
-    from assist_tools.skills_benchmark.skills.harness.scenarios import model_slug_for, model_slug_key
+    from skills.harness.scenarios import model_slug_for, model_slug_key
 
     codex_key = model_slug_key("codex", "shared/model")
     claude_key = model_slug_key("claude", "shared/model")
@@ -375,7 +375,7 @@ def test_model_slug_key_is_visible_and_agent_scoped():
 
 
 def test_slug_collisions_hash_original_values(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
+    from skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     job_a = tmp_path / "my-job"
@@ -395,7 +395,7 @@ def test_slug_collisions_hash_original_values(tmp_path):
 
 
 def test_missing_job_scale_is_rejected(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["jobs"][0].pop("scale")
@@ -409,7 +409,7 @@ def test_missing_job_scale_is_rejected(tmp_path):
 
 
 def test_fail_fast_requires_boolean(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["fail_fast"] = "false"
@@ -423,7 +423,7 @@ def test_fail_fast_requires_boolean(tmp_path):
 
 
 def test_quality_gate_override_is_recorded_and_applied(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario, quality_gate_failures
+    from skills.harness.scenarios import compile_scenario, quality_gate_failures
 
     raw = base_scenario(tmp_path)
     raw["quality_gate"] = {"required_validation_metric_status": ["present"]}
@@ -447,7 +447,7 @@ def test_quality_gate_override_is_recorded_and_applied(tmp_path):
 
 
 def test_quality_gate_rejects_unknown_fields(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["quality_gate"] = {"unknown_check": True}
@@ -461,7 +461,7 @@ def test_quality_gate_rejects_unknown_fields(tmp_path):
 
 
 def test_resource_policy_non_integer_values_are_validation_errors(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["resource_policy"] = {"small": {"agent_timeout_seconds": "fast"}}
@@ -489,7 +489,7 @@ def test_resource_policy_non_integer_values_are_validation_errors(tmp_path):
 
 
 def test_resource_policy_rejects_bool_and_non_positive_values(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["resource_policy"] = {"small": {"agent_timeout_seconds": False}}
@@ -517,11 +517,7 @@ def test_resource_policy_rejects_bool_and_non_positive_values(tmp_path):
 
 
 def test_prompt_file_size_guard_rejects_large_prompt(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import (
-        MAX_PROMPT_BYTES,
-        ScenarioValidationError,
-        compile_scenario,
-    )
+    from skills.harness.scenarios import MAX_PROMPT_BYTES, ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     prompt_path = tmp_path / raw["prompt"]
@@ -537,11 +533,7 @@ def test_prompt_file_size_guard_rejects_large_prompt(tmp_path):
 
 
 def test_prompt_file_size_guard_uses_read_bytes_length(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import (
-        MAX_PROMPT_BYTES,
-        ScenarioValidationError,
-        compile_scenario,
-    )
+    from skills.harness.scenarios import MAX_PROMPT_BYTES, ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     prompt_path = tmp_path / raw["prompt"]
@@ -563,7 +555,7 @@ def test_prompt_file_size_guard_uses_read_bytes_length(tmp_path, monkeypatch):
 
 
 def test_validate_path_budget_uses_longest_path_not_lexicographic_max():
-    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, validate_path_budget
+    from skills.harness.scenarios import ScenarioValidationError, validate_path_budget
 
     short_late_path = "zz"
     long_early_path = "a" * 80
@@ -583,7 +575,7 @@ def test_validate_path_budget_uses_longest_path_not_lexicographic_max():
 
 
 def test_validate_path_budget_can_use_actual_result_root():
-    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, validate_path_budget
+    from skills.harness.scenarios import ScenarioValidationError, validate_path_budget
 
     result_root = Path("r" * 40)
     artifact_path = "short.txt"
@@ -603,7 +595,7 @@ def test_validate_path_budget_can_use_actual_result_root():
 
 
 def test_validate_path_budget_allows_empty_artifact_paths():
-    from assist_tools.skills_benchmark.skills.harness.scenarios import validate_path_budget
+    from skills.harness.scenarios import validate_path_budget
 
     validate_path_budget(
         "path budget",
@@ -613,7 +605,7 @@ def test_validate_path_budget_allows_empty_artifact_paths():
 
 
 def test_quality_gate_failures_reports_missing_final_exit_as_not_recorded():
-    from assist_tools.skills_benchmark.skills.harness.scenarios import quality_gate_failures
+    from skills.harness.scenarios import quality_gate_failures
 
     failures = quality_gate_failures(
         {"agent_process_passed": True, "source_input_immutable_policy": {"status": "pass"}},
@@ -626,7 +618,7 @@ def test_quality_gate_failures_reports_missing_final_exit_as_not_recorded():
 
 
 def test_quality_gate_failures_derives_missing_required_validation_metric():
-    from assist_tools.skills_benchmark.skills.harness.scenarios import quality_gate_failures
+    from skills.harness.scenarios import quality_gate_failures
 
     record = {
         "agent_process_passed": True,
@@ -647,7 +639,7 @@ def test_quality_gate_failures_derives_missing_required_validation_metric():
 
 
 def test_quality_gate_failures_derives_critical_quality_check_failure():
-    from assist_tools.skills_benchmark.skills.harness.scenarios import quality_gate_failures
+    from skills.harness.scenarios import quality_gate_failures
 
     record = {
         "agent_process_passed": True,
@@ -662,7 +654,7 @@ def test_quality_gate_failures_derives_critical_quality_check_failure():
 
 
 def test_known_pending_agent_is_rejected(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["agents"] = [{"name": "hermes"}]
@@ -677,7 +669,7 @@ def test_known_pending_agent_is_rejected(tmp_path):
 
 
 def test_claude_scenario_uses_adapter_default_model_when_unspecified(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
+    from skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["agents"] = [{"name": "claude"}]
@@ -691,7 +683,7 @@ def test_claude_scenario_uses_adapter_default_model_when_unspecified(tmp_path):
 
 
 def test_agent_comparison_requires_unambiguous_model_selection(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["agents"] = [{"name": "codex", "models": ["gpt-a", "gpt-b"]}]
@@ -707,7 +699,7 @@ def test_agent_comparison_requires_unambiguous_model_selection(tmp_path):
 
 
 def test_agent_comparison_models_by_agent_resolves_single_model(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
+    from skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["agents"] = [{"name": "codex", "models": ["gpt-a", "gpt-b"]}]
@@ -725,9 +717,9 @@ def test_agent_comparison_models_by_agent_resolves_single_model(tmp_path):
 
 
 def test_execute_run_plan_writes_canonical_records_and_scenario_summary(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.common import write_json
-    from assist_tools.skills_benchmark.skills.harness.host import runner
-    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
+    from skills.harness.common import write_json
+    from skills.harness.host import runner
+    from skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["path_budget"] = 400
@@ -808,8 +800,8 @@ def test_execute_run_plan_writes_canonical_records_and_scenario_summary(tmp_path
 
 
 def test_execute_run_plan_fails_preflight_before_missing_docker_image(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.host import runner
-    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError, compile_scenario
+    from skills.harness.host import runner
+    from skills.harness.scenarios import ScenarioValidationError, compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["comparison"] = {"type": "one", "mode": "with_skills"}
@@ -844,8 +836,8 @@ def test_execute_run_plan_fails_preflight_before_missing_docker_image(tmp_path, 
 
 
 def test_scenario_summary_failed_when_all_runs_fail_quality_gate(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.common import write_json
-    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario, write_scenario_summaries
+    from skills.harness.common import write_json
+    from skills.harness.scenarios import compile_scenario, write_scenario_summaries
 
     raw = base_scenario(tmp_path)
     raw["path_budget"] = 400
@@ -866,8 +858,8 @@ def test_scenario_summary_failed_when_all_runs_fail_quality_gate(tmp_path):
 
 
 def test_scenario_summary_degraded_when_fail_fast_leaves_runs_unexecuted(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.common import write_json
-    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario, write_scenario_summaries
+    from skills.harness.common import write_json
+    from skills.harness.scenarios import compile_scenario, write_scenario_summaries
 
     raw = base_scenario(tmp_path)
     raw["fail_fast"] = True
@@ -888,8 +880,8 @@ def test_scenario_summary_degraded_when_fail_fast_leaves_runs_unexecuted(tmp_pat
 
 
 def test_scenario_summary_failed_when_report_generation_fails(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import scenarios
-    from assist_tools.skills_benchmark.skills.harness.common import write_json
+    from skills.harness import scenarios
+    from skills.harness.common import write_json
 
     raw = base_scenario(tmp_path)
     raw["comparison"] = {"type": "one", "mode": "with_skills"}
@@ -922,8 +914,8 @@ def test_scenario_summary_failed_when_report_generation_fails(tmp_path, monkeypa
 
 
 def test_scenario_summary_keeps_report_generation_pending_in_memory_only(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import scenarios
-    from assist_tools.skills_benchmark.skills.harness.common import write_json
+    from skills.harness import scenarios
+    from skills.harness.common import write_json
 
     raw = base_scenario(tmp_path)
     raw["comparison"] = {"type": "one", "mode": "with_skills"}
@@ -957,8 +949,8 @@ def test_scenario_summary_keeps_report_generation_pending_in_memory_only(tmp_pat
 
 
 def test_scenario_summary_replaces_stale_summary_atomically(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import scenarios
-    from assist_tools.skills_benchmark.skills.harness.common import write_json
+    from skills.harness import scenarios
+    from skills.harness.common import write_json
 
     raw = base_scenario(tmp_path)
     raw["comparison"] = {"type": "one", "mode": "with_skills"}
@@ -989,8 +981,8 @@ def test_scenario_summary_replaces_stale_summary_atomically(tmp_path, monkeypatc
 
 
 def test_scenario_summary_quality_gate_uses_container_exit_fallback(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness import scenario_summaries, scenarios
-    from assist_tools.skills_benchmark.skills.harness.common import write_json
+    from skills.harness import scenario_summaries, scenarios
+    from skills.harness.common import write_json
 
     raw = base_scenario(tmp_path)
     raw["comparison"] = {"type": "one", "mode": "with_skills"}
@@ -1022,7 +1014,7 @@ def test_scenario_summary_quality_gate_uses_container_exit_fallback(tmp_path):
 
 
 def test_scenario_summary_records_per_entry_summary_exception(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import scenario_summaries, scenarios
+    from skills.harness import scenario_summaries, scenarios
 
     raw = base_scenario(tmp_path)
     raw["comparison"] = {"type": "one", "mode": "with_skills"}
@@ -1053,8 +1045,8 @@ def test_scenario_summary_records_per_entry_summary_exception(tmp_path, monkeypa
 
 
 def test_scenario_summary_ignores_missing_run_id_when_indexing_runs(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import scenario_summaries
-    from assist_tools.skills_benchmark.skills.harness.common import write_json
+    from skills.harness import scenario_summaries
+    from skills.harness.common import write_json
 
     result_root = tmp_path / "results"
     result_root.mkdir()
@@ -1100,7 +1092,7 @@ def test_scenario_summary_ignores_missing_run_id_when_indexing_runs(tmp_path, mo
 
 
 def test_write_json_atomic_delegates_to_common_helper(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import scenario_summaries
+    from skills.harness import scenario_summaries
 
     target = tmp_path / "scenario_summary.json"
     calls = []
@@ -1116,7 +1108,7 @@ def test_write_json_atomic_delegates_to_common_helper(tmp_path, monkeypatch):
 
 
 def test_comparison_group_summary_ignores_non_numeric_token_count():
-    from assist_tools.skills_benchmark.skills.harness.scenarios import comparison_group_summary
+    from skills.harness.scenarios import comparison_group_summary
 
     group = {
         "comparison_group_id": "group_001",
@@ -1146,7 +1138,7 @@ def test_comparison_group_summary_ignores_non_numeric_token_count():
 
 
 def test_comparison_group_summary_sorts_missing_token_count_last():
-    from assist_tools.skills_benchmark.skills.harness.scenarios import comparison_group_summary
+    from skills.harness.scenarios import comparison_group_summary
 
     group = {
         "comparison_group_id": "group_001",
@@ -1176,7 +1168,7 @@ def test_comparison_group_summary_sorts_missing_token_count_last():
 
 
 def test_comparison_group_summary_uses_stable_run_id_tiebreaker():
-    from assist_tools.skills_benchmark.skills.harness.scenarios import comparison_group_summary
+    from skills.harness.scenarios import comparison_group_summary
 
     group = {
         "comparison_group_id": "group_001",
@@ -1206,7 +1198,7 @@ def test_comparison_group_summary_uses_stable_run_id_tiebreaker():
 
 
 def test_aggregate_results_sorts_missing_token_median_last():
-    from assist_tools.skills_benchmark.skills.harness.scenario_summaries import aggregate_results
+    from skills.harness.scenario_summaries import aggregate_results
 
     summary = aggregate_results(
         [
@@ -1229,10 +1221,10 @@ def test_aggregate_results_sorts_missing_token_median_last():
 
 
 def test_replay_result_root_regenerates_agent_parser_artifacts(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
-    from assist_tools.skills_benchmark.skills.harness.common import write_json
-    from assist_tools.skills_benchmark.skills.harness.host.runner import replay_result_root
-    from assist_tools.skills_benchmark.skills.harness.scenarios import compile_scenario
+    from skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.common import write_json
+    from skills.harness.host.runner import replay_result_root
+    from skills.harness.scenarios import compile_scenario
 
     raw = base_scenario(tmp_path)
     raw["agents"] = [{"name": "claude", "models": ["claude-test"]}]

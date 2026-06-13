@@ -1,7 +1,7 @@
 # Skill Benchmark Harness Architecture
 
 This document describes the implemented skill benchmark harness under
-`assist_tools/skills_benchmark`. The harness measures how agent-accessible
+`dev_tools/agent/skills/benchmark`. The harness measures how agent-accessible
 NVFLARE skills affect applied conversion and diagnosis tasks.
 
 The harness is not an agent runtime and it is not an NVFLARE training workflow.
@@ -290,12 +290,12 @@ flowchart LR
 
 ## Key Implementation Points
 
-- Harness root: `/Users/chesterc/projects/NVFlare/assist_tools/skills_benchmark`
-- Harness core: `/Users/chesterc/projects/NVFlare/assist_tools/skills_benchmark/skills/harness`
-- Harness SDK profiles: `/Users/chesterc/projects/NVFlare/assist_tools/skills_benchmark/config/sdks`
-- Harness agent plugins: `/Users/chesterc/projects/NVFlare/assist_tools/skills_benchmark/config/agents`
-- Harness Docker setup: `/Users/chesterc/projects/NVFlare/assist_tools/skills_benchmark/docker/Dockerfile`
-- Harness reporting: `/Users/chesterc/projects/NVFlare/assist_tools/skills_benchmark/skills/harness/reports`
+- Harness root: `/Users/chesterc/projects/NVFlare/dev_tools/agent/skills/benchmark`
+- Harness core: `/Users/chesterc/projects/NVFlare/dev_tools/agent/skills/benchmark/skills/harness`
+- Harness SDK profiles: `/Users/chesterc/projects/NVFlare/dev_tools/agent/skills/benchmark/config/sdks`
+- Harness agent plugins: `/Users/chesterc/projects/NVFlare/dev_tools/agent/skills/benchmark/config/agents`
+- Harness Docker setup: `/Users/chesterc/projects/NVFlare/dev_tools/agent/skills/benchmark/docker/Dockerfile`
+- Harness reporting: `/Users/chesterc/projects/NVFlare/dev_tools/agent/skills/benchmark/skills/harness/reports`
 
 The important boundary: the harness starts external agent CLIs inside Docker
 and normalizes the resulting evidence. The agent remains the component that

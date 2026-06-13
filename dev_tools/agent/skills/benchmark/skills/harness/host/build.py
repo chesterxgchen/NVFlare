@@ -35,7 +35,7 @@ from ..sdks.config import ConfigurableSdkAdapter
 from ..sdks.registry import DEFAULT_BENCHMARK_SDK, load_sdk_adapter
 from .common import SCRIPT_DIR, emit, write_json
 
-REPO_ROOT = SCRIPT_DIR.parents[1]
+REPO_ROOT = SCRIPT_DIR.parents[3]
 DEFAULT_UV_IMAGE = "ghcr.io/astral-sh/uv:0.11.19"
 DEFAULT_NODE_IMAGE = "node:22.16.0-bookworm-slim"
 
@@ -89,7 +89,7 @@ def assert_sdk_repo_not_in_harness_source(path: Path) -> None:
     except ValueError:
         return
     raise SystemExit(
-        "SDK profile source.path must not be inside assist_tools/skills_benchmark. "
+        "SDK profile source.path must not be inside dev_tools/agent/skills/benchmark. "
         "Only built wheel artifacts are staged into the Docker build context."
     )
 
@@ -361,13 +361,8 @@ def copy_harness(src: Path, dst: Path) -> None:
 
 
 def copy_harness_package(context: Path) -> None:
-    package_root = context / "assist_tools" / "skills_benchmark" / "skills"
-    package_root.mkdir(parents=True)
-    shutil.copy2(REPO_ROOT / "assist_tools" / "__init__.py", context / "assist_tools" / "__init__.py")
-    shutil.copy2(SCRIPT_DIR / "__init__.py", context / "assist_tools" / "skills_benchmark" / "__init__.py")
-    copy_harness(SCRIPT_DIR / "config", context / "assist_tools" / "skills_benchmark" / "config")
-    shutil.copy2(SCRIPT_DIR / "skills" / "__init__.py", package_root / "__init__.py")
-    copy_harness(SCRIPT_DIR / "skills" / "harness", package_root / "harness")
+    copy_harness(SCRIPT_DIR / "config", context / "config")
+    copy_harness(SCRIPT_DIR / "skills", context / "skills")
 
 
 def prepare_build_context() -> Path:

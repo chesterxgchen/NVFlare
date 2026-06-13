@@ -18,9 +18,11 @@ import stat
 import subprocess
 from pathlib import Path
 
+BENCHMARK_ROOT = Path(__file__).resolve().parents[3] / "dev_tools" / "agent" / "skills" / "benchmark"
+
 
 def test_run_sh_defaults_to_pair_when_first_arg_is_option(tmp_path):
-    script = Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "bin" / "run.sh"
+    script = BENCHMARK_ROOT / "bin" / "run.sh"
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     recorder = tmp_path / "python_args.txt"
@@ -43,7 +45,7 @@ def test_run_sh_defaults_to_pair_when_first_arg_is_option(tmp_path):
     assert result.returncode == 0
     assert recorder.read_text(encoding="utf-8").splitlines() == [
         "-m",
-        "assist_tools.skills_benchmark.skills.harness.host.runner",
+        "skills.harness.host.runner",
         "pair",
         "--prompt",
         "prompt.txt",
@@ -52,18 +54,15 @@ def test_run_sh_defaults_to_pair_when_first_arg_is_option(tmp_path):
 
 
 def test_expand_home_path_uses_pathlib_expanduser():
-    from assist_tools.skills_benchmark.skills.harness.host.common import expand_home_path
+    from skills.harness.host.common import expand_home_path
 
     assert expand_home_path("~/nvflare") == str(Path.home() / "nvflare")
     assert expand_home_path("/workspace/input") == "/workspace/input"
 
 
 def test_agent_availability_probe_records_missing_cli(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.container import agent_run
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
-        AgentRunConfig,
-        run_agent_availability_probe,
-    )
+    from skills.harness.container import agent_run
+    from skills.harness.container.agent_run import AgentRunConfig, run_agent_availability_probe
 
     class MissingProbeAdapter:
         def availability_probe(self):
@@ -107,7 +106,7 @@ def test_agent_availability_probe_records_missing_cli(tmp_path, monkeypatch):
 
 
 def test_host_image_config_rejects_unsupported_agent(monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.host.common import ImageConfig
+    from skills.harness.host.common import ImageConfig
 
     monkeypatch.setenv("BENCHMARK_AGENT", "hermes")
 
@@ -121,13 +120,8 @@ def test_host_image_config_rejects_unsupported_agent(monkeypatch):
 
 
 def test_host_docker_args_use_migrated_container_entrypoint(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
-    from assist_tools.skills_benchmark.skills.harness.host.common import (
-        CONTAINER_PROMPT_PATH,
-        CaseConfig,
-        ImageConfig,
-        docker_args_for_case,
-    )
+    from skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.host.common import CONTAINER_PROMPT_PATH, CaseConfig, ImageConfig, docker_args_for_case
 
     job_input = tmp_path / "job"
     prompt_dir = tmp_path / "prompts"
@@ -162,14 +156,14 @@ def test_host_docker_args_use_migrated_container_entrypoint(tmp_path):
 
     assert "-m" in args
     module_index = args.index("-m") + 1
-    assert args[module_index] == "assist_tools.skills_benchmark.skills.harness.container.agent_run"
+    assert args[module_index] == "skills.harness.container.agent_run"
     assert f"{prompt_path}:{CONTAINER_PROMPT_PATH}:ro" in args
     assert f"PROMPT_SOURCE={CONTAINER_PROMPT_PATH}" in args
     assert "RECORDS_DIR=/workspace/results/records" in args
 
 
 def test_prepare_result_mount_allows_non_root_container_writes(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.host.common import prepare_result_mount
+    from skills.harness.host.common import prepare_result_mount
 
     result_dir = tmp_path / "results"
 
@@ -188,8 +182,8 @@ def test_prepare_result_mount_allows_non_root_container_writes(tmp_path):
 def test_add_agent_auth_mounts_rejects_symlinked_optional_file(tmp_path):
     if not hasattr(os, "symlink"):
         return
-    from assist_tools.skills_benchmark.skills.harness.agents.base import DockerMount
-    from assist_tools.skills_benchmark.skills.harness.host.common import add_agent_auth_mounts
+    from skills.harness.agents.base import DockerMount
+    from skills.harness.host.common import add_agent_auth_mounts
 
     real_auth = tmp_path / "real-auth.json"
     real_auth.write_text("{}\n", encoding="utf-8")
@@ -206,8 +200,8 @@ def test_add_agent_auth_mounts_rejects_symlinked_optional_file(tmp_path):
 
 
 def test_add_agent_auth_mounts_stages_read_only_file_for_container_user(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.base import DockerMount
-    from assist_tools.skills_benchmark.skills.harness.host.common import add_agent_auth_mounts
+    from skills.harness.agents.base import DockerMount
+    from skills.harness.host.common import add_agent_auth_mounts
 
     auth = tmp_path / "auth.json"
     auth.write_text('{"token": "secret"}\n', encoding="utf-8")
@@ -232,8 +226,8 @@ def test_add_agent_auth_mounts_stages_read_only_file_for_container_user(tmp_path
 def test_add_agent_auth_mounts_rejects_symlinked_required_file(tmp_path):
     if not hasattr(os, "symlink"):
         return
-    from assist_tools.skills_benchmark.skills.harness.agents.base import DockerMount
-    from assist_tools.skills_benchmark.skills.harness.host.common import add_agent_auth_mounts
+    from skills.harness.agents.base import DockerMount
+    from skills.harness.host.common import add_agent_auth_mounts
 
     real_auth = tmp_path / "real-auth.json"
     real_auth.write_text("{}\n", encoding="utf-8")
@@ -252,7 +246,7 @@ def test_add_agent_auth_mounts_rejects_symlinked_required_file(tmp_path):
 
 
 def test_write_benchmark_reports_clears_agent_parser_cache(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.host import runner
+    from skills.harness.host import runner
 
     cleared = {"count": 0}
 
@@ -273,9 +267,9 @@ def test_write_benchmark_reports_clears_agent_parser_cache(tmp_path, monkeypatch
 
 
 def test_enforce_result_size_budget_reports_oversized_results(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
-    from assist_tools.skills_benchmark.skills.harness.host.common import CaseConfig, ImageConfig
-    from assist_tools.skills_benchmark.skills.harness.host.runner import enforce_result_size_budget
+    from skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.host.common import CaseConfig, ImageConfig
+    from skills.harness.host.runner import enforce_result_size_budget
 
     result_dir = tmp_path / "results"
     result_dir.mkdir()
@@ -310,7 +304,7 @@ def test_enforce_result_size_budget_reports_oversized_results(tmp_path):
 def test_emit_case_failure_summary_prints_actionable_error(tmp_path):
     from types import SimpleNamespace
 
-    from assist_tools.skills_benchmark.skills.harness.host import runner
+    from skills.harness.host import runner
 
     result_dir = tmp_path / "results"
     result_dir.mkdir()
@@ -352,7 +346,7 @@ def test_emit_case_failure_summary_prints_actionable_error(tmp_path):
 
 
 def test_directory_size_bytes_does_not_traverse_symlinked_directories(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.host.runner import directory_size_bytes
+    from skills.harness.host.runner import directory_size_bytes
 
     result_dir = tmp_path / "results"
     outside = tmp_path / "outside"
@@ -366,7 +360,7 @@ def test_directory_size_bytes_does_not_traverse_symlinked_directories(tmp_path):
 
 
 def test_case_config_for_entry_applies_resource_policy(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.host import runner
+    from skills.harness.host import runner
 
     entry = {
         "agent": "codex",
@@ -393,7 +387,7 @@ def test_case_config_for_entry_applies_resource_policy(tmp_path, monkeypatch):
 
 
 def test_positive_int_resource_value_accepts_float_values():
-    from assist_tools.skills_benchmark.skills.harness.host.runner import positive_int_resource_value
+    from skills.harness.host.runner import positive_int_resource_value
 
     assert positive_int_resource_value(1800.0) == 1800
     assert positive_int_resource_value(0.5) is None
@@ -402,7 +396,7 @@ def test_positive_int_resource_value_accepts_float_values():
 
 
 def test_stream_command_warns_when_reader_thread_stays_alive(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.host import common
+    from skills.harness.host import common
 
     class FakeStdout:
         def close(self):
@@ -439,7 +433,7 @@ def test_stream_command_warns_when_reader_thread_stays_alive(tmp_path, monkeypat
 
 
 def test_host_cli_accepts_results_root(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.host.common import parse_host_cli_options
+    from skills.harness.host.common import parse_host_cli_options
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -460,7 +454,7 @@ def test_host_cli_accepts_results_root(tmp_path):
 
 
 def test_host_cli_accepts_direct_run_selection_flags(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.host.common import parse_host_cli_options
+    from skills.harness.host.common import parse_host_cli_options
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -501,7 +495,7 @@ def test_host_cli_accepts_direct_run_selection_flags(tmp_path):
 
 
 def test_scenario_cli_accepts_generic_auth_flags(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.host.runner import parse_scenario_cli_options
+    from skills.harness.host.runner import parse_scenario_cli_options
 
     scenario = tmp_path / "scenario.yaml"
     output_dir = tmp_path / "results"
@@ -527,7 +521,7 @@ def test_scenario_cli_accepts_generic_auth_flags(tmp_path):
 
 
 def test_run_scenario_passes_generic_auth_flags_to_execution(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.host import runner
+    from skills.harness.host import runner
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -586,7 +580,7 @@ def test_run_scenario_passes_generic_auth_flags_to_execution(tmp_path, monkeypat
 
 
 def test_host_cli_rejects_mode_for_pair(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.host.common import parse_host_cli_options
+    from skills.harness.host.common import parse_host_cli_options
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -602,7 +596,7 @@ def test_host_cli_rejects_mode_for_pair(tmp_path):
 
 
 def test_default_results_root_uses_codex_compat_alias(monkeypatch, tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.host.common import default_results_root
+    from skills.harness.host.common import default_results_root
 
     compat_root = tmp_path / "compat-results"
     monkeypatch.delenv("AGENT_BENCHMARK_RESULTS_ROOT", raising=False)
@@ -612,8 +606,8 @@ def test_default_results_root_uses_codex_compat_alias(monkeypatch, tmp_path):
 
 
 def test_pair_compilation_accepts_explicit_absolute_prompt_path(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.host.common import parse_host_cli_options
-    from assist_tools.skills_benchmark.skills.harness.host.runner import pair_compilation_from_options
+    from skills.harness.host.common import parse_host_cli_options
+    from skills.harness.host.runner import pair_compilation_from_options
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -631,8 +625,8 @@ def test_pair_compilation_accepts_explicit_absolute_prompt_path(tmp_path):
 
 
 def test_pair_compilation_uses_direct_run_selection_flags(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.host.common import parse_host_cli_options
-    from assist_tools.skills_benchmark.skills.harness.host.runner import pair_compilation_from_options
+    from skills.harness.host.common import parse_host_cli_options
+    from skills.harness.host.runner import pair_compilation_from_options
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -669,12 +663,8 @@ def test_pair_compilation_uses_direct_run_selection_flags(tmp_path, monkeypatch)
 
 
 def test_case_config_uses_generic_runtime_auth_overrides(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.host.common import parse_host_cli_options
-    from assist_tools.skills_benchmark.skills.harness.host.runner import (
-        RuntimeAuthOptions,
-        case_config_for_entry,
-        pair_compilation_from_options,
-    )
+    from skills.harness.host.common import parse_host_cli_options
+    from skills.harness.host.runner import RuntimeAuthOptions, case_config_for_entry, pair_compilation_from_options
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -706,7 +696,7 @@ def test_case_config_uses_generic_runtime_auth_overrides(tmp_path, monkeypatch):
 def test_run_one_executes_compiled_one_scenario(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from assist_tools.skills_benchmark.skills.harness.host import runner
+    from skills.harness.host import runner
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -746,7 +736,7 @@ def test_run_one_executes_compiled_one_scenario(tmp_path, monkeypatch):
 
 
 def test_run_one_reports_image_config_validation_without_traceback(tmp_path, monkeypatch, capsys):
-    from assist_tools.skills_benchmark.skills.harness.host import runner
+    from skills.harness.host import runner
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -771,7 +761,7 @@ def test_run_one_reports_image_config_validation_without_traceback(tmp_path, mon
 def test_run_pair_returns_failure_for_any_run_id_status(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from assist_tools.skills_benchmark.skills.harness.host import runner
+    from skills.harness.host import runner
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -803,8 +793,8 @@ def test_run_pair_returns_failure_for_any_run_id_status(tmp_path, monkeypatch):
 def test_run_pair_reports_scenario_validation_without_traceback(tmp_path, monkeypatch, capsys):
     from types import SimpleNamespace
 
-    from assist_tools.skills_benchmark.skills.harness.host import runner
-    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError
+    from skills.harness.host import runner
+    from skills.harness.scenarios import ScenarioValidationError
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -839,8 +829,8 @@ def test_run_pair_reports_scenario_validation_without_traceback(tmp_path, monkey
 def test_run_pair_writes_host_report_status_after_preflight_report(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from assist_tools.skills_benchmark.skills.harness.host import runner
-    from assist_tools.skills_benchmark.skills.harness.scenarios import ScenarioValidationError
+    from skills.harness.host import runner
+    from skills.harness.scenarios import ScenarioValidationError
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -876,7 +866,7 @@ def test_run_pair_writes_host_report_status_after_preflight_report(tmp_path, mon
 
 
 def test_host_cli_output_dir_maps_to_exact_result_location(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.host.common import parse_host_cli_options
+    from skills.harness.host.common import parse_host_cli_options
 
     job_input = tmp_path / "job"
     prompt = tmp_path / "prompt.txt"
@@ -900,7 +890,7 @@ def test_host_cli_output_dir_maps_to_exact_result_location(tmp_path):
 
 
 def test_host_cli_requires_prompt_path(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.host.common import parse_host_cli_options
+    from skills.harness.host.common import parse_host_cli_options
 
     job_input = tmp_path / "job"
     job_input.mkdir()
@@ -914,7 +904,7 @@ def test_host_cli_requires_prompt_path(tmp_path):
 
 
 def test_container_config_rejects_unknown_mode(monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig
+    from skills.harness.container.agent_run import AgentRunConfig
 
     monkeypatch.setenv("MODE", "with_skill_typo")
 
@@ -929,7 +919,7 @@ def test_container_config_rejects_unknown_mode(monkeypatch):
 
 
 def test_container_config_rejects_mode_skill_flag_conflict(monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig
+    from skills.harness.container.agent_run import AgentRunConfig
 
     monkeypatch.setenv("MODE", "without_skills")
     monkeypatch.setenv("USE_PREINSTALLED_SKILLS", "true")

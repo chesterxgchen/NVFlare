@@ -146,9 +146,7 @@ def stderr_pattern_exit(
     evidence_paths: Iterable[Path] = (),
 ) -> dict[str, Any]:
     summary = generic_cli_exit(exit_code, stderr_path, classifier_id="stderr_patterns", evidence_paths=evidence_paths)
-    evidence_lower = str(
-        summary.get("classification_excerpt") or summary.get("stderr_excerpt") or ""
-    ).lower()
+    evidence_lower = str(summary.get("classification_excerpt") or summary.get("stderr_excerpt") or "").lower()
     for rule in config.get("rules") or []:
         if stderr_rule_matches(rule, exit_code, evidence_lower):
             summary["failure_category"] = str(rule["category"])

@@ -13,3 +13,11 @@
 # limitations under the License.
 
 """Pytest setup for skills benchmark harness tests."""
+
+import sys
+from pathlib import Path
+
+BENCHMARK_ROOT = Path(__file__).resolve().parents[3] / "dev_tools" / "agent" / "skills" / "benchmark"
+
+if str(BENCHMARK_ROOT) not in sys.path:
+    sys.path.insert(0, str(BENCHMARK_ROOT))

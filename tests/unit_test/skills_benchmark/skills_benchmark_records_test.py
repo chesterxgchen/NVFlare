@@ -19,7 +19,7 @@ from pathlib import Path
 
 
 def test_common_write_json_preserves_existing_file_on_replace_failure(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import common
+    from skills.harness import common
 
     target = tmp_path / "record.json"
     target.write_text('{"status": "old"}', encoding="utf-8")
@@ -41,7 +41,7 @@ def test_common_write_json_preserves_existing_file_on_replace_failure(tmp_path, 
 
 
 def test_record_identity_prefers_direct_skill_and_case():
-    from assist_tools.skills_benchmark.skills.harness.record_identity import record_case, record_skill
+    from skills.harness.record_identity import record_case, record_skill
 
     record = {
         "skill": "direct-skill",
@@ -54,7 +54,7 @@ def test_record_identity_prefers_direct_skill_and_case():
 
 
 def test_record_identity_falls_back_to_skill_discovery():
-    from assist_tools.skills_benchmark.skills.harness.record_identity import record_case, record_skill
+    from skills.harness.record_identity import record_case, record_skill
 
     record = {"skill_discovery": {"selected_skill": "fallback-skill", "selected_case_id": "fallback-case"}}
 
@@ -63,7 +63,7 @@ def test_record_identity_falls_back_to_skill_discovery():
 
 
 def test_collect_report_artifacts_skips_symlinks(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.artifacts import collect_report_artifacts
+    from skills.harness.artifacts import collect_report_artifacts
 
     root = tmp_path / "results"
     root.mkdir()
@@ -80,7 +80,7 @@ def test_collect_report_artifacts_skips_symlinks(tmp_path):
 def test_collect_report_artifacts_does_not_traverse_symlinked_directories(tmp_path):
     if not hasattr(os, "symlink"):
         return
-    from assist_tools.skills_benchmark.skills.harness.artifacts import collect_report_artifacts
+    from skills.harness.artifacts import collect_report_artifacts
 
     root = tmp_path / "results"
     root.mkdir()
@@ -98,7 +98,7 @@ def test_collect_report_artifacts_does_not_traverse_symlinked_directories(tmp_pa
 def test_workspace_artifact_capture_does_not_traverse_symlinked_directories(tmp_path):
     if not hasattr(os, "symlink"):
         return
-    from assist_tools.skills_benchmark.skills.harness.artifacts import capture_workspace_delta, write_workspace_baseline
+    from skills.harness.artifacts import capture_workspace_delta, write_workspace_baseline
 
     workspace = tmp_path / "workspace"
     outside = tmp_path / "outside"
@@ -127,7 +127,7 @@ def test_workspace_artifact_capture_does_not_traverse_symlinked_directories(tmp_
 
 
 def test_workspace_artifact_json_writes_use_atomic_helper(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import artifacts
+    from skills.harness import artifacts
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -157,7 +157,7 @@ def test_workspace_artifact_json_writes_use_atomic_helper(tmp_path, monkeypatch)
 
 
 def test_runtime_artifact_capture_preserves_generic_workspace_json(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.artifacts import capture_workspace_delta, write_workspace_baseline
+    from skills.harness.artifacts import capture_workspace_delta, write_workspace_baseline
 
     workspace = tmp_path / "workspace"
     runtime_root = tmp_path / "nvflare_workspaces"
@@ -188,9 +188,7 @@ def test_runtime_artifact_capture_preserves_generic_workspace_json(tmp_path):
 
 
 def test_metric_artifact_parser_reads_generic_json_shape(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.metric_artifacts import (
-        validation_metric_from_workspace_delta_manifest,
-    )
+    from skills.harness.metric_artifacts import validation_metric_from_workspace_delta_manifest
 
     delta = tmp_path / "delta"
     artifact = (
@@ -219,7 +217,7 @@ def test_metric_artifact_parser_reads_generic_json_shape(tmp_path):
 
 
 def test_parse_usage_activity_scans_hints_from_raw_line_without_json_reserialize(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import events
+    from skills.harness import events
 
     events_path = tmp_path / "events.jsonl"
     events_path.write_text(json.dumps({"type": "turn", "message": "read SKILL.md"}) + "\n", encoding="utf-8")
@@ -232,7 +230,7 @@ def test_parse_usage_activity_scans_hints_from_raw_line_without_json_reserialize
 
 
 def test_parse_usage_activity_caps_command_list(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness import events
+    from skills.harness import events
 
     events_path = tmp_path / "events.jsonl"
     with events_path.open("w", encoding="utf-8") as stream:
@@ -248,7 +246,7 @@ def test_parse_usage_activity_caps_command_list(tmp_path):
 
 
 def test_parse_usage_activity_counts_usage_objects_without_retaining_them(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness import events
+    from skills.harness import events
 
     events_path = tmp_path / "events.jsonl"
     with events_path.open("w", encoding="utf-8") as stream:
@@ -261,7 +259,7 @@ def test_parse_usage_activity_counts_usage_objects_without_retaining_them(tmp_pa
 
 
 def test_parse_usage_activity_bounds_distinct_tracking_structures(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import events
+    from skills.harness import events
 
     monkeypatch.setattr(events, "MAX_TRACKED_EVENT_TYPES", 2)
     monkeypatch.setattr(events, "MAX_TRACKED_COMMAND_PREFIXES", 2)
@@ -294,7 +292,7 @@ def test_parse_usage_activity_bounds_distinct_tracking_structures(tmp_path, monk
 
 
 def test_prepare_input_workspace_rejects_symlink_escaping_input(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig, prepare_input_workspace
+    from skills.harness.container.agent_run import AgentRunConfig, prepare_input_workspace
 
     job = tmp_path / "job"
     job.mkdir()
@@ -330,7 +328,7 @@ def test_prepare_input_workspace_rejects_symlink_escaping_input(tmp_path):
 def test_prepare_input_workspace_dereferences_safe_symlinks(tmp_path):
     if not hasattr(os, "symlink"):
         return
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig, prepare_input_workspace
+    from skills.harness.container.agent_run import AgentRunConfig, prepare_input_workspace
 
     job = tmp_path / "job"
     job.mkdir()
@@ -367,7 +365,7 @@ def test_prepare_input_workspace_dereferences_safe_symlinks(tmp_path):
 def test_validate_input_symlinks_does_not_traverse_symlinked_directory_loop(tmp_path):
     if not hasattr(os, "symlink"):
         return
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import validate_input_symlinks
+    from skills.harness.container.agent_run import validate_input_symlinks
 
     job = tmp_path / "job"
     job.mkdir()
@@ -377,7 +375,7 @@ def test_validate_input_symlinks_does_not_traverse_symlinked_directory_loop(tmp_
 
 
 def test_prepare_prompt_hashes_copied_prompt_file(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig, prepare_prompt
+    from skills.harness.container.agent_run import AgentRunConfig, prepare_prompt
 
     result_dir = tmp_path / "results"
     result_dir.mkdir()
@@ -412,10 +410,7 @@ def test_prepare_prompt_hashes_copied_prompt_file(tmp_path):
 
 
 def test_setup_skill_availability_allows_missing_optional_metadata(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
-        AgentRunConfig,
-        setup_skill_availability,
-    )
+    from skills.harness.container.agent_run import AgentRunConfig, setup_skill_availability
 
     codex_home = tmp_path / ".codex"
     result_dir = tmp_path / "results"
@@ -453,8 +448,8 @@ def test_setup_skill_availability_allows_missing_optional_metadata(tmp_path):
 
 
 def test_skill_exposure_carries_launch_args_and_environment(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.base import SkillExposureSpec
-    from assist_tools.skills_benchmark.skills.harness.container.skills import apply_skill_exposure
+    from skills.harness.agents.base import SkillExposureSpec
+    from skills.harness.container.skills import apply_skill_exposure
 
     skill_root = tmp_path / "skills"
     (skill_root / "nvflare-convert-pytorch").mkdir(parents=True)
@@ -484,7 +479,7 @@ def test_skill_exposure_carries_launch_args_and_environment(tmp_path):
 def test_skill_exposure_action_timeout_writes_failure_state(tmp_path, monkeypatch):
     import subprocess
 
-    from assist_tools.skills_benchmark.skills.harness.container import skills
+    from skills.harness.container import skills
 
     result_dir = tmp_path / "results"
     result_dir.mkdir()
@@ -511,8 +506,8 @@ def test_skill_exposure_action_timeout_writes_failure_state(tmp_path, monkeypatc
 
 
 def test_skill_exposure_rejects_skill_root_outside_container_home(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.base import SkillExposureSpec
-    from assist_tools.skills_benchmark.skills.harness.container.skills import apply_skill_exposure
+    from skills.harness.agents.base import SkillExposureSpec
+    from skills.harness.container.skills import apply_skill_exposure
 
     result_dir = tmp_path / "results"
     result_dir.mkdir()
@@ -540,8 +535,8 @@ def test_skill_exposure_rejects_skill_root_outside_container_home(tmp_path):
 
 
 def test_skill_exposure_rejects_metadata_file_outside_container_home(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.base import SkillExposureSpec
-    from assist_tools.skills_benchmark.skills.harness.container.skills import apply_skill_exposure
+    from skills.harness.agents.base import SkillExposureSpec
+    from skills.harness.container.skills import apply_skill_exposure
 
     result_dir = tmp_path / "results"
     result_dir.mkdir()
@@ -574,8 +569,8 @@ def test_skill_exposure_rejects_metadata_file_outside_container_home(tmp_path):
 
 
 def test_skill_exposure_requires_container_home_when_skill_root_is_configured(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.base import SkillExposureSpec
-    from assist_tools.skills_benchmark.skills.harness.container.skills import apply_skill_exposure
+    from skills.harness.agents.base import SkillExposureSpec
+    from skills.harness.container.skills import apply_skill_exposure
 
     result_dir = tmp_path / "results"
     result_dir.mkdir()
@@ -598,8 +593,8 @@ def test_skill_exposure_requires_container_home_when_skill_root_is_configured(tm
 
 
 def test_skill_exposure_rejects_bundled_root_outside_workspace(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.base import SkillExposureSpec
-    from assist_tools.skills_benchmark.skills.harness.container.skills import apply_skill_exposure
+    from skills.harness.agents.base import SkillExposureSpec
+    from skills.harness.container.skills import apply_skill_exposure
 
     result_dir = tmp_path / "results"
     result_dir.mkdir()
@@ -629,7 +624,7 @@ def test_skill_exposure_rejects_bundled_root_outside_workspace(tmp_path):
 
 
 def test_copy_optional_metadata_files_preserves_generic_names(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import copy_optional_metadata_files
+    from skills.harness.container.agent_run import copy_optional_metadata_files
 
     source_dir = tmp_path / "source"
     result_dir = tmp_path / "results"
@@ -654,7 +649,7 @@ def test_copy_optional_metadata_files_preserves_generic_names(tmp_path):
 
 
 def test_copy_optional_metadata_files_rejects_path_traversal(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import copy_optional_metadata_files
+    from skills.harness.container.agent_run import copy_optional_metadata_files
 
     source_dir = tmp_path / "source"
     result_dir = tmp_path / "results"
@@ -670,7 +665,7 @@ def test_copy_optional_metadata_files_rejects_path_traversal(tmp_path):
 
 
 def test_available_skill_names_skips_symlinked_skill_directories(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import records
+    from skills.harness import records
 
     agent_home = tmp_path / "agent-home"
     skills_root = agent_home / "skills"
@@ -688,7 +683,7 @@ def test_available_skill_names_skips_symlinked_skill_directories(tmp_path, monke
 
 
 def test_infer_from_events_scores_installed_skill_names_in_single_pass(monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import records
+    from skills.harness import records
 
     monkeypatch.setattr(records, "available_skill_names", lambda: {"nvflare-a", "nvflare-b"})
 
@@ -699,7 +694,7 @@ def test_infer_from_events_scores_installed_skill_names_in_single_pass(monkeypat
 
 
 def test_infer_from_events_caps_installed_skill_name_candidates(monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import records
+    from skills.harness import records
 
     skill_names = {f"nvflare-skill-{index:03d}" for index in range(75)}
     monkeypatch.setattr(records, "available_skill_names", lambda: skill_names)
@@ -711,7 +706,7 @@ def test_infer_from_events_caps_installed_skill_name_candidates(monkeypatch):
 
 
 def test_infer_from_events_uses_case_id_boundaries(monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import records
+    from skills.harness import records
 
     monkeypatch.setattr(records, "available_skill_names", lambda: {"nvflare-a"})
     monkeypatch.setattr(records, "eval_case_ids_for_skill", lambda _skill: ["basic", "basic-v2"])
@@ -722,7 +717,7 @@ def test_infer_from_events_uses_case_id_boundaries(monkeypatch):
 
 
 def test_eval_case_ids_for_skill_skips_oversized_evals_json(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import records
+    from skills.harness import records
 
     agent_home = tmp_path / "agent-home"
     evals_dir = agent_home / "skills" / "nvflare-a" / "evals"
@@ -740,7 +735,7 @@ def test_eval_case_ids_for_skill_skips_oversized_evals_json(tmp_path, monkeypatc
 
 
 def test_load_text_caps_bytes(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.records import load_text
+    from skills.harness.records import load_text
 
     path = tmp_path / "events.jsonl"
     path.write_bytes(b"abcdef")
@@ -749,7 +744,7 @@ def test_load_text_caps_bytes(tmp_path):
 
 
 def test_synthesize_agent_record_caps_event_text_for_identity(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import records
+    from skills.harness import records
 
     monkeypatch.setattr(records, "MAX_EVENTS_TEXT_BYTES", 8)
     monkeypatch.setattr(records, "available_skill_names", lambda: {"nvflare-large"})
@@ -796,7 +791,7 @@ def test_synthesize_agent_record_caps_event_text_for_identity(tmp_path, monkeypa
 
 
 def test_iter_json_records_enforces_file_count_limit(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import records
+    from skills.harness import records
 
     for index in range(3):
         (tmp_path / f"record-{index}.json").write_text(
@@ -811,7 +806,7 @@ def test_iter_json_records_enforces_file_count_limit(tmp_path, monkeypatch):
 
 
 def test_iter_json_records_skips_oversized_json_files(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import records
+    from skills.harness import records
 
     small = tmp_path / "small.json"
     small.write_text(json.dumps({"skill": "nvflare-test"}), encoding="utf-8")
@@ -827,7 +822,7 @@ def test_iter_json_records_skips_oversized_json_files(tmp_path, monkeypatch):
 
 
 def test_iter_json_records_file_count_limit_ignores_oversized_skips(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import records
+    from skills.harness import records
 
     small = tmp_path / "small.json"
     small.write_text(json.dumps({"skill": "nvflare-test"}), encoding="utf-8")
@@ -844,7 +839,7 @@ def test_iter_json_records_file_count_limit_ignores_oversized_skips(tmp_path, mo
 def test_iter_json_records_does_not_traverse_symlinked_directories(tmp_path):
     if not hasattr(os, "symlink"):
         return
-    from assist_tools.skills_benchmark.skills.harness import records
+    from skills.harness import records
 
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -860,7 +855,7 @@ def test_iter_json_records_does_not_traverse_symlinked_directories(tmp_path):
 
 
 def test_login_shell_runtime_probe_uses_configured_venv_path(monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.container import agent_run
+    from skills.harness.container import agent_run
 
     class ProbeResult:
         returncode = 0
@@ -900,7 +895,7 @@ def test_login_shell_runtime_probe_uses_configured_venv_path(monkeypatch):
 
 
 def test_login_shell_runtime_probe_does_not_shell_interpolate_sdk_version_command(monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.container import agent_run
+    from skills.harness.container import agent_run
 
     class ProbeResult:
         returncode = 0
@@ -929,12 +924,9 @@ def test_login_shell_runtime_probe_does_not_shell_interpolate_sdk_version_comman
 
 
 def test_runtime_metadata_skips_login_shell_probe_when_launch_does_not_require_it(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchSpec
-    from assist_tools.skills_benchmark.skills.harness.container import agent_run
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
-        AgentRunConfig,
-        persist_container_runtime_metadata,
-    )
+    from skills.harness.agents.base import AgentLaunchSpec
+    from skills.harness.container import agent_run
+    from skills.harness.container.agent_run import AgentRunConfig, persist_container_runtime_metadata
 
     result_dir = tmp_path / "results"
     agent_home = tmp_path / ".agent"
@@ -986,8 +978,8 @@ def test_runtime_metadata_skips_login_shell_probe_when_launch_does_not_require_i
 
 
 def test_finalize_timing_uses_named_lifecycle_epochs(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.common import write_json
-    from assist_tools.skills_benchmark.skills.harness.timing import LifecycleEpochs, finalize_timing
+    from skills.harness.common import write_json
+    from skills.harness.timing import LifecycleEpochs, finalize_timing
 
     summary_path = tmp_path / "run_summary.json"
     record_path = tmp_path / "record.json"
@@ -1039,8 +1031,8 @@ def test_finalize_timing_uses_named_lifecycle_epochs(tmp_path):
 
 
 def test_finalize_timing_creates_missing_output_parents(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.common import write_json
-    from assist_tools.skills_benchmark.skills.harness.timing import LifecycleEpochs, finalize_timing
+    from skills.harness.common import write_json
+    from skills.harness.timing import LifecycleEpochs, finalize_timing
 
     summary_path = tmp_path / "run_summary.json"
     timing_path = tmp_path / "timing.json"
@@ -1078,7 +1070,7 @@ def test_finalize_timing_creates_missing_output_parents(tmp_path):
 
 
 def test_atomic_json_writer_cleans_staged_temp_file_when_dump_fails(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import timing
+    from skills.harness import timing
 
     def fail_json_dump(*_args, **_kwargs):
         raise TypeError("cannot serialize")
@@ -1096,7 +1088,7 @@ def test_atomic_json_writer_cleans_staged_temp_file_when_dump_fails(tmp_path, mo
 
 
 def test_write_failure_record_outputs_early_failure_artifacts(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import write_failure_record
+    from skills.harness.container.agent_run import write_failure_record
 
     result_dir = tmp_path / "results"
     records_dir = result_dir / "records"
@@ -1127,7 +1119,7 @@ def test_write_failure_record_outputs_early_failure_artifacts(tmp_path):
 
 
 def test_write_failure_record_defaults_to_unknown_agent(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import write_failure_record
+    from skills.harness.container.agent_run import write_failure_record
 
     result_dir = tmp_path / "results"
     records_dir = result_dir / "records"
@@ -1148,8 +1140,8 @@ def test_write_failure_record_defaults_to_unknown_agent(tmp_path):
 
 
 def test_merge_harness_failure_preserves_existing_record(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.common import write_json
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig, merge_harness_failure
+    from skills.harness.common import write_json
+    from skills.harness.container.agent_run import AgentRunConfig, merge_harness_failure
 
     result_dir = tmp_path / "results"
     records_dir = result_dir / "records"
@@ -1196,7 +1188,7 @@ def test_merge_harness_failure_preserves_existing_record(tmp_path):
 
 
 def test_pair_result_root_cleanup_removes_legacy_eval_artifacts(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.host.runner import clean_pair_result_root
+    from skills.harness.host.runner import clean_pair_result_root
 
     result_root = tmp_path / "result"
     result_root.mkdir()

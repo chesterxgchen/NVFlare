@@ -18,9 +18,11 @@ from pathlib import Path
 
 import pytest
 
+BENCHMARK_ROOT = Path(__file__).resolve().parents[3] / "dev_tools" / "agent" / "skills" / "benchmark"
+
 
 def test_codex_event_normalizer_returns_agent_event():
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.registry import load_agent_adapter
 
     event = load_agent_adapter("codex").normalize_event('{"type": "turn", "message": "ok"}')
 
@@ -30,7 +32,7 @@ def test_codex_event_normalizer_returns_agent_event():
 
 
 def test_known_pending_agent_event_normalizer_fails_fast():
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.registry import load_agent_adapter
 
     try:
         load_agent_adapter("hermes")
@@ -42,11 +44,9 @@ def test_known_pending_agent_event_normalizer_fails_fast():
 
 
 def test_codex_agent_config_loads_parser_and_classifier_ids():
-    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
+    from skills.harness.agents.config import AgentConfig
 
-    config_path = (
-        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "config" / "agents" / "codex.yaml"
-    )
+    config_path = BENCHMARK_ROOT / "config" / "agents" / "codex.yaml"
 
     config = AgentConfig.load(config_path)
 
@@ -60,11 +60,9 @@ def test_codex_agent_config_loads_parser_and_classifier_ids():
 
 
 def test_claude_agent_config_uses_config_dir_and_valid_final_message_source():
-    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
+    from skills.harness.agents.config import AgentConfig
 
-    config_path = (
-        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "config" / "agents" / "claude.yaml"
-    )
+    config_path = BENCHMARK_ROOT / "config" / "agents" / "claude.yaml"
 
     config = AgentConfig.load(config_path)
 
@@ -81,7 +79,7 @@ def test_claude_agent_config_uses_config_dir_and_valid_final_message_source():
 
 
 def test_adapter_template_rejects_positional_placeholders():
-    from assist_tools.skills_benchmark.skills.harness.agents.config import render_string
+    from skills.harness.agents.config import render_string
 
     try:
         render_string("agent {}", {"agent": "codex"})
@@ -92,7 +90,7 @@ def test_adapter_template_rejects_positional_placeholders():
 
 
 def test_adapter_template_rejects_attribute_and_index_access():
-    from assist_tools.skills_benchmark.skills.harness.agents.config import render_string
+    from skills.harness.agents.config import render_string
 
     for template in ("{workspace_dir.parent}", "{argv[0]}"):
         try:
@@ -104,8 +102,8 @@ def test_adapter_template_rejects_attribute_and_index_access():
 
 
 def test_claude_adapter_launch_spec_uses_stream_json_without_prompt_text(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchContext
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.base import AgentLaunchContext
+    from skills.harness.agents.registry import load_agent_adapter
 
     result_dir = tmp_path / "results"
     workspace_dir = tmp_path / "workspace"
@@ -138,7 +136,7 @@ def test_claude_adapter_launch_spec_uses_stream_json_without_prompt_text(tmp_pat
 
 
 def test_claude_adapter_uses_cli_default_model_when_unspecified():
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("claude")
 
@@ -147,7 +145,7 @@ def test_claude_adapter_uses_cli_default_model_when_unspecified():
 
 
 def test_runtime_env_uses_agent_run_config_model_explicit_field():
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.registry import load_agent_adapter
 
     class Config:
         agent_model = "claude-test"
@@ -159,7 +157,7 @@ def test_runtime_env_uses_agent_run_config_model_explicit_field():
 
 
 def test_runtime_env_omits_agent_model_when_not_explicit():
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.registry import load_agent_adapter
 
     class Config:
         agent_model = "unspecified_default"
@@ -171,8 +169,8 @@ def test_runtime_env_omits_agent_model_when_not_explicit():
 
 
 def test_claude_launch_spec_omits_model_flag_when_not_explicit(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchContext
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.base import AgentLaunchContext
+    from skills.harness.agents.registry import load_agent_adapter
 
     result_dir = tmp_path / "results"
     workspace_dir = tmp_path / "workspace"
@@ -198,7 +196,7 @@ def test_claude_launch_spec_omits_model_flag_when_not_explicit(tmp_path):
 
 
 def test_claude_stream_parser_normalizes_event_usage_and_activity(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("claude")
     events_path = tmp_path / "agent_events.jsonl"
@@ -267,7 +265,7 @@ def test_claude_stream_parser_normalizes_event_usage_and_activity(tmp_path):
 def test_generic_event_usage_and_activity_share_cached_parse(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from assist_tools.skills_benchmark.skills.harness.agents import parsers
+    from skills.harness.agents import parsers
 
     events_path = tmp_path / "agent_events.jsonl"
     events_path.write_text("{}\n", encoding="utf-8")
@@ -291,7 +289,7 @@ def test_generic_event_usage_and_activity_share_cached_parse(tmp_path, monkeypat
 
 
 def test_claude_stream_usage_falls_back_when_result_usage_is_zero(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("claude")
     events_path = tmp_path / "agent_events.jsonl"
@@ -330,7 +328,7 @@ def test_claude_stream_usage_falls_back_when_result_usage_is_zero(tmp_path):
 
 
 def test_claude_stream_usage_accumulates_multiple_result_events(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("claude")
     events_path = tmp_path / "agent_events.jsonl"
@@ -380,7 +378,7 @@ def test_claude_stream_usage_accumulates_multiple_result_events(tmp_path):
 
 
 def test_claude_stream_parser_ignores_non_shell_tool_command_fields(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("claude")
     raw_event = {
@@ -398,7 +396,7 @@ def test_claude_stream_parser_ignores_non_shell_tool_command_fields(tmp_path):
 
 
 def test_claude_stream_parser_uses_exact_shell_tool_allowlist():
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("claude")
     raw_event = {
@@ -418,9 +416,9 @@ def test_claude_stream_parser_uses_exact_shell_tool_allowlist():
 def test_claude_final_message_source_materializes_structured_result_event(tmp_path):
     from collections import deque
 
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.registry import load_agent_adapter
 
-    agent_run = pytest.importorskip("assist_tools.skills_benchmark.skills.harness.container.agent_run")
+    agent_run = pytest.importorskip("skills.harness.container.agent_run")
     AgentRunConfig = agent_run.AgentRunConfig
     materialize_final_message = agent_run.materialize_final_message
 
@@ -465,9 +463,9 @@ def test_claude_final_message_source_materializes_structured_result_event(tmp_pa
 def test_structured_final_message_not_read_when_stdout_reader_active(tmp_path):
     from collections import deque
 
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.registry import load_agent_adapter
 
-    agent_run = pytest.importorskip("assist_tools.skills_benchmark.skills.harness.container.agent_run")
+    agent_run = pytest.importorskip("skills.harness.container.agent_run")
     AgentRunConfig = agent_run.AgentRunConfig
     materialize_final_message = agent_run.materialize_final_message
 
@@ -509,9 +507,9 @@ def test_structured_final_message_not_read_when_stdout_reader_active(tmp_path):
 
 
 def test_launch_spec_metadata_records_sandbox_flags_and_bypass_reason(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchSpec, SkillExposureResult
+    from skills.harness.agents.base import AgentLaunchSpec, SkillExposureResult
 
-    agent_run = pytest.importorskip("assist_tools.skills_benchmark.skills.harness.container.agent_run")
+    agent_run = pytest.importorskip("skills.harness.container.agent_run")
     AgentRunConfig = agent_run.AgentRunConfig
     write_launch_spec_metadata = agent_run.write_launch_spec_metadata
 
@@ -568,7 +566,7 @@ def test_launch_spec_metadata_records_sandbox_flags_and_bypass_reason(tmp_path):
 
 
 def test_claude_exit_classifier_detects_auth_and_model_failures(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("claude")
     stderr = tmp_path / "stderr.txt"
@@ -600,7 +598,7 @@ def test_claude_exit_classifier_detects_auth_and_model_failures(tmp_path):
 
 
 def test_codex_exit_classifier_prioritizes_missing_cli_over_stderr_text(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("codex")
     stderr = tmp_path / "stderr.txt"
@@ -612,11 +610,9 @@ def test_codex_exit_classifier_prioritizes_missing_cli_over_stderr_text(tmp_path
 
 
 def test_agent_config_rejects_unknown_parser_id(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
+    from skills.harness.agents.config import AgentConfig
 
-    source_path = (
-        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "config" / "agents" / "codex.yaml"
-    )
+    source_path = BENCHMARK_ROOT / "config" / "agents" / "codex.yaml"
     config_path = tmp_path / "bad_parser.yaml"
     config_path.write_text(source_path.read_text(encoding="utf-8").replace("codex_jsonl", "missing_parser", 1))
 
@@ -629,11 +625,9 @@ def test_agent_config_rejects_unknown_parser_id(tmp_path):
 
 
 def test_agent_config_rejects_unknown_exit_classifier(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
+    from skills.harness.agents.config import AgentConfig
 
-    source_path = (
-        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "config" / "agents" / "codex.yaml"
-    )
+    source_path = BENCHMARK_ROOT / "config" / "agents" / "codex.yaml"
     config_path = tmp_path / "bad_exit.yaml"
     config_path.write_text(
         source_path.read_text(encoding="utf-8").replace("classifier: stderr_patterns", "classifier: bad")
@@ -648,11 +642,9 @@ def test_agent_config_rejects_unknown_exit_classifier(tmp_path):
 
 
 def test_agent_config_rejects_unknown_final_message_source_type(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
+    from skills.harness.agents.config import AgentConfig
 
-    source_path = (
-        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "config" / "agents" / "codex.yaml"
-    )
+    source_path = BENCHMARK_ROOT / "config" / "agents" / "codex.yaml"
     config_path = tmp_path / "bad_final_source.yaml"
     config_path.write_text(source_path.read_text(encoding="utf-8").replace("source_type: file", "source_type: bad"))
 
@@ -665,11 +657,9 @@ def test_agent_config_rejects_unknown_final_message_source_type(tmp_path):
 
 
 def test_agent_config_rejects_unknown_final_message_parser(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
+    from skills.harness.agents.config import AgentConfig
 
-    source_path = (
-        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "config" / "agents" / "claude.yaml"
-    )
+    source_path = BENCHMARK_ROOT / "config" / "agents" / "claude.yaml"
     config_path = tmp_path / "bad_final_parser.yaml"
     config_path.write_text(
         source_path.read_text(encoding="utf-8").replace(
@@ -686,11 +676,9 @@ def test_agent_config_rejects_unknown_final_message_parser(tmp_path):
 
 
 def test_agent_config_rejects_model_argv_without_explicit_position(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
+    from skills.harness.agents.config import AgentConfig
 
-    source_path = (
-        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "config" / "agents" / "codex.yaml"
-    )
+    source_path = BENCHMARK_ROOT / "config" / "agents" / "codex.yaml"
     config_path = tmp_path / "bad_model_argv.yaml"
     config_path.write_text(
         source_path.read_text(encoding="utf-8").replace("  model_argv_position: before_stdin_sentinel\n", ""),
@@ -706,11 +694,9 @@ def test_agent_config_rejects_model_argv_without_explicit_position(tmp_path):
 
 
 def test_agent_config_rejects_append_model_argv_for_stdin_prompt(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
+    from skills.harness.agents.config import AgentConfig
 
-    source_path = (
-        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "config" / "agents" / "codex.yaml"
-    )
+    source_path = BENCHMARK_ROOT / "config" / "agents" / "codex.yaml"
     config_path = tmp_path / "bad_model_argv_position.yaml"
     config_path.write_text(
         source_path.read_text(encoding="utf-8").replace(
@@ -728,11 +714,9 @@ def test_agent_config_rejects_append_model_argv_for_stdin_prompt(tmp_path):
 
 
 def test_agent_config_rejects_unknown_when_condition(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
+    from skills.harness.agents.config import AgentConfig
 
-    source_path = (
-        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "config" / "agents" / "codex.yaml"
-    )
+    source_path = BENCHMARK_ROOT / "config" / "agents" / "codex.yaml"
     config_path = tmp_path / "bad_when.yaml"
     config_path.write_text(
         source_path.read_text(encoding="utf-8").replace(
@@ -751,10 +735,7 @@ def test_agent_config_rejects_unknown_when_condition(tmp_path):
 
 
 def test_agent_adapter_cache_can_be_cleared_for_tests():
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import (
-        clear_agent_adapter_cache,
-        load_agent_adapter,
-    )
+    from skills.harness.agents.registry import clear_agent_adapter_cache, load_agent_adapter
 
     first = load_agent_adapter("codex")
     clear_agent_adapter_cache()
@@ -764,7 +745,7 @@ def test_agent_adapter_cache_can_be_cleared_for_tests():
 
 
 def test_codex_adapter_build_args_come_from_profile():
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("codex")
     build_args = adapter.build_args()
@@ -778,8 +759,8 @@ def test_codex_adapter_build_args_come_from_profile():
 def test_claude_adapter_build_auth_and_skill_exposure_contract(tmp_path):
     from types import SimpleNamespace
 
-    from assist_tools.skills_benchmark.skills.harness.agents.base import SkillExposureContext
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.base import SkillExposureContext
+    from skills.harness.agents.registry import load_agent_adapter
 
     adapter = load_agent_adapter("claude")
     build_args = adapter.build_args()
@@ -812,9 +793,7 @@ def test_claude_adapter_build_auth_and_skill_exposure_contract(tmp_path):
 
 
 def test_shared_dockerfile_uses_profile_agent_install_commands():
-    dockerfile = (
-        Path(__file__).resolve().parents[3] / "assist_tools" / "skills_benchmark" / "docker" / "Dockerfile"
-    ).read_text(encoding="utf-8")
+    dockerfile = (BENCHMARK_ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
 
     assert "AGENT_INSTALL_COMMAND" in dockerfile
     assert "AGENT_VERSION_COMMAND" in dockerfile
@@ -827,7 +806,7 @@ def test_shared_dockerfile_uses_profile_agent_install_commands():
 
 
 def test_sdk_skills_setup_default_agent_home_is_neutral(monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.container import sdk_skills_setup
+    from skills.harness.container import sdk_skills_setup
 
     monkeypatch.delenv("BENCHMARK_AGENT_HOME", raising=False)
 
@@ -838,8 +817,7 @@ def test_adapter_auth_mounts_reject_path_components(tmp_path):
     from types import SimpleNamespace
 
     import yaml
-
-    from assist_tools.skills_benchmark.skills.harness.agents.config import ConfigurableAgentAdapter
+    from skills.harness.agents.config import ConfigurableAgentAdapter
 
     config_path = tmp_path / "bad-agent.yaml"
     config_path.write_text(
@@ -876,8 +854,7 @@ def test_adapter_auth_mounts_reject_path_components(tmp_path):
 
 def test_agent_config_rejects_unknown_skill_exposure_mechanism(tmp_path):
     import yaml
-
-    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
+    from skills.harness.agents.config import AgentConfig
 
     config_path = tmp_path / "bad-agent.yaml"
     config_path.write_text(
@@ -914,8 +891,7 @@ def test_agent_config_rejects_unknown_skill_exposure_mechanism(tmp_path):
 
 def test_agent_config_rejects_unsafe_legacy_artifact_prefix(tmp_path):
     import yaml
-
-    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
+    from skills.harness.agents.config import AgentConfig
 
     config_path = tmp_path / "bad-agent.yaml"
     config_path.write_text(

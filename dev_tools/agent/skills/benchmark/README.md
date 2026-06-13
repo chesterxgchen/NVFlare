@@ -12,7 +12,7 @@ Current runnable scope:
 - Prompt input: a local prompt file for direct runs, or a scenario prompt file/template.
 - Scenario input: optional YAML compiled into `scenario.json` and
   `run_plan.json`.
-- Results: written under `assist_tools/skills_benchmark/results/` by default.
+- Results: written under `dev_tools/agent/skills/benchmark/results/` by default.
 
 There is no runtime evaluator mode. The harness measures what the agent does
 and reports normalized evidence from the run.
@@ -22,7 +22,7 @@ and reports normalized evidence from the run.
 From the NVFLARE checkout:
 
 ```bash
-cd assist_tools/skills_benchmark
+cd dev_tools/agent/skills/benchmark
 ./bin/build.sh
 ./bin/run.sh pair --prompt /path/to/prompt.txt /path/to/job-folder
 ```
@@ -104,7 +104,7 @@ To disable host auth/config mounting entirely:
 Build the two Docker images:
 
 ```bash
-cd assist_tools/skills_benchmark
+cd dev_tools/agent/skills/benchmark
 ./bin/build.sh
 ```
 
@@ -247,7 +247,7 @@ requirements from the job folder is part of the measured agent behavior.
 Add one SDK profile file:
 
 ```text
-assist_tools/skills_benchmark/config/sdks/<sdk-profile>.yaml
+dev_tools/agent/skills/benchmark/config/sdks/<sdk-profile>.yaml
 ```
 
 The YAML declares the SDK package/import names, source, skills and baseline
@@ -685,8 +685,8 @@ agent to install job dependencies from available requirements files when needed.
 
 ## Harness Modules
 
-- `bin/build.sh`: thin wrapper around `assist_tools.skills_benchmark.skills.harness.host.build`.
-- `bin/run.sh`: thin wrapper around `assist_tools.skills_benchmark.skills.harness.host.runner`.
+- `bin/build.sh`: thin wrapper around `skills.harness.host.build`.
+- `bin/run.sh`: thin wrapper around `skills.harness.host.runner`.
 - `docker/Dockerfile`: runtime image with the selected agent CLI and SDK wheel.
 - `config/agents/`: built-in editable agent CLI configs.
 - `config/sdks/`: built-in editable SDK build/install configs.

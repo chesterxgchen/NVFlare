@@ -687,7 +687,7 @@ def preflight_docker_images(
     message = (
         "Benchmark Docker image(s) are missing locally: "
         + ", ".join(missing)
-        + ". Run ./bin/build.sh from assist_tools/skills_benchmark before running the benchmark."
+        + ". Run ./bin/build.sh from dev_tools/agent/skills/benchmark before running the benchmark."
     )
     emit(message, logs=logs, stderr=True)
     raise ScenarioValidationError(message)
@@ -1116,7 +1116,7 @@ def agent_model_from_options(adapter, options) -> tuple[str, bool]:
 def main() -> None:
     if len(sys.argv) < 2 or sys.argv[1] in {"-h", "--help"}:
         print(
-            "Usage: python -m assist_tools.skills_benchmark.skills.harness.host.runner {run-one,pair,scenario,replay,interactive} "
+            "Usage: python -m skills.harness.host.runner {run-one,pair,scenario,replay,interactive} "
             "--prompt PATH [--training-code PATH] [--results-root PATH] [PATH]"
         )
         raise SystemExit(0 if len(sys.argv) >= 2 else 2)

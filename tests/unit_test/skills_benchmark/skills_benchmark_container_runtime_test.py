@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 def test_agent_config_rejects_prompt_text_placeholder(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
+    from skills.harness.agents.config import AgentConfig
 
     config_path = tmp_path / "unsafe.yaml"
     config_path.write_text(
@@ -44,7 +44,7 @@ def test_agent_config_rejects_prompt_text_placeholder(tmp_path):
 
 
 def test_agent_config_rejects_file_arg_without_prompt_file_placeholder(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.config import AgentConfig
+    from skills.harness.agents.config import AgentConfig
 
     config_path = tmp_path / "missing_prompt_file.yaml"
     config_path.write_text(
@@ -76,8 +76,8 @@ def test_agent_config_rejects_file_arg_without_prompt_file_placeholder(tmp_path)
 
 
 def test_codex_adapter_launch_spec_uses_prompt_file_without_prompt_text(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchContext
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.base import AgentLaunchContext
+    from skills.harness.agents.registry import load_agent_adapter
 
     result_dir = tmp_path / "results"
     workspace_dir = tmp_path / "workspace"
@@ -113,7 +113,7 @@ def test_codex_adapter_launch_spec_uses_prompt_file_without_prompt_text(tmp_path
 def test_codex_adapter_runtime_env_sets_generic_agent_model_and_home(tmp_path):
     from types import SimpleNamespace
 
-    from assist_tools.skills_benchmark.skills.harness.agents.registry import load_agent_adapter
+    from skills.harness.agents.registry import load_agent_adapter
 
     agent_home = tmp_path / ".codex"
     env = load_agent_adapter("codex").runtime_env(
@@ -130,7 +130,7 @@ def test_codex_adapter_runtime_env_sets_generic_agent_model_and_home(tmp_path):
 
 
 def test_container_config_uses_generic_agent_model_and_home(monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig
+    from skills.harness.container.agent_run import AgentRunConfig
 
     monkeypatch.delenv("CODEX_HOME", raising=False)
     monkeypatch.setenv("BENCHMARK_AGENT", "codex")
@@ -145,7 +145,7 @@ def test_container_config_uses_generic_agent_model_and_home(monkeypatch):
 
 
 def test_container_config_requires_benchmark_agent(monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig
+    from skills.harness.container.agent_run import AgentRunConfig
 
     monkeypatch.delenv("BENCHMARK_AGENT", raising=False)
 
@@ -158,7 +158,7 @@ def test_container_config_requires_benchmark_agent(monkeypatch):
 
 
 def test_container_config_rejects_invalid_progress_interval(monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import AgentRunConfig
+    from skills.harness.container.agent_run import AgentRunConfig
 
     monkeypatch.setenv("BENCHMARK_AGENT", "codex")
     monkeypatch.setenv("PROGRESS_INTERVAL_SECONDS", "fast")
@@ -174,7 +174,7 @@ def test_container_config_rejects_invalid_progress_interval(monkeypatch):
 def test_agent_subprocess_env_hides_harness_controls_and_adapter_model_env(monkeypatch):
     from types import SimpleNamespace
 
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import agent_subprocess_env
+    from skills.harness.container.agent_run import agent_subprocess_env
 
     adapter = SimpleNamespace(model_env_names=lambda: ("CUSTOM_AGENT_MODEL",))
     monkeypatch.setenv("MODE", "with_skills")
@@ -200,7 +200,7 @@ def test_agent_subprocess_env_hides_harness_controls_and_adapter_model_env(monke
 def test_progress_writer_serializes_concurrent_file_writes(tmp_path):
     import threading
 
-    from assist_tools.skills_benchmark.skills.harness.container.progress import ProgressWriter
+    from skills.harness.container.progress import ProgressWriter
 
     writer = ProgressWriter("with_skills", 0, tmp_path / "progress.jsonl")
     threads = [threading.Thread(target=writer.write, args=(f"phase-{index}", "running", index)) for index in range(20)]
@@ -216,7 +216,7 @@ def test_progress_writer_serializes_concurrent_file_writes(tmp_path):
 
 
 def test_launch_subprocess_argv_wraps_login_shell_command():
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import launch_subprocess_argv
+    from skills.harness.container.agent_run import launch_subprocess_argv
 
     argv = launch_subprocess_argv(["agent", "run", "prompt with spaces"], login_shell=True)
 
@@ -226,14 +226,9 @@ def test_launch_subprocess_argv_wraps_login_shell_command():
 
 
 def test_run_agent_enforces_launch_timeout(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchSpec, FinalMessageSource
-    from assist_tools.skills_benchmark.skills.harness.container import agent_run
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
-        AGENT_TIMEOUT_EXIT_CODE,
-        AgentRunConfig,
-        ProgressWriter,
-        run_agent,
-    )
+    from skills.harness.agents.base import AgentLaunchSpec, FinalMessageSource
+    from skills.harness.container import agent_run
+    from skills.harness.container.agent_run import AGENT_TIMEOUT_EXIT_CODE, AgentRunConfig, ProgressWriter, run_agent
 
     class TimeoutAdapter:
         def launch_spec(self, config):
@@ -291,13 +286,9 @@ def test_run_agent_stops_stdout_reader_before_events_file_closes(tmp_path, monke
     import threading
     import time
 
-    from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchSpec, FinalMessageSource
-    from assist_tools.skills_benchmark.skills.harness.container import agent_run
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
-        AgentRunConfig,
-        ProgressWriter,
-        run_agent,
-    )
+    from skills.harness.agents.base import AgentLaunchSpec, FinalMessageSource
+    from skills.harness.container import agent_run
+    from skills.harness.container.agent_run import AgentRunConfig, ProgressWriter, run_agent
 
     class GuardedEventsDest:
         def __init__(self):
@@ -391,13 +382,9 @@ def test_run_agent_stops_stdout_reader_before_events_file_closes(tmp_path, monke
 def test_run_agent_closes_stdout_pipe_when_reader_is_blocked(tmp_path, monkeypatch):
     import threading
 
-    from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchSpec, FinalMessageSource
-    from assist_tools.skills_benchmark.skills.harness.container import agent_run
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
-        AgentRunConfig,
-        ProgressWriter,
-        run_agent,
-    )
+    from skills.harness.agents.base import AgentLaunchSpec, FinalMessageSource
+    from skills.harness.container import agent_run
+    from skills.harness.container.agent_run import AgentRunConfig, ProgressWriter, run_agent
 
     class BlockingStdout:
         def __init__(self):
@@ -476,13 +463,9 @@ def test_run_agent_closes_stdout_pipe_when_reader_is_blocked(tmp_path, monkeypat
 
 
 def test_run_agent_materializes_final_message_before_reader_error(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.agents.base import AgentLaunchSpec, FinalMessageSource
-    from assist_tools.skills_benchmark.skills.harness.container import agent_run
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
-        AgentRunConfig,
-        ProgressWriter,
-        run_agent,
-    )
+    from skills.harness.agents.base import AgentLaunchSpec, FinalMessageSource
+    from skills.harness.container import agent_run
+    from skills.harness.container.agent_run import AgentRunConfig, ProgressWriter, run_agent
 
     class ReaderErrorAdapter:
         def launch_spec(self, config):
@@ -541,11 +524,8 @@ def test_run_agent_materializes_final_message_before_reader_error(tmp_path, monk
 def test_materialize_final_message_from_stdout_tail(tmp_path):
     from collections import deque
 
-    from assist_tools.skills_benchmark.skills.harness.agents.base import FinalMessageSource
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
-        AgentRunConfig,
-        materialize_final_message,
-    )
+    from skills.harness.agents.base import FinalMessageSource
+    from skills.harness.container.agent_run import AgentRunConfig, materialize_final_message
 
     class StdoutAdapter:
         def final_message_source(self, result_dir):
@@ -584,7 +564,7 @@ def test_materialize_final_message_from_stdout_tail(tmp_path):
 
 
 def test_stdout_tail_line_is_bounded_by_bytes():
-    from assist_tools.skills_benchmark.skills.harness.container.agent_run import (
+    from skills.harness.container.agent_run import (
         MAX_STDOUT_TAIL_LINE_BYTES,
         STDOUT_TAIL_TRUNCATED_MARKER,
         truncate_stdout_tail_line,

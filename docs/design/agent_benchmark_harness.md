@@ -75,10 +75,10 @@ timing, quality-signal, and report modules.
 
 ## Repository Layout
 
-The target benchmark harness layout lives under `assist_tools/skills_benchmark/`:
+The target benchmark harness layout lives under `dev_tools/agent/skills/benchmark/`:
 
 ```text
-assist_tools/skills_benchmark/
+dev_tools/agent/skills/benchmark/
 |-- README.md
 |-- bin/
 |   |-- build.sh

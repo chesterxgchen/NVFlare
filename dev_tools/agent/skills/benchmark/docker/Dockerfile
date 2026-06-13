@@ -95,13 +95,14 @@ RUN python --version && \
     tree --version && \
     python -c "import json, os, pathlib, subprocess; version_cmd=os.environ.get('AGENT_VERSION_COMMAND') or ''; version_output=subprocess.check_output(['/bin/bash', '-lc', version_cmd], text=True).strip() if version_cmd else ''; home=pathlib.Path(os.environ.get('BENCHMARK_AGENT_HOME', '/workspace/agent-home')); home.mkdir(parents=True, exist_ok=True); home.joinpath('build_metadata.json').write_text(json.dumps({'agent': os.environ.get('BENCHMARK_DOCKER_AGENT', 'agent'), 'agent_cli': os.environ.get('AGENT_CLI_NAME', 'agent'), 'agent_cli_install_command': os.environ.get('AGENT_INSTALL_COMMAND'), 'agent_cli_version_command': version_cmd, 'agent_cli_version_output': version_output, 'apt_package_policy': 'Debian apt packages are intentionally not exact-version pinned; rebuild comparability is tracked through the pinned base image/build args and recorded package/tool versions.', 'node_image': os.environ.get('NODE_IMAGE'), 'node_version': subprocess.check_output(['node', '--version'], text=True).strip(), 'sdk_import_name': os.environ.get('SDK_IMPORT_NAME'), 'sdk_package_name': os.environ.get('SDK_PACKAGE_NAME'), 'skills_install_expected_source': os.environ.get('SKILLS_INSTALL_EXPECTED_SOURCE'), 'skills_install_network_proof': 'not_enforced_by_dockerfile', 'tree_version': subprocess.check_output(['tree', '--version'], text=True).splitlines()[0], 'uv_image': os.environ.get('UV_IMAGE'), 'uv_version': subprocess.check_output(['uv', '--version'], text=True).strip(), 'virtual_env': os.environ.get('VIRTUAL_ENV')}, indent=2, sort_keys=True) + '\n')"
 
-COPY assist_tools/ /workspace/assist_tools/
+COPY config/ /workspace/config/
+COPY skills/ /workspace/skills/
 
 # Bake agent settings before switching to non-root. Claude Code merges settings.json
 # from CLAUDE_CONFIG_DIR; placing an explicit allow list here ensures Bash and other
 # required tools are approved even when launched non-interactively (--print mode).
-RUN if [ -f "/workspace/assist_tools/skills_benchmark/config/agents/${BENCHMARK_DOCKER_AGENT}-settings.json" ]; then \
-        cp "/workspace/assist_tools/skills_benchmark/config/agents/${BENCHMARK_DOCKER_AGENT}-settings.json" "${BENCHMARK_AGENT_HOME}/settings.json"; \
+RUN if [ -f "/workspace/config/agents/${BENCHMARK_DOCKER_AGENT}-settings.json" ]; then \
+        cp "/workspace/config/agents/${BENCHMARK_DOCKER_AGENT}-settings.json" "${BENCHMARK_AGENT_HOME}/settings.json"; \
     fi
 
 # Claude Code refuses --dangerously-skip-permissions when running as root.
@@ -127,7 +128,7 @@ RUN python -c "import os, sys; from pathlib import Path; package=os.environ.get(
 
 # Preinstall skills so benchmark runs measure agent behavior, not skill setup time.
 COPY --chown=agent:agent sdk_skills/ /tmp/sdk_skills/
-RUN python -m assist_tools.skills_benchmark.skills.harness.container.sdk_skills_setup
+RUN python -m skills.harness.container.sdk_skills_setup
 
 FROM base AS baseline
 

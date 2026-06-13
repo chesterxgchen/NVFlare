@@ -647,7 +647,7 @@ def docker_args_for_case(
             config.run_image,
             "/workspace/venv/bin/python",
             "-m",
-            "assist_tools.skills_benchmark.skills.harness.container.agent_run",
+            "skills.harness.container.agent_run",
         ]
     )
     return args

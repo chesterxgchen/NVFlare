@@ -18,7 +18,7 @@ from types import SimpleNamespace
 
 
 def test_docker_build_args_reject_embedded_equals():
-    from assist_tools.skills_benchmark.skills.harness.host.build import render_agent_build_args
+    from skills.harness.host.build import render_agent_build_args
 
     try:
         render_agent_build_args({"AGENT_CLI_VERSION": "1.0=bad"})
@@ -36,7 +36,7 @@ def test_docker_build_args_reject_embedded_equals():
 
 
 def test_prepare_build_context_cleans_temp_dir_on_internal_failure(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.host import build
+    from skills.harness.host import build
 
     monkeypatch.setenv("TMPDIR", str(tmp_path))
     monkeypatch.setattr(build, "copy_harness", lambda _src, _dst: (_ for _ in ()).throw(RuntimeError("copy failed")))
@@ -51,28 +51,25 @@ def test_prepare_build_context_cleans_temp_dir_on_internal_failure(tmp_path, mon
     assert list(tmp_path.iterdir()) == []
 
 
-def test_prepare_build_context_stages_assist_tools_for_docker_copy(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.host import build
+def test_prepare_build_context_stages_benchmark_package_for_docker_copy(tmp_path, monkeypatch):
+    from skills.harness.host import build
 
     monkeypatch.setenv("TMPDIR", str(tmp_path))
 
     context = build.prepare_build_context()
     try:
-        assert (context / "assist_tools" / "__init__.py").is_file()
-        assert (context / "assist_tools" / "skills_benchmark" / "__init__.py").is_file()
-        assert (context / "assist_tools" / "skills_benchmark" / "config" / "agents" / "codex.yaml").is_file()
-        assert (
-            context / "assist_tools" / "skills_benchmark" / "skills" / "harness" / "container" / "agent_run.py"
-        ).is_file()
+        assert (context / "config" / "agents" / "codex.yaml").is_file()
+        assert (context / "skills" / "__init__.py").is_file()
+        assert (context / "skills" / "harness" / "container" / "agent_run.py").is_file()
         dockerignore = (context / ".dockerignore").read_text(encoding="utf-8")
-        assert "!assist_tools/" in dockerignore
-        assert "!assist_tools/**" in dockerignore
+        assert "!config/" in dockerignore
+        assert "!skills/" in dockerignore
     finally:
         build.shutil.rmtree(context, ignore_errors=True)
 
 
 def test_build_copytree_calls_dereference_symlinks(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.host import build
+    from skills.harness.host import build
 
     src = tmp_path / "src"
     dst = tmp_path / "dst"
@@ -95,7 +92,7 @@ def test_build_copytree_calls_dereference_symlinks(tmp_path, monkeypatch):
 
 
 def test_write_wheel_metadata_uses_atomic_json_helper(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.host import build
+    from skills.harness.host import build
 
     wheel = tmp_path / "example-1.0.0-py3-none-any.whl"
     wheel.write_text("wheel\n", encoding="utf-8")
@@ -126,7 +123,7 @@ def test_write_wheel_metadata_uses_atomic_json_helper(tmp_path, monkeypatch):
 
 
 def test_latest_sdk_wheel_skips_stat_failures(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.host import build
+    from skills.harness.host import build
 
     stale = tmp_path / "nvflare-0.0.1-py3-none-any.whl"
     current = tmp_path / "nvflare-0.0.2-py3-none-any.whl"
@@ -147,7 +144,7 @@ def test_latest_sdk_wheel_skips_stat_failures(tmp_path, monkeypatch):
 
 
 def test_nvflare_sdk_adapter_loads_build_contract():
-    from assist_tools.skills_benchmark.skills.harness.sdks.registry import load_sdk_adapter, supported_sdk_names
+    from skills.harness.sdks.registry import load_sdk_adapter, supported_sdk_names
 
     sdk = load_sdk_adapter("nvflare-profile")
     skills = sdk.wheel_variant("skills")
@@ -169,7 +166,7 @@ def test_nvflare_sdk_adapter_loads_build_contract():
 
 
 def test_configurable_sdk_adapter_loads_non_nvflare_contract(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.sdks.config import ConfigurableSdkAdapter
+    from skills.harness.sdks.config import ConfigurableSdkAdapter
 
     config_path = tmp_path / "example_sdk.yaml"
     config_path.write_text(
@@ -232,7 +229,7 @@ skills:
 
 
 def test_configurable_sdk_adapter_reports_unknown_source_placeholder(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.sdks.config import ConfigurableSdkAdapter
+    from skills.harness.sdks.config import ConfigurableSdkAdapter
 
     config_path = tmp_path / "example_sdk.yaml"
     config_path.write_text(
@@ -276,7 +273,7 @@ skills:
 
 
 def test_configurable_sdk_adapter_loads_wheel_source_contract(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.sdks.config import ConfigurableSdkAdapter
+    from skills.harness.sdks.config import ConfigurableSdkAdapter
 
     skills_wheel = tmp_path / "example_sdk-1.0.0-py3-none-any.whl"
     baseline_wheel = tmp_path / "example_sdk_baseline-1.0.0-py3-none-any.whl"
@@ -327,8 +324,8 @@ skills:
 
 
 def test_wheel_source_stages_configured_wheel_without_repo_build(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.host import build
-    from assist_tools.skills_benchmark.skills.harness.sdks.config import ConfigurableSdkAdapter
+    from skills.harness.host import build
+    from skills.harness.sdks.config import ConfigurableSdkAdapter
 
     skills_wheel = tmp_path / "example_sdk-1.0.0-py3-none-any.whl"
     baseline_wheel = tmp_path / "example_sdk_baseline-1.0.0-py3-none-any.whl"
@@ -387,8 +384,8 @@ skills:
 
 
 def test_copy_skills_setup_stages_profile_skills_folder(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.host import build
-    from assist_tools.skills_benchmark.skills.harness.sdks.config import ConfigurableSdkAdapter
+    from skills.harness.host import build
+    from skills.harness.sdks.config import ConfigurableSdkAdapter
 
     skills_dir = tmp_path / "agent-skills"
     skills_dir.mkdir()
@@ -441,7 +438,7 @@ skills:
 
 
 def test_container_sdk_skills_setup_copy_mode_installs_staged_folder(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.container import sdk_skills_setup
+    from skills.harness.container import sdk_skills_setup
 
     staged = tmp_path / "sdk_skills"
     staged.mkdir()
@@ -466,7 +463,7 @@ def test_container_sdk_skills_setup_copy_mode_installs_staged_folder(tmp_path, m
 
 
 def test_container_sdk_skills_setup_write_json_uses_atomic_helper(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.container import sdk_skills_setup
+    from skills.harness.container import sdk_skills_setup
 
     calls = []
 
@@ -481,7 +478,7 @@ def test_container_sdk_skills_setup_write_json_uses_atomic_helper(tmp_path, monk
 
 
 def test_container_sdk_skills_setup_copy_mode_dereferences_symlinks(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.container import sdk_skills_setup
+    from skills.harness.container import sdk_skills_setup
 
     staged = tmp_path / "sdk_skills"
     staged.mkdir()
@@ -502,7 +499,7 @@ def test_container_sdk_skills_setup_copy_mode_dereferences_symlinks(tmp_path, mo
 
 
 def test_container_sdk_skills_setup_visible_files_skips_symlinks(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.container import sdk_skills_setup
+    from skills.harness.container import sdk_skills_setup
 
     root = tmp_path / "skills"
     root.mkdir()
@@ -519,7 +516,7 @@ def test_container_sdk_skills_setup_visible_files_skips_symlinks(tmp_path):
 
 
 def test_container_sdk_skills_setup_run_command_uses_non_login_shell(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.container import sdk_skills_setup
+    from skills.harness.container import sdk_skills_setup
 
     calls = []
 
@@ -535,7 +532,7 @@ def test_container_sdk_skills_setup_run_command_uses_non_login_shell(tmp_path, m
 
 
 def test_container_sdk_skills_setup_run_command_reports_failures(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.container import sdk_skills_setup
+    from skills.harness.container import sdk_skills_setup
 
     def fake_run(command, **_kwargs):
         raise sdk_skills_setup.subprocess.CalledProcessError(returncode=17, cmd=command)
@@ -555,8 +552,8 @@ def test_container_sdk_skills_setup_run_command_reports_failures(tmp_path, monke
 
 
 def test_host_common_compat_exports_are_explicit():
-    from assist_tools.skills_benchmark.skills.harness import host_common
-    from assist_tools.skills_benchmark.skills.harness.host import common
+    from skills.harness import host_common
+    from skills.harness.host import common
 
     assert "parse_host_cli_options" in common.__all__
     assert hasattr(host_common, "parse_host_cli_options")

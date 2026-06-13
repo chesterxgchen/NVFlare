@@ -13,8 +13,8 @@ skip_glob = [
     "**/*_pb2*",
     "tests/agent_benchmark/results/*",
     "tests/agent_benchmark/results/**",
-    "assist_tools/skills_benchmark/results/*",
-    "assist_tools/skills_benchmark/results/**",
+    "dev_tools/agent/skills/benchmark/results/*",
+    "dev_tools/agent/skills/benchmark/results/**",
 ]
 
 [tool.black]
@@ -37,7 +37,7 @@ exclude = '''
     | build
     | dist
     | tests/agent_benchmark/results
-    | assist_tools/skills_benchmark/results
+    | dev_tools/agent/skills/benchmark/results
   )/
   | .pb2.
   | _version.py

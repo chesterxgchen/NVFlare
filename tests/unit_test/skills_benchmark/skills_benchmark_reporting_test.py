@@ -19,8 +19,8 @@ from pathlib import Path
 
 
 def test_benchmark_insights_explains_docker_image_failures(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
+    from skills.harness.modes import NO_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import (
         collect_benchmark_runs,
         failure_root_cause,
         human_readable_status,
@@ -43,11 +43,8 @@ def test_benchmark_insights_explains_docker_image_failures(tmp_path):
 
 
 def test_benchmark_insights_scopes_shared_console_evidence_by_mode(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
-        collect_benchmark_runs,
-        dependency_reference_notes,
-    )
+    from skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import collect_benchmark_runs, dependency_reference_notes
 
     for mode in (NO_SKILLS_MODE, WITH_SKILLS_MODE):
         records_dir = tmp_path / mode / "records"
@@ -81,8 +78,8 @@ def test_benchmark_insights_scopes_shared_console_evidence_by_mode(tmp_path):
 
 
 def test_benchmark_insights_caps_agent_events_text(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.reports import benchmark_insights
+    from skills.harness.modes import NO_SKILLS_MODE
+    from skills.harness.reports import benchmark_insights
 
     mode_dir = tmp_path / NO_SKILLS_MODE
     mode_dir.mkdir()
@@ -95,13 +92,10 @@ def test_benchmark_insights_caps_agent_events_text(tmp_path, monkeypatch):
 
 
 def test_benchmark_reports_read_canonical_record_layout(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.common import write_json
-    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.reports import metrics_report
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
-        benchmark_report,
-        collect_benchmark_runs,
-    )
+    from skills.harness.common import write_json
+    from skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from skills.harness.reports import metrics_report
+    from skills.harness.reports.benchmark_insights import benchmark_report, collect_benchmark_runs
 
     entries = []
     for index, mode in enumerate((NO_SKILLS_MODE, WITH_SKILLS_MODE), start=1):
@@ -165,8 +159,8 @@ def test_benchmark_reports_read_canonical_record_layout(tmp_path):
 
 
 def test_mode_dir_for_benchmark_does_not_guess_ambiguous_canonical_layout(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import mode_dir_for_benchmark
+    from skills.harness.modes import NO_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import mode_dir_for_benchmark
 
     for repeat in ("01", "02"):
         (
@@ -184,7 +178,7 @@ def test_mode_dir_for_benchmark_does_not_guess_ambiguous_canonical_layout(tmp_pa
 
 
 def test_numeric_comparison_rejects_bool_values():
-    from assist_tools.skills_benchmark.skills.harness.reports.metrics_report import numeric_comparison
+    from skills.harness.reports.metrics_report import numeric_comparison
 
     rows = [
         {"summary": {"elapsed_seconds": 10, "token_count": 100}},
@@ -195,8 +189,8 @@ def test_numeric_comparison_rejects_bool_values():
 
 
 def test_numeric_comparison_uses_mode_names_not_row_order():
-    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.reports.metrics_report import numeric_comparison
+    from skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from skills.harness.reports.metrics_report import numeric_comparison
 
     rows = [
         {"mode": WITH_SKILLS_MODE, "summary": {"elapsed_seconds": 13, "token_count": 150}},
@@ -210,8 +204,8 @@ def test_numeric_comparison_uses_mode_names_not_row_order():
 
 
 def test_structure_tree_falls_back_to_final_workspace_when_changed_python_is_empty():
-    from assist_tools.skills_benchmark.skills.harness.modes import WITH_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import structure_trees_section
+    from skills.harness.modes import WITH_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import structure_trees_section
 
     report = structure_trees_section(
         {
@@ -247,7 +241,7 @@ def test_structure_tree_falls_back_to_final_workspace_when_changed_python_is_emp
 
 
 def test_structure_score_does_not_count_nested_job_source_as_current_structure():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
+    from skills.harness.reports.benchmark_insights import (
         nested_generated_structure_display,
         structure_required_display,
         structure_score,
@@ -277,7 +271,7 @@ def test_structure_score_does_not_count_nested_job_source_as_current_structure()
 
 
 def test_workspace_delta_issue_allows_final_structure_and_runtime_artifacts():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import run_quality_issues
+    from skills.harness.reports.benchmark_insights import run_quality_issues
 
     run = {
         "available": True,
@@ -299,7 +293,7 @@ def test_workspace_delta_issue_allows_final_structure_and_runtime_artifacts():
 
 
 def test_workspace_delta_issue_allows_manifest_counts_without_file_lists():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import run_quality_issues
+    from skills.harness.reports.benchmark_insights import run_quality_issues
 
     run = {
         "available": True,
@@ -319,8 +313,8 @@ def test_workspace_delta_issue_allows_manifest_counts_without_file_lists():
 
 
 def test_status_summary_is_human_readable_for_failures():
-    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import status_summary
+    from skills.harness.modes import NO_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import status_summary
 
     runs = {
         NO_SKILLS_MODE: {
@@ -342,10 +336,7 @@ def test_status_summary_is_human_readable_for_failures():
 
 
 def test_failure_analysis_extracts_unsupported_model_message():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
-        failure_evidence,
-        failure_root_cause,
-    )
+    from skills.harness.reports.benchmark_insights import failure_evidence, failure_root_cause
 
     run = {
         "available": True,
@@ -365,7 +356,7 @@ def test_failure_analysis_extracts_unsupported_model_message():
 
 
 def test_failure_root_cause_prefers_agent_exit_classifier():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import failure_root_cause
+    from skills.harness.reports.benchmark_insights import failure_root_cause
 
     run = {
         "available": True,
@@ -378,8 +369,8 @@ def test_failure_root_cause_prefers_agent_exit_classifier():
 
 
 def test_failure_root_cause_infers_auth_from_agent_last_message():
-    from assist_tools.skills_benchmark.skills.harness.modes import WITH_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
+    from skills.harness.modes import WITH_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import (
         failure_analysis_section,
         failure_root_cause,
         job_run_action,
@@ -408,7 +399,7 @@ def test_failure_root_cause_infers_auth_from_agent_last_message():
 
 
 def test_failure_analysis_identifies_agent_generated_requirements_file():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import dependency_reference_notes
+    from skills.harness.reports.benchmark_insights import dependency_reference_notes
 
     run = {
         "agent_last_message": "Install with python3 -m pip install -r requirements-federated.txt.",
@@ -446,7 +437,7 @@ def test_shared_lifecycle_requires_dependency_preflight_before_missing_dependenc
 
 
 def test_readme_metric_alignment_uses_aggregated_validation_metric_scalar():
-    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
+    from skills.harness.quality_signals import metric_signal
 
     signal = metric_signal(
         None,
@@ -473,7 +464,7 @@ Round 2 validation AUROC by site:
 
 
 def test_readme_metric_alignment_uses_named_aggregated_metric_scalar():
-    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
+    from skills.harness.quality_signals import metric_signal
 
     signal = metric_signal(
         None,
@@ -496,7 +487,7 @@ Validation:
 
 
 def test_metric_alignment_rejects_out_of_range_auroc_from_dependency_version():
-    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
+    from skills.harness.quality_signals import metric_signal
 
     signal = metric_signal(
         None,
@@ -520,10 +511,7 @@ No simulation was run.
 
 
 def test_benchmark_report_sanitizes_stale_out_of_range_metric_record():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
-        quality_signal,
-        validation_metric_from_record,
-    )
+    from skills.harness.reports.benchmark_insights import quality_signal, validation_metric_from_record
 
     record = {
         "reported_validation_metric": {
@@ -563,8 +551,8 @@ def test_benchmark_report_sanitizes_stale_out_of_range_metric_record():
 
 
 def test_job_guidance_metric_alignment_uses_non_readme_docs(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
-    from assist_tools.skills_benchmark.skills.harness.records import discover_job_guidance
+    from skills.harness.quality_signals import metric_signal
+    from skills.harness.records import discover_job_guidance
 
     job = tmp_path / "job"
     docs = job / "docs"
@@ -585,7 +573,7 @@ def test_job_guidance_metric_alignment_uses_non_readme_docs(tmp_path):
 
 
 def test_job_guidance_skips_symlink_guidance_files(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness import records
+    from skills.harness import records
 
     job = tmp_path / "job"
     job.mkdir()
@@ -605,7 +593,7 @@ def test_job_guidance_skips_symlink_guidance_files(tmp_path):
 
 
 def test_job_guidance_skips_symlinked_docs_directory(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness import records
+    from skills.harness import records
 
     job = tmp_path / "job"
     outside_docs = tmp_path / "outside_docs"
@@ -624,7 +612,7 @@ def test_job_guidance_skips_symlinked_docs_directory(tmp_path):
 
 
 def test_job_guidance_skips_oversized_guidance_files(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.records import MAX_GUIDANCE_FILE_BYTES, discover_job_guidance
+    from skills.harness.records import MAX_GUIDANCE_FILE_BYTES, discover_job_guidance
 
     job = tmp_path / "job"
     job.mkdir()
@@ -638,7 +626,7 @@ def test_job_guidance_skips_oversized_guidance_files(tmp_path):
 
 
 def test_job_guidance_stops_collecting_after_guidance_file_cap(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness import records
+    from skills.harness import records
 
     job = tmp_path / "job"
     job.mkdir()
@@ -660,8 +648,8 @@ def test_job_guidance_stops_collecting_after_guidance_file_cap(tmp_path, monkeyp
 
 
 def test_job_guidance_metric_alignment_includes_prompt(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
-    from assist_tools.skills_benchmark.skills.harness.records import discover_job_guidance
+    from skills.harness.quality_signals import metric_signal
+    from skills.harness.records import discover_job_guidance
 
     job = tmp_path / "job"
     job.mkdir()
@@ -681,8 +669,8 @@ def test_job_guidance_metric_alignment_includes_prompt(tmp_path):
 
 
 def test_job_guidance_metric_alignment_uses_source_priority(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
-    from assist_tools.skills_benchmark.skills.harness.records import discover_job_guidance
+    from skills.harness.quality_signals import metric_signal
+    from skills.harness.records import discover_job_guidance
 
     job = tmp_path / "job"
     job.mkdir()
@@ -704,8 +692,8 @@ def test_job_guidance_metric_alignment_uses_source_priority(tmp_path):
 
 
 def test_job_guidance_metric_alignment_reports_matched_doc_source(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
-    from assist_tools.skills_benchmark.skills.harness.records import discover_job_guidance
+    from skills.harness.quality_signals import metric_signal
+    from skills.harness.records import discover_job_guidance
 
     job = tmp_path / "job"
     job.mkdir()
@@ -729,9 +717,9 @@ def test_job_guidance_metric_alignment_reports_matched_doc_source(tmp_path):
 
 
 def test_metric_mismatch_reports_actual_metric_without_marking_missing():
-    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
+    from skills.harness.modes import NO_SKILLS_MODE
+    from skills.harness.quality_signals import metric_signal
+    from skills.harness.reports.benchmark_insights import (
         benchmark_outcome,
         human_readable_status,
         missing_result_metrics_section,
@@ -763,7 +751,7 @@ def test_metric_mismatch_reports_actual_metric_without_marking_missing():
 
 
 def test_metric_mismatch_evidence_includes_integer_metric_value():
-    from assist_tools.skills_benchmark.skills.harness.quality_signals import format_metric_value
+    from skills.harness.quality_signals import format_metric_value
 
     assert format_metric_value(1) == " 1."
     assert format_metric_value(1.0) == " 1.0000."
@@ -771,8 +759,8 @@ def test_metric_mismatch_evidence_includes_integer_metric_value():
 
 
 def test_missing_target_metric_section_reports_observed_alternate_metrics():
-    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
+    from skills.harness.modes import NO_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import (
         additional_or_observed_metric_values_display,
         missing_result_metrics_section,
         outcome_details_table,
@@ -812,8 +800,8 @@ def test_missing_target_metric_section_reports_observed_alternate_metrics():
 
 
 def test_failure_analysis_reports_recovered_job_failure_and_metric_gap():
-    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
+    from skills.harness.modes import NO_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import (
         additional_or_observed_metric_values_display,
         failure_analysis_section,
         outcome_details_table,
@@ -896,12 +884,8 @@ def test_failure_analysis_reports_recovered_job_failure_and_metric_gap():
 
 
 def test_job_run_status_section_reports_bash_blocked_not_started(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
-        benchmark_report,
-        job_run_status,
-        job_run_status_section,
-    )
+    from skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import benchmark_report, job_run_status, job_run_status_section
 
     permission_result = {
         "message": {
@@ -951,10 +935,7 @@ def test_job_run_status_section_reports_bash_blocked_not_started(tmp_path):
 
 
 def test_job_run_status_uses_claude_bash_output_to_detect_completed_simulation():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
-        job_run_status,
-        job_run_status_reason,
-    )
+    from skills.harness.reports.benchmark_insights import job_run_status, job_run_status_reason
 
     tool_id = "toolu_job"
     command_event = {
@@ -999,10 +980,7 @@ def test_job_run_status_uses_claude_bash_output_to_detect_completed_simulation()
 
 
 def test_job_run_status_detects_generated_simulation_entrypoint():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
-        job_run_status,
-        job_run_status_reason,
-    )
+    from skills.harness.reports.benchmark_insights import job_run_status, job_run_status_reason
 
     event = {
         "item": {
@@ -1029,7 +1007,7 @@ def test_job_run_status_detects_generated_simulation_entrypoint():
 
 
 def test_job_run_status_ignores_successful_simulation_helper_scripts():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_run_status
+    from skills.harness.reports.benchmark_insights import job_run_status
 
     events = [
         {
@@ -1134,7 +1112,7 @@ def test_job_run_status_ignores_successful_simulation_helper_scripts():
 
 
 def test_job_run_status_requires_success_evidence_for_simulation_script():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_run_status
+    from skills.harness.reports.benchmark_insights import job_run_status
 
     event = {
         "item": {
@@ -1156,7 +1134,7 @@ def test_job_run_status_requires_success_evidence_for_simulation_script():
 
 
 def test_job_run_status_detects_leading_job_entrypoint():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_run_status
+    from skills.harness.reports.benchmark_insights import job_run_status
 
     event = {
         "item": {
@@ -1178,7 +1156,7 @@ def test_job_run_status_detects_leading_job_entrypoint():
 
 
 def test_job_run_status_requires_success_evidence_for_leading_job_entrypoint():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_run_status
+    from skills.harness.reports.benchmark_insights import job_run_status
 
     event = {
         "item": {
@@ -1200,7 +1178,7 @@ def test_job_run_status_requires_success_evidence_for_leading_job_entrypoint():
 
 
 def test_job_run_status_detects_ambiguous_job_suffix_with_success_evidence():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_run_status
+    from skills.harness.reports.benchmark_insights import job_run_status
 
     event = {
         "item": {
@@ -1222,7 +1200,7 @@ def test_job_run_status_detects_ambiguous_job_suffix_with_success_evidence():
 
 
 def test_job_run_status_requires_success_evidence_for_ambiguous_job_suffix_script():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_run_status
+    from skills.harness.reports.benchmark_insights import job_run_status
 
     event = {
         "item": {
@@ -1244,7 +1222,7 @@ def test_job_run_status_requires_success_evidence_for_ambiguous_job_suffix_scrip
 
 
 def test_job_run_status_rejects_result_path_with_failed_status():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_run_status
+    from skills.harness.reports.benchmark_insights import job_run_status
 
     event = {
         "item": {
@@ -1268,7 +1246,7 @@ def test_job_run_status_rejects_result_path_with_failed_status():
 
 
 def test_job_output_failure_status_vetoes_result_location():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_output_succeeded
+    from skills.harness.reports.benchmark_insights import job_output_succeeded
 
     assert not job_output_succeeded("Result location: /tmp/r\nJob Status: FINISHED:EXECUTION_EXCEPTION")
     assert not job_output_succeeded("Result can be found in: /tmp/r\nStatus is: FINISHED:ABORTED")
@@ -1276,7 +1254,7 @@ def test_job_output_failure_status_vetoes_result_location():
 
 
 def test_job_output_failure_status_vetoes_legacy_terminal_statuses():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_output_succeeded
+    from skills.harness.reports.benchmark_insights import job_output_succeeded
 
     assert not job_output_succeeded("Result location: /tmp/r\nJob Status: FAILED")
     assert not job_output_succeeded("Result can be found in: /tmp/r\nJob Status is: FINISHED_EXCEPTION")
@@ -1287,7 +1265,7 @@ def test_job_output_failure_status_vetoes_legacy_terminal_statuses():
 
 
 def test_recovered_by_later_success_requires_simulation_success_evidence():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import command_failure_diagnostics
+    from skills.harness.reports.benchmark_insights import command_failure_diagnostics
 
     failed_event = {
         "item": {
@@ -1322,11 +1300,7 @@ def test_recovered_by_later_success_requires_simulation_success_evidence():
 
 
 def test_job_run_status_reason_includes_failed_job_command_error():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
-        job_run_action,
-        job_run_status,
-        job_run_status_reason,
-    )
+    from skills.harness.reports.benchmark_insights import job_run_action, job_run_status, job_run_status_reason
 
     event = {
         "item": {
@@ -1352,11 +1326,7 @@ def test_job_run_status_reason_includes_failed_job_command_error():
 
 
 def test_completed_job_run_status_reason_includes_recovered_dependency_failure():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
-        job_run_action,
-        job_run_status,
-        job_run_status_reason,
-    )
+    from skills.harness.reports.benchmark_insights import job_run_action, job_run_status, job_run_status_reason
 
     failed_probe = {
         "item": {
@@ -1404,8 +1374,8 @@ def test_completed_job_run_status_reason_includes_recovered_dependency_failure()
 
 
 def test_failure_analysis_keeps_recovered_bash_issue_for_passed_run():
-    from assist_tools.skills_benchmark.skills.harness.modes import WITH_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import failure_analysis_section
+    from skills.harness.modes import WITH_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import failure_analysis_section
 
     permission_result = {
         "message": {
@@ -1446,8 +1416,8 @@ def test_failure_analysis_keeps_recovered_bash_issue_for_passed_run():
 
 
 def test_failure_analysis_reports_dependency_install_evidence_for_missing_module():
-    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import failure_analysis_section
+    from skills.harness.modes import NO_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import failure_analysis_section
 
     event = {
         "item": {
@@ -1476,7 +1446,7 @@ def test_failure_analysis_reports_dependency_install_evidence_for_missing_module
 
 
 def test_job_run_status_reason_reports_failed_dependency_install():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import job_run_status_reason
+    from skills.harness.reports.benchmark_insights import job_run_status_reason
 
     install_event = {
         "item": {
@@ -1512,10 +1482,7 @@ def test_job_run_status_reason_reports_failed_dependency_install():
 
 
 def test_job_run_status_reason_reports_successful_install_with_wrong_runtime():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
-        job_run_action,
-        job_run_status_reason,
-    )
+    from skills.harness.reports.benchmark_insights import job_run_action, job_run_status_reason
 
     install_event = {
         "item": {
@@ -1550,7 +1517,7 @@ def test_job_run_status_reason_reports_successful_install_with_wrong_runtime():
 
 
 def test_readme_metric_alignment_uses_server_best_validation_metric_scalar():
-    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
+    from skills.harness.quality_signals import metric_signal
 
     signal = metric_signal(
         None,
@@ -1575,7 +1542,7 @@ Final round metrics:
 
 
 def test_readme_metric_alignment_passes_for_site_level_values_without_scalar():
-    from assist_tools.skills_benchmark.skills.harness.quality_signals import metric_signal
+    from skills.harness.quality_signals import metric_signal
 
     signal = metric_signal(
         None,
@@ -1600,11 +1567,8 @@ Final round metrics:
 
 
 def test_metrics_chart_names_metric_once_in_panel_title():
-    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
-        embedded_bar_chart,
-        outcome_metrics_table,
-    )
+    from skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import embedded_bar_chart, outcome_metrics_table
 
     def run(label: str, value: float) -> dict:
         return {
@@ -1642,11 +1606,8 @@ def test_metrics_chart_names_metric_once_in_panel_title():
 
 
 def test_metrics_chart_uses_labeled_aggregated_metric_from_legacy_record():
-    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
-        embedded_bar_chart,
-        outcome_metrics_table,
-    )
+    from skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import embedded_bar_chart, outcome_metrics_table
 
     def run(label: str, metric: dict) -> dict:
         return {
@@ -1681,11 +1642,8 @@ def test_metrics_chart_uses_labeled_aggregated_metric_from_legacy_record():
 
 
 def test_metrics_chart_marks_mixed_metric_names_non_comparable():
-    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import (
-        embedded_bar_chart,
-        outcome_metrics_table,
-    )
+    from skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import embedded_bar_chart, outcome_metrics_table
 
     def run(label: str, metric_name: str, value: float) -> dict:
         return {
@@ -1712,7 +1670,7 @@ def test_metrics_chart_marks_mixed_metric_names_non_comparable():
 
 
 def test_structure_tree_renderer_uses_tree_format():
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import tree_from_paths
+    from skills.harness.reports.benchmark_insights import tree_from_paths
 
     tree = tree_from_paths(
         [
@@ -1730,7 +1688,7 @@ def test_structure_tree_renderer_uses_tree_format():
 
 
 def test_run_summary_uses_agent_keys_without_codex_aliases(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.records import write_json, write_run_summary
+    from skills.harness.records import write_json, write_run_summary
 
     final_record = tmp_path / "record.json"
     summary_path = tmp_path / "run_summary.json"
@@ -1767,7 +1725,7 @@ def test_run_summary_uses_agent_keys_without_codex_aliases(tmp_path):
 
 
 def test_run_summary_ignores_codex_usage_fallback_and_reports_prompt_hash(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.records import write_json, write_run_summary
+    from skills.harness.records import write_json, write_run_summary
 
     final_record = tmp_path / "record.json"
     summary_path = tmp_path / "run_summary.json"
@@ -1805,7 +1763,7 @@ def test_run_summary_ignores_codex_usage_fallback_and_reports_prompt_hash(tmp_pa
 
 
 def test_make_tree_readable_does_not_follow_symlinked_directories(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.common import make_tree_readable
+    from skills.harness.common import make_tree_readable
 
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -1822,7 +1780,7 @@ def test_make_tree_readable_does_not_follow_symlinked_directories(tmp_path):
 
 
 def test_scenario_report_escapes_markdown_table_pipes(tmp_path):
-    from assist_tools.skills_benchmark.skills.harness.reports.scenario_report import write_scenario_report
+    from skills.harness.reports.scenario_report import write_scenario_report
 
     write_scenario_report(
         tmp_path,
@@ -1863,9 +1821,9 @@ def test_scenario_report_escapes_markdown_table_pipes(tmp_path):
 
 
 def test_report_generators_write_two_mode_outputs(tmp_path, monkeypatch):
-    from assist_tools.skills_benchmark.skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
-    from assist_tools.skills_benchmark.skills.harness.reports import metrics_report
-    from assist_tools.skills_benchmark.skills.harness.reports.benchmark_insights import main as insights_main
+    from skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from skills.harness.reports import metrics_report
+    from skills.harness.reports.benchmark_insights import main as insights_main
 
     for mode, value in ((NO_SKILLS_MODE, 0.7562), (WITH_SKILLS_MODE, 0.7529)):
         mode_dir = tmp_path / mode
