@@ -304,7 +304,7 @@ def test_cost_comparison_treats_missing_dependency_install_spans_as_zero():
 
 def test_cost_comparison_keeps_attempted_install_with_missing_timing_unknown():
     from skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
-    from skills.harness.reports.benchmark_insights import cost_comparison_section
+    from skills.harness.reports.benchmark_insights import _elapsed_time_accounting_note, cost_comparison_section
 
     runs = {
         NO_SKILLS_MODE: {
@@ -327,6 +327,9 @@ def test_cost_comparison_keeps_attempted_install_with_missing_timing_unknown():
 
     assert "| Runtime seconds | 100 | NA | NA |" in section
     assert "| Dependency install seconds | 0 | NA | NA |" in section
+    accounting = _elapsed_time_accounting_note(runs[WITH_SKILLS_MODE], runs[NO_SKILLS_MODE])
+    assert "dependency install NA; runtime after install NA; captured non-install commands NA" in accounting
+    assert "NAs" not in accounting
 
 
 def test_structure_tree_falls_back_to_final_workspace_when_changed_python_is_empty():

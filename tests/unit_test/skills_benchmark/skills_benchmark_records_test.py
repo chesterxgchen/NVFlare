@@ -216,6 +216,40 @@ def test_metric_artifact_parser_reads_generic_json_shape(tmp_path):
     assert metric["source"] == "metrics_artifact"
 
 
+def test_metric_artifact_parser_prefers_runtime_artifacts_over_changed_files(tmp_path):
+    from skills.harness.metric_artifacts import validation_metric_from_workspace_delta_manifest
+
+    delta = tmp_path / "delta"
+    changed_artifact = (
+        delta / "changed_files" / "fl_workspace" / "job_a" / "server" / "simulate_job" / "metrics" / "summary.json"
+    )
+    runtime_artifact = delta / "runtime_artifacts" / "server" / "simulate_job" / "metrics" / "summary.json"
+    changed_artifact.parent.mkdir(parents=True)
+    runtime_artifact.parent.mkdir(parents=True)
+    changed_artifact.write_text(json.dumps({"server": {"metric": "auroc", "score": 0.1111}}), encoding="utf-8")
+    runtime_artifact.write_text(json.dumps({"server": {"metric": "auroc", "score": 0.8123}}), encoding="utf-8")
+    manifest = {
+        "delta_dir": str(delta),
+        "changed_files": [
+            {
+                "path": "fl_workspace/job_a/server/simulate_job/metrics/summary.json",
+                "artifact_path": "changed_files/fl_workspace/job_a/server/simulate_job/metrics/summary.json",
+            }
+        ],
+        "runtime_artifacts": [
+            {
+                "path": "server/simulate_job/metrics/summary.json",
+                "artifact_path": "runtime_artifacts/server/simulate_job/metrics/summary.json",
+            }
+        ],
+    }
+
+    metric = validation_metric_from_workspace_delta_manifest(manifest, tmp_path / "delta_manifest.json", "AUROC")
+
+    assert metric["value"] == 0.8123
+    assert "/runtime_artifacts/" in metric["source_path"]
+
+
 def test_parse_usage_activity_scans_hints_from_raw_line_without_json_reserialize(tmp_path, monkeypatch):
     from skills.harness import events
 

@@ -88,6 +88,11 @@ def fmt_seconds(value: Any) -> str:
     return "NA" if number is None else str(round(number))
 
 
+def fmt_seconds_with_unit(value: Any) -> str:
+    formatted = fmt_seconds(value)
+    return formatted if formatted == "NA" else f"{formatted}s"
+
+
 def as_number(value: Any) -> float | None:
     if isinstance(value, bool) or value is None:
         return None
@@ -2762,10 +2767,10 @@ def _time_accounting_display(run: dict[str, Any]) -> str:
     runtime_seconds = _elapsed_excluding_dependency_install(run)
     non_install_seconds = _non_dependency_command_seconds(run)
     return (
-        f"total {fmt_seconds(elapsed)}s; "
-        f"dependency install {fmt_seconds(dependency_seconds)}s; "
-        f"runtime after install {fmt_seconds(runtime_seconds)}s; "
-        f"captured non-install commands {fmt_seconds(non_install_seconds)}s"
+        f"total {fmt_seconds_with_unit(elapsed)}; "
+        f"dependency install {fmt_seconds_with_unit(dependency_seconds)}; "
+        f"runtime after install {fmt_seconds_with_unit(runtime_seconds)}; "
+        f"captured non-install commands {fmt_seconds_with_unit(non_install_seconds)}"
     )
 
 

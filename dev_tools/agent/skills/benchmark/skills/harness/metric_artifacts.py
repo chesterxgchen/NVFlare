@@ -37,10 +37,12 @@ def captured_metric_artifact_paths(manifest: Mapping[str, Any], manifest_path: P
 
     delta_dir = Path(str(manifest.get("delta_dir") or manifest_path.parent))
     paths: list[Path] = []
+    seen: set[Path] = set()
     for key in ("runtime_artifacts", "changed_files", "workspace_added_files", "workspace_modified_files"):
         items = manifest.get(key)
         if not isinstance(items, list):
             continue
+        category_paths: list[Path] = []
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -49,8 +51,12 @@ def captured_metric_artifact_paths(manifest: Mapping[str, Any], manifest_path: P
                 continue
             candidate = delta_dir / artifact_text
             if candidate.is_file() and candidate.suffix.lower() in ARTIFACT_SUFFIXES:
+                category_paths.append(candidate)
+        for candidate in sorted(category_paths, key=lambda path: path.as_posix()):
+            if candidate not in seen:
                 paths.append(candidate)
-    return sorted(set(paths), key=lambda path: path.as_posix())
+                seen.add(candidate)
+    return paths
 
 
 def load_artifact_payloads(path: Path) -> Iterable[Any]:
