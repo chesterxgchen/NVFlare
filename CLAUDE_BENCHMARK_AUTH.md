@@ -3,7 +3,7 @@
 How to give the `skills_benchmark` Docker harness a working Claude credential and
 run a benchmark, start to finish.
 
-Harness location: `~/projects/NVFlare/assist_tools/skills_benchmark`
+Harness location: `~/projects/NVFlare/dev_tools/agent/skills/benchmark`
 
 ## Background
 
@@ -60,7 +60,7 @@ You should see `sk-ant-oat01...` and a non-zero length. If empty, redo Step 2.
 ## Step 4 - Go to the benchmark dir
 
 ```bash
-cd ~/projects/NVFlare/assist_tools/skills_benchmark
+cd ~/projects/NVFlare/dev_tools/agent/skills/benchmark
 ```
 
 ## Step 5 - Run the benchmark
@@ -143,7 +143,7 @@ echo 'export ANTHROPIC_API_KEY=sk-ant-api03-...' >> ~/.bashrc
 ### Step 3 - Run the benchmark
 
 ```bash
-cd ~/projects/NVFlare/assist_tools/skills_benchmark
+cd ~/projects/NVFlare/dev_tools/agent/skills/benchmark
 ./bin/run.sh pair --agent claude --no-agent-auth-mount \
   --prompt /path/to/your/prompt.txt \
   /path/to/your/job-folder

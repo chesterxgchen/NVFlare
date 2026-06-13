@@ -259,11 +259,13 @@ def _install_plan(
                     entry["version_delta"] = "unknown"
                     conflicts.append(_conflict(skill["name"], "external_install_detected", target_skill_dir))
                 else:
+                    hash_failed = False
                     try:
                         installed_source_hash = skill_tree_hash(
                             target_skill_dir, exclude_names={INSTALL_MANIFEST_FILE_NAME}
                         )
                     except (OSError, ValueError) as e:
+                        hash_failed = True
                         installed_source_hash = None
                         entry["target_issue"] = {
                             "code": "local_modifications_detected",
@@ -271,7 +273,7 @@ def _install_plan(
                             "error_type": type(e).__name__,
                             "target_path": str(target_skill_dir),
                         }
-                    if installed_source_hash != install_manifest.get("source_hash"):
+                    if hash_failed or installed_source_hash != install_manifest.get("source_hash"):
                         entry["action"] = "skip"
                         entry["conflict"] = "local_modifications_detected"
                         entry["version_delta"] = "blocked"

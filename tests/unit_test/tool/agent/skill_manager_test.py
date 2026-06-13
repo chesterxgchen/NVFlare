@@ -340,6 +340,34 @@ def test_install_plan_reports_unreadable_managed_install_as_structured_conflict(
     assert plan["conflicts"][0]["code"] == "local_modifications_detected"
 
 
+def test_install_plan_hash_failure_conflicts_when_manifest_hash_missing(tmp_path, monkeypatch):
+    source = _skill_source(tmp_path)
+    target = tmp_path / "target"
+    install_skills(agent="codex", target_dir=target, source=source)
+    target_skill_dir = target / "nvflare-test-skill"
+    manifest_path = target_skill_dir / INSTALL_MANIFEST_FILE_NAME
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.pop("source_hash")
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    original_hash = skill_manager.skill_tree_hash
+
+    def fake_skill_tree_hash(path, *args, **kwargs):
+        if Path(path) == target_skill_dir:
+            raise PermissionError("permission denied")
+        return original_hash(path, *args, **kwargs)
+
+    monkeypatch.setattr(skill_manager, "skill_tree_hash", fake_skill_tree_hash)
+
+    plan = install_skills(agent="codex", target_dir=target, source=source)
+
+    assert plan["applied"] is True
+    assert plan["errors"] == []
+    assert plan["skills"][0]["action"] == "skip"
+    assert plan["skills"][0]["conflict"] == "local_modifications_detected"
+    assert plan["skills"][0]["target_issue"]["error_type"] == "PermissionError"
+    assert plan["conflicts"][0]["code"] == "local_modifications_detected"
+
+
 def test_install_skills_replaces_unmodified_managed_install_with_backup(tmp_path):
     root = tmp_path / "skills"
     _write_skill(root, "nvflare-test-skill", heading="First Skill")
