@@ -1797,6 +1797,10 @@ while flare.is_running():
     assert "captured non-install commands 1800s" in explanation
     assert "No skills baseline: total 300s; dependency install 229s; runtime after install 71s" in explanation
     assert "captured command spans identify slow operations but are not guaranteed to add up exactly" in explanation
+    assert "Longest command comparison" in explanation
+    assert "With skills: `python job.py` (1800s, exit 0); `uv pip install -r requirements-train.txt`" in explanation
+    assert "No skills baseline: `python3 -m pip install -r requirements-train.txt`" in explanation
+    assert "`python3 run_nvflare_fedavg.py` (120s, exit 0)" in explanation
     assert "uv pip install -r requirements-train.txt" in explanation
     assert "python job.py" in explanation
     assert "Dependency install path differed" in explanation
@@ -1824,6 +1828,69 @@ while flare.is_running():
     assert "Quality-versus-speed tradeoff: useful validation work also adds per-round workload" in explanation
     assert "may explain part of the long per-round wait" in explanation
     assert "Dependency cost is separate from code efficiency" in explanation
+
+
+def test_runtime_path_note_includes_baseline_fallback_command_time():
+    from skills.harness.reports.benchmark_insights import _runtime_path_slowdown_note
+
+    def command_events(command, start, end, item_id, output="ok"):
+        return [
+            {
+                "timestamp": start,
+                "type": "item.started",
+                "item": {
+                    "command": command,
+                    "id": item_id,
+                    "status": "in_progress",
+                    "type": "command_execution",
+                },
+            },
+            {
+                "timestamp": end,
+                "type": "item.completed",
+                "item": {
+                    "aggregated_output": output,
+                    "command": command,
+                    "exit_code": 0,
+                    "id": item_id,
+                    "status": "completed",
+                    "type": "command_execution",
+                },
+            },
+        ]
+
+    with_run = {
+        "label": "With skills",
+        "agent_events_text": "\n".join(
+            json.dumps(event)
+            for event in command_events(
+                "python job.py",
+                "2026-06-13T08:00:00Z",
+                "2026-06-13T08:14:02Z",
+                "with_job",
+                output="PTInProcessClientAPIExecutor - INFO - result received\nFinished FedAvg.\n",
+            )
+        ),
+    }
+    base_run = {
+        "label": "No skills baseline",
+        "agent_events_text": "\n".join(
+            json.dumps(event)
+            for event in command_events(
+                "python run_experiment.py",
+                "2026-06-13T08:00:00Z",
+                "2026-06-13T08:03:00Z",
+                "base_cmd",
+            )
+        ),
+    }
+
+    note = "\n".join(_runtime_path_slowdown_note(with_run, base_run))
+
+    assert "NVFLARE runtime path diverged" in note
+    assert "`python job.py` (842s, exit 0)" in note
+    assert "baseline had no classified successful job/simulator command" in note
+    assert "`python run_experiment.py` (180s, exit 0)" in note
 
 
 def test_why_slower_does_not_blame_code_quality_when_runtime_excluding_install_is_faster(tmp_path):

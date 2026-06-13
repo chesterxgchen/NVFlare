@@ -2798,10 +2798,30 @@ def _top_command_spans(run: dict[str, Any], *, limit: int = 3, min_seconds: floa
 
 def _format_command_span(span: dict[str, Any]) -> str:
     seconds = as_number(span.get("duration_seconds")) or 0
-    command = truncate(span.get("command"), 120)
+    command = truncate(re.sub(r"\s+", " ", str(span.get("command") or "")).strip(), 120)
     exit_code = span.get("exit_code")
     exit_note = f", exit {exit_code}" if exit_code not in (None, "") else ""
     return f"`{command}` ({fmt_number(round(seconds))}s{exit_note})"
+
+
+def _format_command_span_list(label: str, spans: list[dict[str, Any]]) -> str:
+    if not spans:
+        return f"{label}: no timed command spans >=30s captured"
+    return f"{label}: " + "; ".join(_format_command_span(span) for span in spans)
+
+
+def _longest_command_comparison_note(with_run: dict[str, Any], base_run: dict[str, Any]) -> str:
+    with_label = with_run.get("label") or "With skills"
+    base_label = base_run.get("label") or "No skills baseline"
+    with_spans = _top_command_spans(with_run)
+    base_spans = _top_command_spans(base_run)
+    if not with_spans and not base_spans:
+        return ""
+    return (
+        "- **Longest command comparison**: "
+        f"{_format_command_span_list(with_label, with_spans)}. "
+        f"{_format_command_span_list(base_label, base_spans)}."
+    )
 
 
 def _longest_span(spans: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -2997,6 +3017,14 @@ def _successful_job_spans(run: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _successful_non_install_command_spans(run: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        span
+        for span in agent_command_spans(run)
+        if command_succeeded(span) and not is_dependency_install_command(str(span.get("command") or ""))
+    ]
+
+
 def _simulator_thread_flag(command: str, output: str) -> str:
     match = re.search(r"\bnvflare(?:\.cli)?\s+simulator\b[^\n]*\s-t\s+(\d+)\b", f"{command}\n{output}")
     return f" ... -t {match.group(1)}" if match else ""
@@ -3055,13 +3083,24 @@ def _runtime_path_slowdown_note(with_run: dict[str, Any], base_run: dict[str, An
     with_path = _job_runtime_path(with_job)
     base_path = _job_runtime_path(base_job)
     if with_path or base_path:
-        base_part = (
-            f"; baseline used {base_path} via {_format_command_span(base_job)}" if base_job and base_path else ""
+        with_part = (
+            f"with-skills used {with_path or 'a captured job/simulator command'} via {_format_command_span(with_job)}"
         )
-        lines.append(
-            f"- **NVFLARE runtime path diverged**: with-skills used {with_path or 'a different runtime path'} "
-            f"via {_format_command_span(with_job)}{base_part}."
-        )
+        if base_job:
+            base_part = (
+                f"baseline used {base_path or 'a captured job/simulator command'} via "
+                f"{_format_command_span(base_job)}"
+            )
+        else:
+            base_fallback = _longest_span(_successful_non_install_command_spans(base_run))
+            if base_fallback:
+                base_part = (
+                    "baseline had no classified successful job/simulator command; "
+                    f"longest successful non-install command was {_format_command_span(base_fallback)}"
+                )
+            else:
+                base_part = "baseline had no captured successful job/simulator command"
+        lines.append(f"- **NVFLARE runtime path diverged**: {with_part}; {base_part}.")
     with_rounds = _round_durations_from_output(str(with_job.get("output") or ""))
     base_rounds = _round_durations_from_output(str(base_job.get("output") or "")) if base_job else []
     if with_rounds:
@@ -3173,7 +3212,6 @@ def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]
     with_command_seconds = _command_span_total_seconds(with_run)
     base_command_seconds = _command_span_total_seconds(base_run)
     command_seconds_delta = with_command_seconds - base_command_seconds
-    top_spans = _top_command_spans(with_run)
 
     lines = [f"**Why {with_label} is slower** (+{fmt_number(time_delta)}s / +{pct}% vs {base_label}):", ""]
     if command_seconds_delta > 60:
@@ -3184,10 +3222,9 @@ def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]
             f"not from harness setup or report generation."
         )
     lines.append(_elapsed_time_accounting_note(with_run, base_run))
-    if top_spans:
-        lines.append(
-            f"- **Longest {with_label} commands**: " + "; ".join(_format_command_span(span) for span in top_spans) + "."
-        )
+    longest_command_note = _longest_command_comparison_note(with_run, base_run)
+    if longest_command_note:
+        lines.append(longest_command_note)
     dependency_note = _dependency_install_slowdown_note(with_run, base_run)
     if dependency_note:
         lines.append(dependency_note)
@@ -3195,18 +3232,31 @@ def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]
     lines.extend(_code_quality_slowdown_notes(with_run, base_run))
     if with_turns != base_turns:
         turns_delta = with_turns - base_turns
-        lines.append(
-            f"- **More conversation turns** ({with_turns} vs {base_turns}, +{turns_delta}): "
-            f"each turn is an API round-trip to the model. {turns_delta} extra turns account for most of the "
-            f"wall-clock overhead; the per-turn latency itself is largely unchanged."
-        )
+        if turns_delta > 0:
+            lines.append(
+                f"- **More conversation turns** ({with_turns} vs {base_turns}, +{turns_delta}): "
+                f"each turn is an API round-trip to the model. {turns_delta} extra turns account for most of the "
+                f"wall-clock overhead; the per-turn latency itself is largely unchanged."
+            )
+        else:
+            lines.append(
+                f"- **Fewer conversation turns** ({with_turns} vs {base_turns}, {turns_delta}): "
+                "turn count did not cause the slowdown; the elapsed-time difference is better explained by captured "
+                "command/runtime duration."
+            )
     if with_think != base_think:
         think_delta = with_think - base_think
-        lines.append(
-            f"- **More extended reasoning** ({with_think} vs {base_think} thinking-token events, +{think_delta}): "
-            f"the model engaged extended chain-of-thought significantly more often, "
-            f"likely while interpreting skill documentation and planning how to apply it."
-        )
+        if think_delta > 0:
+            lines.append(
+                f"- **More extended reasoning** ({with_think} vs {base_think} thinking-token events, +{think_delta}): "
+                f"the model engaged extended chain-of-thought significantly more often, "
+                f"likely while interpreting skill documentation and planning how to apply it."
+            )
+        else:
+            lines.append(
+                f"- **Fewer extended-reasoning events** ({with_think} vs {base_think}, {think_delta}): "
+                "reasoning-event count did not cause the slowdown."
+            )
     if skill_delta > 0:
         lines.append(
             f"- **Skill invocation overhead** ({with_tools.get('Skill', 0)} Skill call(s) vs {base_tools.get('Skill', 0)}): "
