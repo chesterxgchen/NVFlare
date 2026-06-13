@@ -70,19 +70,26 @@ launch:
   prompt_input_mode: stdin
   argv:
     - claude
+    - --print
+    - --effort
+    - xhigh
+    - --no-session-persistence
+    - --permission-mode
+    - bypassPermissions
+    - --tools
+    - default
     - --dangerously-skip-permissions
-    - --allowedTools
-    - "Bash(*) Read Write Edit WebFetch WebSearch Agent Task Skill ToolSearch Workflow"
     - --output-format
     - stream-json
     - --verbose
-    - --print
   model_argv:
     - --model
     - "{model}"
   model_argv_position: before_final_arg
   sandbox_flags:
     - --dangerously-skip-permissions
+    - --permission-mode
+    - bypassPermissions
   bypass_reason: "isolated benchmark container; writable state is limited to mounted result/workspace paths"
   environment:
     CLAUDE_CONFIG_DIR: "{container_home}"

@@ -43,6 +43,35 @@ if [[ -z "${ANTHROPIC_API_KEY:-}" ]] && command -v security &>/dev/null; then
   unset _keychain_key
 fi
 
+# On Linux, an API-key login leaves ~/.claude/.credentials.json empty and keeps
+# the key in ~/.claude.json (primaryApiKey); the keyring is not used. Extract it
+# so passthrough_env can forward it into the container, mirroring the macOS path.
+# Uses only the Python standard library, so the benchmark needs no extra deps.
+if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+  _claude_json="${HOME}/.claude.json"
+  if [[ -f "${_claude_json}" ]]; then
+    _api_key="$(python3 -c 'import json,sys
+try:
+    key = json.load(open(sys.argv[1])).get("primaryApiKey") or ""
+except Exception:
+    key = ""
+print(key if key.startswith("sk-ant-") else "")' "${_claude_json}" 2>/dev/null || true)"
+    if [[ -n "${_api_key}" ]]; then
+      export ANTHROPIC_API_KEY="${_api_key}"
+    fi
+    unset _api_key
+  fi
+  unset _claude_json
+fi
+
+# A single API key is a complete credential. If we have one, drop any OAuth /
+# auth-token vars so a stale value cannot be forwarded into the container and
+# override the key (symptom: "401 Invalid bearer token", apiKeySource=none).
+# This makes the run immune to a stale token cached in the launching shell.
+if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+  unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_AUTH_TOKEN
+fi
+
 if [[ "$#" -eq 0 ]]; then
   usage
   exit 2
