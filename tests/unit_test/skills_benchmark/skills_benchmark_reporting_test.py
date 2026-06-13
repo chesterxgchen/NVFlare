@@ -274,6 +274,33 @@ def test_cost_comparison_separates_dependency_install_time():
     assert chart_value_display(1009.055, "seconds") == "1009"
 
 
+def test_cost_comparison_treats_missing_dependency_install_spans_as_zero():
+    from skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import cost_comparison_section
+
+    runs = {
+        NO_SKILLS_MODE: {
+            "label": "No skills baseline",
+            "run": {"elapsed_seconds": 100, "token_count": 10},
+            "activity": {},
+            "workspace_delta": {},
+            "agent_events_text": "",
+        },
+        WITH_SKILLS_MODE: {
+            "label": "With skills",
+            "run": {"elapsed_seconds": 120, "token_count": 12},
+            "activity": {},
+            "workspace_delta": {},
+            "agent_events_text": "",
+        },
+    }
+
+    section = cost_comparison_section(runs, [NO_SKILLS_MODE, WITH_SKILLS_MODE])
+
+    assert "| Runtime seconds | 100 | 120 | 20 |" in section
+    assert "| Dependency install seconds | 0 | 0 | 0 |" in section
+
+
 def test_structure_tree_falls_back_to_final_workspace_when_changed_python_is_empty():
     from skills.harness.modes import WITH_SKILLS_MODE
     from skills.harness.reports.benchmark_insights import structure_trees_section
@@ -1308,6 +1335,60 @@ def test_job_run_status_uses_claude_bash_output_to_detect_completed_simulation()
 
     assert job_run_status(run) == "completed"
     assert job_run_status_reason(run) == "simulation completed — FL workflow reached Finished state"
+
+
+def test_agent_command_spans_pair_claude_bash_tool_use_and_result():
+    from skills.harness.reports.benchmark_insights import agent_command_spans
+
+    tool_id = "toolu_install"
+    command_event = {
+        "event_type": "assistant",
+        "harness_timestamp": "2026-06-13T00:00:00Z",
+        "message": {
+            "content": [
+                {
+                    "id": tool_id,
+                    "input": {"command": "uv pip install -r requirements.txt"},
+                    "name": "Bash",
+                    "type": "tool_use",
+                }
+            ]
+        },
+    }
+    result_event = {
+        "event_type": "user",
+        "harness_timestamp": "2026-06-13T00:00:25Z",
+        "message": {
+            "content": [
+                {
+                    "content": "Successfully installed dependencies",
+                    "is_error": False,
+                    "tool_use_id": tool_id,
+                    "type": "tool_result",
+                }
+            ]
+        },
+        "tool_use_result": {
+            "interrupted": False,
+            "stderr": "",
+            "stdout": "Successfully installed dependencies",
+        },
+    }
+    run = {"agent_events_text": "\n".join(json.dumps(event) for event in (command_event, result_event))}
+
+    spans = agent_command_spans(run)
+
+    assert spans == [
+        {
+            "command": "uv pip install -r requirements.txt",
+            "duration_seconds": 25.0,
+            "exit_code": 0,
+            "id": tool_id,
+            "index": 0,
+            "output": "Successfully installed dependencies",
+            "status": "completed",
+        }
+    ]
 
 
 def test_job_run_status_detects_generated_simulation_entrypoint():

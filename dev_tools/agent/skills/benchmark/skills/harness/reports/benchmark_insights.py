@@ -457,6 +457,7 @@ def agent_command_events(run: dict[str, Any]) -> list[dict[str, Any]]:
 def agent_command_spans(run: dict[str, Any]) -> list[dict[str, Any]]:
     spans = []
     pending: dict[str, dict[str, Any]] = {}
+    pending_tool_commands: dict[str, dict[str, Any]] = {}
     for line in str(run.get("agent_events_text") or "").splitlines():
         try:
             payload = json.loads(line)
@@ -464,6 +465,38 @@ def agent_command_spans(run: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         if not isinstance(payload, dict):
             continue
+        timestamp = parse_event_timestamp(payload.get("harness_timestamp") or payload.get("timestamp"))
+        for content_item in message_content_items(payload):
+            if content_item.get("type") == "tool_use" and content_item.get("name") == "Bash":
+                tool_input = content_item.get("input") if isinstance(content_item.get("input"), dict) else {}
+                command = str(tool_input.get("command") or "")
+                tool_id = str(content_item.get("id") or "")
+                if command and tool_id:
+                    pending_tool_commands[tool_id] = {
+                        "command": command,
+                        "id": tool_id,
+                        "start": timestamp,
+                    }
+            elif content_item.get("type") == "tool_result":
+                tool_id = str(content_item.get("tool_use_id") or "")
+                pending_tool = pending_tool_commands.pop(tool_id, None)
+                if not pending_tool:
+                    continue
+                output = tool_result_output(payload, content_item)
+                exit_code, status = tool_result_exit(payload, content_item, output)
+                start = pending_tool.get("start")
+                duration = (timestamp - start).total_seconds() if timestamp and start else None
+                spans.append(
+                    {
+                        "command": pending_tool["command"],
+                        "duration_seconds": duration,
+                        "exit_code": exit_code,
+                        "id": pending_tool["id"],
+                        "index": len(spans),
+                        "output": output,
+                        "status": status,
+                    }
+                )
         item = payload.get("item")
         if not isinstance(item, dict) or item.get("type") != "command_execution":
             continue
@@ -471,7 +504,6 @@ def agent_command_spans(run: dict[str, Any]) -> list[dict[str, Any]]:
         item_id = str(item.get("id") or "")
         if not command or not item_id:
             continue
-        timestamp = parse_event_timestamp(payload.get("timestamp") or payload.get("harness_timestamp"))
         event_type = str(payload.get("type") or "")
         if event_type == "item.started":
             pending[item_id] = {"command": command, "start": timestamp}
@@ -2679,6 +2711,8 @@ def _command_span_total_seconds(run: dict[str, Any]) -> float:
 
 def _dependency_install_total_seconds(run: dict[str, Any]) -> float | None:
     spans = _dependency_install_spans(run)
+    if not spans:
+        return 0.0
     values = [as_number(span.get("duration_seconds")) for span in spans]
     durations = [value for value in values if value is not None]
     return sum(durations) if durations else None
