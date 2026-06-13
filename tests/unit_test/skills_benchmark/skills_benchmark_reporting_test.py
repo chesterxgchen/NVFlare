@@ -301,6 +301,33 @@ def test_cost_comparison_treats_missing_dependency_install_spans_as_zero():
     assert "| Dependency install seconds | 0 | 0 | 0 |" in section
 
 
+def test_cost_comparison_keeps_attempted_install_with_missing_timing_unknown():
+    from skills.harness.modes import NO_SKILLS_MODE, WITH_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import cost_comparison_section
+
+    runs = {
+        NO_SKILLS_MODE: {
+            "label": "No skills baseline",
+            "run": {"elapsed_seconds": 100, "token_count": 10},
+            "activity": {},
+            "workspace_delta": {},
+            "agent_events_text": "",
+        },
+        WITH_SKILLS_MODE: {
+            "label": "With skills",
+            "run": {"elapsed_seconds": 120, "token_count": 12},
+            "activity": {"commands": ["uv pip install -r requirements.txt"]},
+            "workspace_delta": {},
+            "agent_events_text": "",
+        },
+    }
+
+    section = cost_comparison_section(runs, [NO_SKILLS_MODE, WITH_SKILLS_MODE])
+
+    assert "| Runtime seconds | 100 | NA | NA |" in section
+    assert "| Dependency install seconds | 0 | NA | NA |" in section
+
+
 def test_structure_tree_falls_back_to_final_workspace_when_changed_python_is_empty():
     from skills.harness.modes import WITH_SKILLS_MODE
     from skills.harness.reports.benchmark_insights import structure_trees_section
@@ -485,6 +512,28 @@ while flare.is_running():
     assert "accelerator-capable dependency stack" in section
     assert "skill requirements install not followed" not in section
     assert "CPU-only framework installs are faster, but they should only be treated as comparable" in section
+
+
+def test_runtime_output_locality_scores_workspace_changes_as_caution():
+    from skills.harness.reports.benchmark_insights import _assessment_from_locality, _runtime_output_locality_signal
+
+    run = {
+        "workspace_delta": {
+            "changed_files": [{"path": "fl_workspace/ames_fedavg/server/simulate_job/app_server/custom/client.py"}],
+            "runtime_artifacts": [
+                {
+                    "path": "server/log.txt",
+                    "source_path": "/tmp/nvflare/workspaces/ames/server/log.txt",
+                }
+            ],
+        }
+    }
+
+    evidence = _runtime_output_locality_signal(run)
+
+    assert "runtime artifacts captured separately from temp/runtime paths" in evidence
+    assert "runtime output appears in workspace changes" in evidence
+    assert _assessment_from_locality(evidence) == "caution"
 
 
 def test_generated_code_quality_does_not_claim_loop_placement_when_loop_missing(tmp_path):
@@ -1465,6 +1514,23 @@ def test_job_run_status_uses_metric_artifact_to_avoid_not_started_contradiction(
     assert "job execution inferred from captured runtime metric artifact" in reason
     assert "summary.json" in reason
     assert "command detector did not identify" in reason
+
+
+def test_job_run_status_does_not_infer_completion_from_changed_file_metric_artifact():
+    from skills.harness.reports.benchmark_insights import job_run_status
+
+    run = {
+        "available": True,
+        "activity": {"commands": ["/bin/bash -lc 'rg --files'"]},
+        "validation_metric": {
+            "name": "AUROC",
+            "reported_values": [0.7652],
+            "source": "metrics_artifact",
+            "source_path": "/workspace/results/workspace_delta/changed_files/metrics_summary.json",
+        },
+    }
+
+    assert job_run_status(run) == "not_started"
 
 
 def test_job_run_status_ignores_successful_simulation_helper_scripts():

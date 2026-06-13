@@ -869,6 +869,19 @@ def artifact_validation_metric_evidence(run: dict[str, Any]) -> str:
     return "captured validation metric artifact"
 
 
+def artifact_validation_metric_is_runtime_evidence(run: dict[str, Any]) -> bool:
+    metric = run.get("validation_metric") if isinstance(run.get("validation_metric"), dict) else {}
+    if metric.get("source") != "metrics_artifact" or not metric.get("reported_values"):
+        return False
+    source_path = str(metric.get("source_path") or "").replace("\\", "/")
+    return bool(
+        "workspace_delta/runtime_artifacts/" in source_path
+        or "/runtime_artifacts/" in source_path
+        or re.search(r"(^|/)server/simulate_job/metrics/[^/]+$", source_path)
+        or re.search(r"(^|/)simulate_job/metrics/(?:metrics_summary\.json|round_metrics\.jsonl)$", source_path)
+    )
+
+
 def job_run_status(run: dict[str, Any]) -> str:
     """Return one of 'completed', 'started_failed', 'not_started', or 'unknown'."""
     if not run.get("available"):
@@ -891,7 +904,7 @@ def job_run_status(run: dict[str, Any]) -> str:
     attempted = bool(executed_events or attempted_commands)
     if last_successful_job_event(run):
         return "completed"
-    if artifact_validation_metric_evidence(run):
+    if artifact_validation_metric_is_runtime_evidence(run):
         return "completed"
     if not attempted:
         return "not_started"
@@ -2318,10 +2331,10 @@ def _assessment_from_observability(evidence: str) -> str:
 def _assessment_from_locality(evidence: str) -> str:
     if evidence == "not captured" or "no runtime-output" in evidence:
         return "unknown"
-    if "separately" in evidence:
-        return "good"
     if "workspace changes" in evidence:
         return "caution"
+    if "separately" in evidence:
+        return "good"
     return "unknown"
 
 
@@ -2712,7 +2725,7 @@ def _command_span_total_seconds(run: dict[str, Any]) -> float:
 def _dependency_install_total_seconds(run: dict[str, Any]) -> float | None:
     spans = _dependency_install_spans(run)
     if not spans:
-        return 0.0
+        return None if dependency_install_attempted(run) else 0.0
     values = [as_number(span.get("duration_seconds")) for span in spans]
     durations = [value for value in values if value is not None]
     return sum(durations) if durations else None
