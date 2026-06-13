@@ -319,6 +319,10 @@ def run_identity_summary(runs: dict[str, dict[str, Any]], modes: list[str]) -> s
     )
 
 
+def fl_algorithm_summary(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
+    return "; ".join(f"{runs[mode].get('label') or mode}: {fl_algorithm_display(runs[mode])}" for mode in modes)
+
+
 def exit_code(run: dict[str, Any]) -> int | None:
     summary = run.get("run") if isinstance(run.get("run"), dict) else {}
     container_exit = run.get("container_exit") if isinstance(run.get("container_exit"), dict) else {}
@@ -479,6 +483,7 @@ def agent_command_spans(run: dict[str, Any]) -> list[dict[str, Any]]:
                 if command and tool_id:
                     pending_tool_commands[tool_id] = {
                         "command": command,
+                        "description": str(tool_input.get("description") or ""),
                         "id": tool_id,
                         "start": timestamp,
                     }
@@ -494,6 +499,7 @@ def agent_command_spans(run: dict[str, Any]) -> list[dict[str, Any]]:
                 spans.append(
                     {
                         "command": pending_tool["command"],
+                        "description": pending_tool.get("description") or "",
                         "duration_seconds": duration,
                         "exit_code": exit_code,
                         "id": pending_tool["id"],
@@ -616,6 +622,18 @@ def invokes_nvflare_simulator(command: str, output: str) -> bool:
     )
 
 
+def is_file_inspection_command(command: str) -> bool:
+    if python_script_name(command) or re.search(r"\bnvflare(?:\.cli)?\s+simulator\b", command):
+        return False
+    return bool(
+        re.search(
+            r"\b(?:cat|sed|nl|head|tail|grep|rg|find|ls)\b[^\n;&|]*(?:\.py|job|simulat)",
+            command,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def job_output_has_failure_status(output: str) -> bool:
     """Return True when an explicit job status line reports a terminal failure state.
 
@@ -682,6 +700,8 @@ def missing_python_module_name(output: str) -> str:
 def job_command_succeeded(event: dict[str, Any]) -> bool:
     command = str(event.get("command") or "")
     output = str(event.get("output") or "")
+    if is_file_inspection_command(command):
+        return False
     if not command_succeeded(event):
         return False
     job_match = job_entrypoint_match(command)
@@ -999,6 +1019,7 @@ def job_run_status_reason(run: dict[str, Any]) -> str:
         event = last_successful_job_event(run)
         output = str(event.get("output") or "") if event else ""
         recovered_issue = completed_job_recovered_issue_summary(run)
+        repeated_runs = repeated_job_run_summary(run)
         artifact_evidence = artifact_validation_metric_evidence(run)
         if artifact_evidence and not event:
             return (
@@ -1007,11 +1028,17 @@ def job_run_status_reason(run: dict[str, Any]) -> str:
             )
         if "Finished" in output:
             reason = "simulation completed — FL workflow reached Finished state"
+            if repeated_runs:
+                reason = f"{reason}; {repeated_runs}"
             return f"{reason}; {recovered_issue}" if recovered_issue else reason
         if sim_count > 0 or py_count > 0:
             reason = f"simulation completed successfully (hint count: simulation={sim_count}, python_job_py={py_count})"
+            if repeated_runs:
+                reason = f"{reason}; {repeated_runs}"
             return f"{reason}; {recovered_issue}" if recovered_issue else reason
         reason = "simulation completed successfully"
+        if repeated_runs:
+            reason = f"{reason}; {repeated_runs}"
         return f"{reason}; {recovered_issue}" if recovered_issue else reason
 
     return "status unknown — no simulation hint counts or events found"
@@ -1194,6 +1221,29 @@ def metric_mismatch_issue(run: dict[str, Any]) -> str:
     return f"Metric mismatch `primary_metric_reporting`: expected `{expected}`, reported {actual}."
 
 
+def result_metric_scalar_available(run: dict[str, Any], metric_name: str | None = None) -> bool:
+    return metric_value(run, canonical_metric_name(metric_name) if metric_name else None) is not None
+
+
+def final_response_metric_reporting_gap(run: dict[str, Any]) -> str:
+    record = run.get("record") if isinstance(run.get("record"), dict) else {}
+    signal = quality_signal(record)
+    signal_status = str(signal.get("status") or "")
+    if signal_status not in {"fail", "missing"} or metric_mismatch_with_reported_scalar(run):
+        return ""
+    expected = signal.get("expected_primary_metric")
+    metric = run.get("validation_metric") if isinstance(run.get("validation_metric"), dict) else {}
+    metric_name = canonical_metric_name(expected or metric.get("name"))
+    if not result_metric_scalar_available(run, metric_name):
+        return ""
+    evidence = signal.get("evidence") or "final response did not satisfy the expected validation metric signal"
+    metric_text = metric_display(run, metric_name)
+    label = metric_value_label(run, metric_name)
+    if label:
+        metric_text = f"{metric_text} ({label})"
+    return f"Final response reporting gap: artifact/record metric is available ({metric_text}), but {evidence}"
+
+
 def failure_evidence(run: dict[str, Any]) -> str:
     text = combined_text(run)
     model_error = unsupported_model_message(text)
@@ -1269,8 +1319,13 @@ def run_quality_issues(run: dict[str, Any]) -> list[str]:
         if metric_mismatch_with_reported_scalar(run):
             issues.append(metric_mismatch_issue(run))
         else:
-            evidence = signal.get("evidence") or "final response did not satisfy the expected validation metric signal"
-            issues.append(f"Failed check `primary_metric_reporting`: {evidence}")
+            metric = run.get("validation_metric") if isinstance(run.get("validation_metric"), dict) else {}
+            metric_name = canonical_metric_name(expected or metric.get("name"))
+            if not result_metric_scalar_available(run, metric_name):
+                evidence = (
+                    signal.get("evidence") or "final response did not satisfy the expected validation metric signal"
+                )
+                issues.append(f"Failed check `primary_metric_reporting`: {evidence}")
     metric = run.get("validation_metric") if isinstance(run.get("validation_metric"), dict) else {}
     metric_name = canonical_metric_name(metric.get("name") or expected)
     if expected and metric_value(run, metric_name) is None:
@@ -1593,9 +1648,14 @@ def quality_signal_table(runs: dict[str, dict[str, Any]], modes: list[str]) -> s
         if label:
             result = f"{result} ({label})"
         evidence = signal.get("evidence") or "NA"
+        status = signal.get("status") or "NA"
+        response_gap = final_response_metric_reporting_gap(run)
+        if response_gap:
+            status = "artifact metric present; final response gap"
+            evidence = response_gap
         lines.append(
             f"| {markdown_cell(run['label'])} | {markdown_cell(expected)} | {markdown_cell(result)} | "
-            f"{markdown_cell(signal.get('status') or 'NA')} | {markdown_cell(evidence)} |"
+            f"{markdown_cell(status)} | {markdown_cell(evidence)} |"
         )
     return "\n".join(lines)
 
@@ -1947,6 +2007,124 @@ def _workspace_artifact_path(run: dict[str, Any], item: dict[str, Any]) -> Path 
     if not artifact_path:
         return None
     return mode_dir / "workspace_delta" / str(artifact_path)
+
+
+def _workflow_algorithm_name(workflow_path: str) -> str:
+    class_name = str(workflow_path or "").rsplit(".", 1)[-1]
+    normalized = re.sub(r"[^a-z0-9]+", "", class_name.lower())
+    known = {
+        "scaffold": "SCAFFOLD",
+        "fedavg": "FedAvg",
+        "fedopt": "FedOpt",
+        "fedprox": "FedProx",
+        "cyclic": "Cyclic",
+        "fedeval": "FedEval",
+        "scatterandgather": "ScatterAndGather",
+    }
+    if normalized in known:
+        return known[normalized]
+    if not class_name:
+        return "unknown"
+    return re.sub(r"(?<!^)(?=[A-Z])", " ", class_name)
+
+
+def _recipe_evidence(run: dict[str, Any]) -> str:
+    final_text = str(run.get("agent_last_message") or "")
+    final_patterns = (
+        r"\bRecipe:\*{0,2}\s*`?([A-Za-z0-9_.-]+)`?",
+        r"`([A-Za-z0-9_.-]+)`\s*(?:→|->)\s*`?[A-Za-z0-9_.]*Recipe`?",
+    )
+    for pattern in final_patterns:
+        match = re.search(pattern, final_text)
+        if match:
+            return match.group(1)
+    classification_excerpt = str(run_record(run).get("classification_excerpt") or "")
+    final_slice = classification_excerpt.split("\n{", 1)[0]
+    for pattern in final_patterns:
+        match = re.search(pattern, final_slice)
+        if match:
+            return match.group(1)
+    text = combined_text(run)
+    command_patterns = (r"\bnvflare\s+recipe\s+show\s+([A-Za-z0-9_.-]+)",)
+    for pattern in command_patterns:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _server_config_items(run: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    delta = run_workspace_delta(run)
+    items = []
+    for key in ("runtime_artifacts", "changed_files", "final_structure_files", "final_files"):
+        values = delta.get(key)
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path") or item.get("artifact_path") or "")
+            if Path(path).name != "config_fed_server.json":
+                continue
+            items.append((key, item))
+
+    def priority(entry: tuple[str, dict[str, Any]]) -> tuple[int, int, str]:
+        key, item = entry
+        path = str(item.get("path") or item.get("artifact_path") or "")
+        key_priority = 0 if key == "runtime_artifacts" else 1
+        server_priority = 0 if re.search(r"(^|/)(server|app_server)(/|$)", path) else 1
+        return key_priority, server_priority, path
+
+    return sorted(items, key=priority)
+
+
+def fl_algorithm_info(run: dict[str, Any]) -> dict[str, Any]:
+    for key, item in _server_config_items(run):
+        path = _workspace_artifact_path(run, item)
+        if not path or not path.exists():
+            continue
+        config = load_json(path, {}) or {}
+        workflows = config.get("workflows") if isinstance(config, dict) else None
+        if not isinstance(workflows, list):
+            continue
+        for workflow in workflows:
+            if not isinstance(workflow, dict):
+                continue
+            workflow_path = str(workflow.get("path") or "")
+            if not workflow_path:
+                continue
+            args = workflow.get("args") if isinstance(workflow.get("args"), dict) else {}
+            recipe = _recipe_evidence(run)
+            evidence_parts = [f"{Path(str(item.get('path') or item.get('artifact_path') or '')).name}: {workflow_path}"]
+            if recipe:
+                evidence_parts.append(f"recipe {recipe}")
+            return {
+                "algorithm": _workflow_algorithm_name(workflow_path),
+                "evidence": "; ".join(evidence_parts),
+                "num_rounds": args.get("num_rounds"),
+                "recipe": recipe,
+                "source": key,
+                "workflow_id": workflow.get("id"),
+                "workflow_path": workflow_path,
+            }
+    text = combined_text(run)
+    for name in ("SCAFFOLD", "FedAvg", "FedOpt", "FedProx", "Cyclic", "FedEval"):
+        if re.search(rf"\b{re.escape(name)}\b", text, flags=re.IGNORECASE):
+            recipe = _recipe_evidence(run)
+            evidence = "agent final message or command text"
+            if recipe:
+                evidence += f"; recipe {recipe}"
+            return {"algorithm": name, "evidence": evidence, "num_rounds": None, "recipe": recipe}
+    return {"algorithm": "not captured", "evidence": "no server workflow config or algorithm mention captured"}
+
+
+def fl_algorithm_display(run: dict[str, Any]) -> str:
+    info = fl_algorithm_info(run)
+    algorithm = info.get("algorithm") or "not captured"
+    rounds = info.get("num_rounds")
+    if rounds is not None:
+        return f"{algorithm} ({fmt_number(rounds)} rounds)"
+    return str(algorithm)
 
 
 def _workspace_file_text(run: dict[str, Any], filename: str, *, max_bytes: int = 256_000) -> str:
@@ -2403,6 +2581,16 @@ def generated_code_quality_overall(run: dict[str, Any]) -> str:
     unknown_count = total - len(known)
     unknown_note = f"; {len(known)}/{total} scored, {unknown_count} unknown" if unknown_count else ""
     return f"{label}: {points:.1f}/{total} evidence points{unknown_note}"
+
+
+def generated_code_quality_score(run: dict[str, Any]) -> float | None:
+    assessments = generated_code_quality_assessments(run)
+    if not assessments:
+        return None
+    known = [status for _, status, _ in assessments if status in CODE_QUALITY_POINTS]
+    if not known:
+        return None
+    return sum(CODE_QUALITY_POINTS[status] for status in known) / len(assessments)
 
 
 def generated_code_quality_table(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
@@ -3052,6 +3240,104 @@ def _successful_non_install_command_spans(run: dict[str, Any]) -> list[dict[str,
     ]
 
 
+def _span_total_seconds(spans: list[dict[str, Any]]) -> float | None:
+    durations = [as_number(span.get("duration_seconds")) for span in spans]
+    captured = [duration for duration in durations if duration is not None]
+    return sum(captured) if captured else None
+
+
+def _command_count_display(count: int) -> str:
+    return f"{count} command" if count == 1 else f"{count} commands"
+
+
+def _job_rerun_reason(spans: list[dict[str, Any]]) -> str:
+    reasons = []
+    for span in spans[1:]:
+        description = str(span.get("description") or "").strip()
+        if description:
+            reasons.append(description)
+        command = str(span.get("command") or "")
+        if re.search(r"\brm\s+-rf\b", command):
+            reasons.append("runtime workspace was cleared before rerun")
+    unique_reasons = []
+    for reason in reasons:
+        if reason and reason not in unique_reasons:
+            unique_reasons.append(reason)
+    if unique_reasons:
+        return "; ".join(unique_reasons[:3])
+    return "not captured; inspect commands around the repeated run"
+
+
+def repeated_job_run_summary(run: dict[str, Any]) -> str:
+    spans = _successful_job_spans(run)
+    if len(spans) <= 1:
+        return ""
+    total = fmt_seconds_with_unit(_span_total_seconds(spans))
+    reason = _job_rerun_reason(spans)
+    return (
+        f"{len(spans)} successful job/simulator executions captured (total job time {total}; likely reason: {reason})"
+    )
+
+
+def repeated_job_runs_section(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
+    rows = []
+    for mode in modes:
+        run = runs[mode]
+        spans = _successful_job_spans(run)
+        if len(spans) <= 1:
+            continue
+        execution_list = "; ".join(f"{index + 1}. {_format_command_span(span)}" for index, span in enumerate(spans[:4]))
+        if len(spans) > 4:
+            execution_list += f"; +{len(spans) - 4} more"
+        rows.append(
+            (
+                run.get("label") or mode,
+                str(len(spans)),
+                fmt_seconds_with_unit(_span_total_seconds(spans)),
+                execution_list,
+                _job_rerun_reason(spans),
+            )
+        )
+    if not rows:
+        return ""
+    lines = [
+        "### Repeated Job/Simulation Executions",
+        "",
+        "These are full successful job or simulator executions, excluding export, help, and preflight commands. Repeated runs materially affect elapsed time and usually mean the agent reran after validation, recovery, or configuration changes.",
+        "",
+        "| Run | Successful executions | Total captured job time | Executions | Captured reason/evidence |",
+        "|---|---:|---:|---|---|",
+    ]
+    for label, count, total_time, executions, reason in rows:
+        lines.append(
+            f"| {markdown_cell(label)} | {markdown_cell(count)} | {markdown_cell(total_time)} | "
+            f"{markdown_cell(executions)} | {markdown_cell(reason)} |"
+        )
+    return "\n".join(lines)
+
+
+def repeated_job_runs_slowdown_section(with_run: dict[str, Any], base_run: dict[str, Any]) -> str:
+    with_spans = _successful_job_spans(with_run)
+    if len(with_spans) <= 1:
+        return ""
+    base_spans = _successful_job_spans(base_run)
+    section = repeated_job_runs_section({"with": with_run}, ["with"])
+    if not section:
+        return ""
+    base_count = len(base_spans)
+    base_time = fmt_seconds_with_unit(_span_total_seconds(base_spans)) if base_spans else "NA"
+    note = (
+        f"Baseline comparison: {base_run.get('label') or 'No skills baseline'} had "
+        f"{_command_count_display(base_count)} classified successful job/simulator execution"
+        f"{'' if base_count == 1 else 's'}"
+    )
+    if base_spans:
+        note += f" totaling {base_time}."
+    else:
+        note += "."
+    return f"{section}\n\n{note}"
+
+
 def _simulator_thread_flag(command: str, output: str) -> str:
     match = re.search(r"\bnvflare(?:\.cli)?\s+simulator\b[^\n]*\s-t\s+(\d+)\b", f"{command}\n{output}")
     return f" ... -t {match.group(1)}" if match else ""
@@ -3102,8 +3388,10 @@ def _round_durations_from_output(output: str) -> list[tuple[int, float]]:
 
 
 def _runtime_path_slowdown_note(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]:
-    with_job = _longest_span(_successful_job_spans(with_run))
-    base_job = _longest_span(_successful_job_spans(base_run))
+    with_jobs = _successful_job_spans(with_run)
+    base_jobs = _successful_job_spans(base_run)
+    with_job = _longest_span(with_jobs)
+    base_job = _longest_span(base_jobs)
     if not with_job:
         return []
     lines = []
@@ -3114,6 +3402,8 @@ def _runtime_path_slowdown_note(with_run: dict[str, Any], base_run: dict[str, An
             (
                 "With skills",
                 with_path or "captured job/simulator command",
+                _command_count_display(len(with_jobs)),
+                fmt_seconds_with_unit(_span_total_seconds(with_jobs)),
                 _format_command_span(with_job),
             )
         ]
@@ -3122,6 +3412,8 @@ def _runtime_path_slowdown_note(with_run: dict[str, Any], base_run: dict[str, An
                 (
                     "No skills baseline",
                     base_path or "captured job/simulator command",
+                    _command_count_display(len(base_jobs)),
+                    fmt_seconds_with_unit(_span_total_seconds(base_jobs)),
                     _format_command_span(base_job),
                 )
             )
@@ -3132,6 +3424,8 @@ def _runtime_path_slowdown_note(with_run: dict[str, Any], base_run: dict[str, An
                     (
                         "No skills baseline",
                         "no classified successful job/simulator command",
+                        "0 commands",
+                        "NA",
                         f"longest successful non-install command: {_format_command_span(base_fallback)}",
                     )
                 )
@@ -3140,17 +3434,22 @@ def _runtime_path_slowdown_note(with_run: dict[str, Any], base_run: dict[str, An
                     (
                         "No skills baseline",
                         "no captured successful job/simulator command",
+                        "0 commands",
+                        "NA",
                         "not captured",
                     )
                 )
         table = [
             "**NVFLARE runtime path diverged**",
             "",
-            "| Run | Runtime path | Evidence command |",
-            "|---|---|---|",
+            "| Run | Runtime path | Successful runs | Total captured time | Representative command |",
+            "|---|---|---:|---:|---|",
         ]
-        for label, path, command in rows:
-            table.append(f"| {markdown_cell(label)} | {markdown_cell(path)} | {markdown_cell(command)} |")
+        for label, path, count, total_time, command in rows:
+            table.append(
+                f"| {markdown_cell(label)} | {markdown_cell(path)} | {markdown_cell(count)} | "
+                f"{markdown_cell(total_time)} | {markdown_cell(command)} |"
+            )
         lines.append("\n".join(table))
     with_rounds = _round_durations_from_output(str(with_job.get("output") or ""))
     base_rounds = _round_durations_from_output(str(base_job.get("output") or "")) if base_job else []
@@ -3243,6 +3542,275 @@ def _code_quality_slowdown_notes(with_run: dict[str, Any], base_run: dict[str, A
     return lines
 
 
+def _signed_seconds_delta(with_value: Any, base_value: Any) -> str:
+    with_number = as_number(with_value)
+    base_number = as_number(base_value)
+    if with_number is None or base_number is None:
+        return "NA"
+    delta = with_number - base_number
+    if delta == 0:
+        return "0s"
+    sign = "+" if delta > 0 else "-"
+    return f"{sign}{fmt_seconds_with_unit(abs(delta))}"
+
+
+def _signed_number_delta(with_value: Any, base_value: Any) -> str:
+    with_number = as_number(with_value)
+    base_number = as_number(base_value)
+    if with_number is None or base_number is None:
+        return "NA"
+    delta = with_number - base_number
+    if delta == 0:
+        return "0"
+    sign = "+" if delta > 0 else "-"
+    return f"{sign}{fmt_number(abs(delta))}"
+
+
+def _append_time_reason_row(
+    rows: list[tuple[str, Any, Any, str, str]],
+    label: str,
+    with_value: Any,
+    base_value: Any,
+    interpretation: str,
+) -> None:
+    with_number = as_number(with_value)
+    base_number = as_number(base_value)
+    if with_number is None or base_number is None:
+        return
+    delta = with_number - base_number
+    if delta <= 0:
+        return
+    rows.append(
+        (
+            label,
+            fmt_seconds_with_unit(with_value),
+            fmt_seconds_with_unit(base_value),
+            _signed_seconds_delta(with_value, base_value),
+            interpretation,
+        )
+    )
+
+
+def _append_count_reason_row(
+    rows: list[tuple[str, Any, Any, str, str]],
+    label: str,
+    with_value: Any,
+    base_value: Any,
+    interpretation: str,
+) -> None:
+    with_number = as_number(with_value)
+    base_number = as_number(base_value)
+    if with_number is None or base_number is None:
+        return
+    delta = with_number - base_number
+    if delta <= 0:
+        return
+    rows.append(
+        (
+            label,
+            fmt_number(with_value),
+            fmt_number(base_value),
+            _signed_number_delta(with_value, base_value),
+            interpretation,
+        )
+    )
+
+
+def _slowdown_reason_table(
+    with_run: dict[str, Any],
+    base_run: dict[str, Any],
+    *,
+    driver_with_command_seconds: float | None,
+    driver_base_command_seconds: float | None,
+    command_span_label: str,
+    elapsed_is_slower: bool,
+) -> str:
+    with_label = with_run.get("label") or "With skills"
+    base_label = base_run.get("label") or "No skills baseline"
+    rows: list[tuple[str, Any, Any, str, str]] = []
+    _append_time_reason_row(
+        rows,
+        "Total elapsed",
+        run_summary(with_run).get("elapsed_seconds"),
+        run_summary(base_run).get("elapsed_seconds"),
+        "overall wall-clock comparison",
+    )
+    _append_time_reason_row(
+        rows,
+        "Dependency install",
+        _dependency_install_total_seconds(with_run),
+        _dependency_install_total_seconds(base_run),
+        "dependency setup/download time",
+    )
+    _append_time_reason_row(
+        rows,
+        "Runtime after install",
+        _elapsed_excluding_dependency_install(with_run),
+        _elapsed_excluding_dependency_install(base_run),
+        "agent/job runtime after dependency setup",
+    )
+    command_interpretation = (
+        "captured command time contributing to wall-clock slowdown"
+        if elapsed_is_slower
+        else "captured non-install command time contributing to runtime-after-install regression"
+    )
+    _append_time_reason_row(
+        rows,
+        command_span_label,
+        driver_with_command_seconds,
+        driver_base_command_seconds,
+        command_interpretation,
+    )
+    _append_count_reason_row(
+        rows,
+        "Assistant turns",
+        _assistant_turns(with_run),
+        _assistant_turns(base_run),
+        "extra model round-trips",
+    )
+    _append_count_reason_row(
+        rows,
+        "Extended-reasoning events",
+        _thinking_token_events(with_run),
+        _thinking_token_events(base_run),
+        "extra reasoning activity",
+    )
+    with_tools = count_map(with_run, "tool_counts")
+    base_tools = count_map(base_run, "tool_counts")
+    for tool_name, interpretation in (
+        ("Skill", "skill loading/context overhead"),
+        ("Agent", "subagent initialization overhead"),
+        ("ToolSearch", "tool schema lookup overhead"),
+    ):
+        _append_count_reason_row(
+            rows,
+            f"{tool_name} calls",
+            with_tools.get(tool_name, 0),
+            base_tools.get(tool_name, 0),
+            interpretation,
+        )
+    if not rows:
+        return ""
+    lines = [
+        "**Slowdown driver comparison**",
+        "",
+        f"| Driver | {markdown_cell(with_label)} | {markdown_cell(base_label)} | Delta | Interpretation |",
+        "|---|---:|---:|---:|---|",
+    ]
+    for label, with_value, base_value, delta, interpretation in rows:
+        lines.append(
+            f"| {markdown_cell(label)} | {markdown_cell(with_value)} | {markdown_cell(base_value)} | "
+            f"{markdown_cell(delta)} | {markdown_cell(interpretation)} |"
+        )
+    return "\n".join(lines)
+
+
+def _token_delta_display(with_value: Any, base_value: Any, formatter=fmt_short) -> str:
+    with_number = as_number(with_value)
+    base_number = as_number(base_value)
+    if with_number is None or base_number is None:
+        return "NA"
+    delta = with_number - base_number
+    if delta == 0:
+        return "0"
+    sign = "+" if delta > 0 else "-"
+    return f"{sign}{formatter(abs(delta))}"
+
+
+def _cost_display(value: Any) -> str:
+    number = as_number(value)
+    return "NA" if number is None else f"${number:.4f}"
+
+
+def _cost_delta_display(with_value: Any, base_value: Any) -> str:
+    with_number = as_number(with_value)
+    base_number = as_number(base_value)
+    if with_number is None or base_number is None:
+        return "NA"
+    delta = with_number - base_number
+    if delta == 0:
+        return "$0.0000"
+    sign = "+" if delta > 0 else "-"
+    return f"{sign}${abs(delta):.4f}"
+
+
+def _token_usage_comparison_table(with_run: dict[str, Any], base_run: dict[str, Any]) -> str:
+    with_label = with_run.get("label") or "With skills"
+    base_label = base_run.get("label") or "No skills baseline"
+    with_usage = _run_usage(with_run)
+    base_usage = _run_usage(base_run)
+
+    def optional_count(run: dict[str, Any], map_key: str, count_key: str) -> Any:
+        value = run_activity(run).get(map_key)
+        if not isinstance(value, dict):
+            return None
+        return value.get(count_key, 0)
+
+    rows = [
+        (
+            "Total tokens",
+            run_summary(with_run).get("token_count"),
+            run_summary(base_run).get("token_count"),
+            fmt_short,
+            "overall token comparison",
+        ),
+        (
+            "Cache-read tokens",
+            with_usage.get("cache_read_input_tokens"),
+            base_usage.get("cache_read_input_tokens"),
+            fmt_short,
+            "cached context re-read across turns",
+        ),
+        (
+            "Cache-creation tokens",
+            with_usage.get("cache_creation_input_tokens"),
+            base_usage.get("cache_creation_input_tokens"),
+            fmt_short,
+            "new context written into prompt cache",
+        ),
+        (
+            "Output tokens",
+            with_usage.get("output_tokens"),
+            base_usage.get("output_tokens"),
+            fmt_short,
+            "model response text",
+        ),
+        (
+            "Assistant turns",
+            optional_count(with_run, "event_types", "assistant"),
+            optional_count(base_run, "event_types", "assistant"),
+            fmt_number,
+            "model round-trips",
+        ),
+        (
+            "Skill calls",
+            optional_count(with_run, "tool_counts", "Skill"),
+            optional_count(base_run, "tool_counts", "Skill"),
+            fmt_number,
+            "skill documentation/context loading",
+        ),
+    ]
+    lines = [
+        "**Token usage comparison**",
+        "",
+        f"| Driver | {markdown_cell(with_label)} | {markdown_cell(base_label)} | Delta | Interpretation |",
+        "|---|---:|---:|---:|---|",
+    ]
+    for label, with_value, base_value, formatter, interpretation in rows:
+        lines.append(
+            f"| {markdown_cell(label)} | {formatter(with_value)} | {formatter(base_value)} | "
+            f"{_token_delta_display(with_value, base_value, formatter)} | {markdown_cell(interpretation)} |"
+        )
+    with_cost = with_usage.get("total_cost_usd")
+    base_cost = base_usage.get("total_cost_usd")
+    if as_number(with_cost) is not None or as_number(base_cost) is not None:
+        lines.append(
+            f"| Effective cost | {_cost_display(with_cost)} | {_cost_display(base_cost)} | "
+            f"{_cost_delta_display(with_cost, base_cost)} | model/provider reported cost |"
+        )
+    return "\n".join(lines)
+
+
 def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]:
     with_label = with_run.get("label") or "With skills"
     base_label = base_run.get("label") or "No skills baseline"
@@ -3255,15 +3823,6 @@ def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]
     runtime_delta = with_runtime - base_runtime if with_runtime is not None and base_runtime is not None else None
     runtime_pct = round(runtime_delta / base_runtime * 100) if runtime_delta is not None and base_runtime else 0
 
-    with_turns = _assistant_turns(with_run)
-    base_turns = _assistant_turns(base_run)
-    with_think = _thinking_token_events(with_run)
-    base_think = _thinking_token_events(base_run)
-    with_tools = count_map(with_run, "tool_counts")
-    base_tools = count_map(base_run, "tool_counts")
-    skill_delta = with_tools.get("Skill", 0) - base_tools.get("Skill", 0)
-    agent_delta = with_tools.get("Agent", 0) - base_tools.get("Agent", 0)
-    search_delta = with_tools.get("ToolSearch", 0) - base_tools.get("ToolSearch", 0)
     with_command_seconds = _command_span_total_seconds(with_run)
     base_command_seconds = _command_span_total_seconds(base_run)
     elapsed_is_slower = time_delta > 0
@@ -3271,44 +3830,46 @@ def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]
     if elapsed_is_slower:
         driver_with_command_seconds = with_command_seconds
         driver_base_command_seconds = base_command_seconds
-        command_seconds_delta = driver_with_command_seconds - driver_base_command_seconds
-        command_span_label = "paired command time"
+        command_span_label = "Captured command time"
     else:
         driver_with_command_seconds = _non_dependency_command_seconds(with_run)
         driver_base_command_seconds = _non_dependency_command_seconds(base_run)
-        command_seconds_delta = (
-            driver_with_command_seconds - driver_base_command_seconds
-            if driver_with_command_seconds is not None and driver_base_command_seconds is not None
-            else None
-        )
-        command_span_label = "paired non-install command time"
+        command_span_label = "Captured non-install command time"
 
     if elapsed_is_slower and runtime_is_slower:
         heading = (
             f"**Why {with_label} is slower and has longer runtime after install** "
             f"(+{fmt_number(time_delta)}s total / +{pct}%; "
-            f"+{fmt_number(runtime_delta)}s runtime / +{runtime_pct}% vs {base_label}):"
+            f"+{fmt_seconds(runtime_delta)}s runtime / +{runtime_pct}% vs {base_label}):"
         )
     elif elapsed_is_slower:
         heading = f"**Why {with_label} is slower** (+{fmt_number(time_delta)}s / +{pct}% vs {base_label}):"
     elif runtime_is_slower:
         heading = (
             f"**Why {with_label} has longer runtime after install** "
-            f"(+{fmt_number(runtime_delta)}s / +{runtime_pct}% vs {base_label}):"
+            f"(+{fmt_seconds(runtime_delta)}s / +{runtime_pct}% vs {base_label}):"
         )
     else:
         heading = f"**Why {with_label} needs more work**:"
     lines = [heading, ""]
-    if command_seconds_delta is not None and command_seconds_delta > 60:
-        command_driver = "wall-clock slowdown" if elapsed_is_slower else "runtime-after-install regression"
-        command_effect = "extra wall time" if elapsed_is_slower else "extra non-install runtime"
-        lines.append(
-            f"- **Long-running commands dominate the {command_driver}** "
-            f"({fmt_number(round(driver_with_command_seconds))}s vs "
-            f"{fmt_number(round(driver_base_command_seconds))}s {command_span_label}, "
-            f"+{fmt_number(round(command_seconds_delta))}s): the {command_effect} came from tools the agent ran, "
-            f"not from report generation."
+    slowdown_table = _slowdown_reason_table(
+        with_run,
+        base_run,
+        driver_with_command_seconds=driver_with_command_seconds,
+        driver_base_command_seconds=driver_base_command_seconds,
+        command_span_label=command_span_label,
+        elapsed_is_slower=elapsed_is_slower,
+    )
+    if slowdown_table:
+        lines.extend(
+            [
+                slowdown_table,
+                "",
+            ]
         )
+    repeated_runs = repeated_job_runs_slowdown_section(with_run, base_run)
+    if repeated_runs:
+        lines.extend([repeated_runs, ""])
     lines.extend(["", _elapsed_time_accounting_note(with_run, base_run), ""])
     longest_command_note = _longest_command_comparison_note(with_run, base_run)
     if longest_command_note:
@@ -3323,49 +3884,6 @@ def _why_slower(with_run: dict[str, Any], base_run: dict[str, Any]) -> list[str]
         lines.extend(runtime_notes)
         lines.append("")
     lines.extend(_code_quality_slowdown_notes(with_run, base_run))
-    if with_turns != base_turns:
-        turns_delta = with_turns - base_turns
-        if turns_delta > 0:
-            turn_effect = "wall-clock overhead" if elapsed_is_slower else "runtime-after-install overhead"
-            lines.append(
-                f"- **More conversation turns** ({with_turns} vs {base_turns}, +{turns_delta}): "
-                f"each turn is an API round-trip to the model. {turns_delta} extra turns account for most of the "
-                f"{turn_effect}; the per-turn latency itself is largely unchanged."
-            )
-        else:
-            lines.append(
-                f"- **Fewer conversation turns** ({with_turns} vs {base_turns}, {turns_delta}): "
-                "turn count did not cause the slowdown."
-            )
-    if with_think != base_think:
-        think_delta = with_think - base_think
-        if think_delta > 0:
-            lines.append(
-                f"- **More extended reasoning** ({with_think} vs {base_think} thinking-token events, +{think_delta}): "
-                f"the model engaged extended chain-of-thought significantly more often, "
-                f"likely while interpreting skill documentation and planning how to apply it."
-            )
-        else:
-            lines.append(
-                f"- **Fewer extended-reasoning events** ({with_think} vs {base_think}, {think_delta}): "
-                "reasoning-event count did not cause the slowdown."
-            )
-    if skill_delta > 0:
-        lines.append(
-            f"- **Skill invocation overhead** ({with_tools.get('Skill', 0)} Skill call(s) vs {base_tools.get('Skill', 0)}): "
-            f"each Skill call fetches and runs a skill, injecting documentation into context "
-            f"and adding a round-trip before the agent can proceed."
-        )
-    if agent_delta > 0:
-        lines.append(
-            f"- **Subagent spawning** ({with_tools.get('Agent', 0)} Agent call(s) vs {base_tools.get('Agent', 0)}): "
-            f"Agent tool calls launch child sessions with their own initialization overhead."
-        )
-    if search_delta > 0:
-        lines.append(
-            f"- **Tool schema lookups** ({with_tools.get('ToolSearch', 0)} ToolSearch call(s) vs {base_tools.get('ToolSearch', 0)}): "
-            f"ToolSearch fetches tool definitions on demand, adding schema-loading latency."
-        )
     if len(lines) == 2:
         lines.append("- Cause not resolved from available activity signals.")
     return lines
@@ -3396,11 +3914,18 @@ def _why_more_tokens(with_run: dict[str, Any], base_run: dict[str, Any]) -> list
     skill_calls = with_tools.get("Skill", 0)
     base_skill_calls = base_tools.get("Skill", 0)
 
-    lines = [f"**Why {with_label} uses more tokens** (+{fmt_short(token_delta)} / +{pct}% vs {base_label}):", ""]
+    lines = [
+        f"**Why {with_label} uses more tokens** (+{fmt_short(token_delta)} / +{pct}% vs {base_label}):",
+        "",
+        _token_usage_comparison_table(with_run, base_run),
+        "",
+    ]
+    detailed_notes = 0
 
     cache_read_delta = with_cache_read - base_cache_read
     if cache_read_delta > 0 and with_cache_read > 0 and token_delta > 0:
         cache_pct = round(cache_read_delta / token_delta * 100)
+        detailed_notes += 1
         lines.append(
             f"- **Prompt cache re-reads are the dominant driver** "
             f"({fmt_short(with_cache_read)} vs {fmt_short(base_cache_read)}, "
@@ -3411,6 +3936,7 @@ def _why_more_tokens(with_run: dict[str, Any], base_run: dict[str, Any]) -> list
             f"context across all {with_turns} turns (vs {base_turns} turns in the {base_label} run)."
         )
     if skill_calls > base_skill_calls:
+        detailed_notes += 1
         lines.append(
             f"- **Skill documentation injected into context** ({skill_calls} Skill call(s) vs {base_skill_calls}): "
             f"each Skill invocation adds skill documentation to the context window. "
@@ -3419,6 +3945,7 @@ def _why_more_tokens(with_run: dict[str, Any], base_run: dict[str, Any]) -> list
         )
     cache_create_delta = with_cache_create - base_cache_create
     if abs(cache_create_delta) > 1000:
+        detailed_notes += 1
         if cache_create_delta > 0:
             lines.append(
                 f"- **New context written to cache** (+{fmt_short(cache_create_delta)} cache-creation tokens): "
@@ -3432,6 +3959,7 @@ def _why_more_tokens(with_run: dict[str, Any], base_run: dict[str, Any]) -> list
             )
     output_delta = with_output - base_output
     if abs(output_delta) > 500:
+        detailed_notes += 1
         if output_delta < 0:
             lines.append(
                 f"- **Output tokens decreased** ({fmt_short(with_output)} vs {fmt_short(base_output)}, "
@@ -3448,13 +3976,17 @@ def _why_more_tokens(with_run: dict[str, Any], base_run: dict[str, Any]) -> list
     if with_cost is not None and base_cost is not None:
         cost_delta = with_cost - base_cost
         cost_pct = round(cost_delta / base_cost * 100) if base_cost > 0 else 0
+        detailed_notes += 1
         lines.append(
             f"- **Effective cost** (${with_cost:.4f} vs ${base_cost:.4f}, +${cost_delta:.4f} / +{cost_pct}%): "
             f"despite {pct}% more total tokens, the cost premium is much smaller because "
             f"cache-read tokens are priced significantly lower than regular input tokens."
         )
-    if len(lines) == 2:
-        lines.append("- Cause not resolved from available activity or usage signals.")
+    if detailed_notes == 0:
+        lines.append(
+            "- Detailed token subcomponents were not available or did not isolate one dominant cause; use the table above "
+            "to see which captured token/work drivers changed."
+        )
     return lines
 
 
@@ -3603,6 +4135,11 @@ def benchmark_chart_metrics(runs: dict[str, dict[str, Any]], metric_name: str | 
             "label": "Structure score",
             "kind": "percent",
             "value": structure_score,
+        },
+        {
+            "label": "Code quality",
+            "kind": "percent",
+            "value": generated_code_quality_score,
         },
         {
             "label": f"Metrics ({metric_name or 'result'})",
@@ -3756,6 +4293,26 @@ def job_run_status_section(runs: dict[str, dict[str, Any]], modes: list[str]) ->
     return "\n".join(lines)
 
 
+def fl_algorithm_section(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
+    lines = [
+        "## FL Algorithm / Workflow",
+        "",
+        "This section reports the FL workflow captured in generated/runtime NVFLARE server config. It is derived from artifacts such as `config_fed_server.json`; agent final-message text is used only as a fallback.",
+        "",
+        "| Run | Algorithm/workflow | Recipe | Rounds | Evidence |",
+        "|---|---|---|---:|---|",
+    ]
+    for mode in modes:
+        run = runs[mode]
+        info = fl_algorithm_info(run)
+        lines.append(
+            f"| {markdown_cell(run.get('label') or mode)} | {markdown_cell(info.get('algorithm'))} | "
+            f"{markdown_cell(info.get('recipe') or 'not captured')} | {markdown_cell(fmt_number(info.get('num_rounds')))} | "
+            f"{markdown_cell(info.get('evidence'))} |"
+        )
+    return "\n".join(lines)
+
+
 def job_execution_summary(runs: dict[str, dict[str, Any]], modes: list[str]) -> str:
     return "; ".join(
         f"{runs[mode].get('label') or mode}: {job_run_status(runs[mode])} ({job_run_status_reason(runs[mode])})"
@@ -3778,6 +4335,9 @@ def failure_analysis_section(runs: dict[str, dict[str, Any]], modes: list[str]) 
             if label_text:
                 metric = f"{metric} ({label_text})"
             lines.append(f"- Outcome: passed. {metric}.")
+            response_gap = final_response_metric_reporting_gap(run)
+            if response_gap:
+                lines.append(f"- Reporting note: {response_gap}")
         elif status_kind == "needs review":
             lines.append(
                 "- Outcome: needs review. The agent process completed, but benchmark quality checks found issues."
@@ -3850,6 +4410,7 @@ def benchmark_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
         f"| Status | {markdown_cell(status_summary(runs, modes))} |",
         f"| Agent/model | {markdown_cell(run_identity_summary(runs, modes))} |",
         f"| Job execution | {markdown_cell(job_execution_summary(runs, modes))} |",
+        f"| FL algorithm/workflow | {markdown_cell(fl_algorithm_summary(runs, modes))} |",
         f"| FL result quality gate | {markdown_cell(quality_gate_summary)} |",
         f"| Missing/partial result metrics | {markdown_cell(missing_metric_summary or 'none')} |",
         f"| Source input protection | {markdown_cell(input_protection_summary)} |",
@@ -3864,6 +4425,8 @@ def benchmark_report(root: Path, runs: dict[str, dict[str, Any]]) -> str:
         run_identity_table(runs, modes),
         "",
         job_run_status_section(runs, modes),
+        "",
+        fl_algorithm_section(runs, modes),
         "",
         "## Failure Analysis",
         "",

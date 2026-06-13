@@ -161,6 +161,64 @@ def test_benchmark_reports_read_canonical_record_layout(tmp_path):
     assert "| No skills baseline | codex | default |" in metrics_markdown
 
 
+def test_fl_algorithm_section_reads_captured_server_workflow_config(tmp_path):
+    from skills.harness.modes import WITH_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import fl_algorithm_section, fl_algorithm_summary
+
+    mode_dir = tmp_path / WITH_SKILLS_MODE
+    config_path = (
+        mode_dir
+        / "workspace_delta"
+        / "runtime_artifacts"
+        / "runtime_workspaces"
+        / "job"
+        / "server"
+        / "simulate_job"
+        / "app_server"
+        / "config"
+        / "config_fed_server.json"
+    )
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps(
+            {
+                "workflows": [
+                    {
+                        "id": "controller",
+                        "path": "nvflare.app_common.workflows.scaffold.Scaffold",
+                        "args": {"num_rounds": 3},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    run = {
+        "available": True,
+        "label": "With skills",
+        "mode_dir": mode_dir,
+        "agent_last_message": "- **Recipe:** `scaffold-pt` -> `ScaffoldRecipe`",
+        "workspace_delta": {
+            "runtime_artifacts": [
+                {
+                    "artifact_path": (
+                        "runtime_artifacts/runtime_workspaces/job/server/simulate_job/app_server/config/"
+                        "config_fed_server.json"
+                    ),
+                    "path": "runtime_workspaces/job/server/simulate_job/app_server/config/config_fed_server.json",
+                }
+            ]
+        },
+    }
+    runs = {WITH_SKILLS_MODE: run}
+
+    assert fl_algorithm_summary(runs, [WITH_SKILLS_MODE]) == "With skills: SCAFFOLD (3 rounds)"
+    section = fl_algorithm_section(runs, [WITH_SKILLS_MODE])
+    assert "## FL Algorithm / Workflow" in section
+    assert "| With skills | SCAFFOLD | scaffold-pt | 3 |" in section
+    assert "nvflare.app_common.workflows.scaffold.Scaffold" in section
+
+
 def test_mode_dir_for_benchmark_does_not_guess_ambiguous_canonical_layout(tmp_path):
     from skills.harness.modes import NO_SKILLS_MODE
     from skills.harness.reports.benchmark_insights import mode_dir_for_benchmark
@@ -330,6 +388,104 @@ def test_cost_comparison_keeps_attempted_install_with_missing_timing_unknown():
     accounting = _elapsed_time_accounting_note(runs[WITH_SKILLS_MODE], runs[NO_SKILLS_MODE])
     assert "| With skills | 120s | NA | NA | NA |" in accounting
     assert "NAs" not in accounting
+
+
+def test_why_section_surfaces_repeated_successful_job_executions():
+    from skills.harness.reports.benchmark_insights import _why_slower, job_run_status_reason, job_run_status_section
+
+    def bash_pair(
+        tool_id: str,
+        command: str,
+        description: str,
+        start: str,
+        end: str,
+        output: str = "Finished FedAvg.",
+    ) -> list[str]:
+        return [
+            json.dumps(
+                {
+                    "harness_timestamp": start,
+                    "message": {
+                        "content": [
+                            {
+                                "id": tool_id,
+                                "input": {"command": command, "description": description},
+                                "name": "Bash",
+                                "type": "tool_use",
+                            }
+                        ]
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "harness_timestamp": end,
+                    "message": {
+                        "content": [
+                            {
+                                "content": output,
+                                "is_error": False,
+                                "tool_use_id": tool_id,
+                                "type": "tool_result",
+                            }
+                        ]
+                    },
+                    "tool_use_result": {"stdout": output, "stderr": ""},
+                }
+            ),
+        ]
+
+    with_run = {
+        "available": True,
+        "label": "With skills",
+        "run": {"elapsed_seconds": 300},
+        "agent_events_text": "\n".join(
+            bash_pair(
+                "run-1",
+                "python3 job.py --num-sites 3 --num-rounds 3",
+                "Run 3-site simulation",
+                "2026-06-13T20:00:00Z",
+                "2026-06-13T20:01:20Z",
+            )
+            + bash_pair(
+                "run-2",
+                "rm -rf /tmp/nvflare/workspaces/ames && python3 job.py --num-sites 3 --num-rounds 3",
+                "Re-run simulation with aligned metric names",
+                "2026-06-13T20:02:00Z",
+                "2026-06-13T20:04:00Z",
+            )
+        ),
+    }
+    base_run = {
+        "available": True,
+        "label": "No skills baseline",
+        "run": {"elapsed_seconds": 100},
+        "agent_events_text": "\n".join(
+            bash_pair(
+                "base-run",
+                "python3 job.py --num-sites 3 --num-rounds 3",
+                "Run baseline simulation",
+                "2026-06-13T20:00:00Z",
+                "2026-06-13T20:01:00Z",
+            )
+        ),
+    }
+
+    reason = job_run_status_reason(with_run)
+    status_section = job_run_status_section({"with": with_run}, ["with"])
+    why_text = "\n".join(_why_slower(with_run, base_run))
+
+    assert "2 successful job/simulator executions captured" in reason
+    assert "total job time 200s" in reason
+    assert "Re-run simulation with aligned metric names" in reason
+    assert "### Repeated Job/Simulation Executions" not in status_section
+    assert "### Repeated Job/Simulation Executions" in why_text
+    assert "| With skills | 2 | 200s |" in why_text
+    assert "runtime workspace was cleared before rerun" in why_text
+    assert (
+        "Baseline comparison: No skills baseline had 1 command classified successful job/simulator execution totaling 60s."
+        in why_text
+    )
 
 
 def test_structure_tree_falls_back_to_final_workspace_when_changed_python_is_empty():
@@ -1161,6 +1317,61 @@ def test_metric_mismatch_reports_actual_metric_without_marking_missing():
     assert "| Metrics (accuracy) | accuracy 0.8123 |" in outcome_metrics_table(runs, [NO_SKILLS_MODE])
 
 
+def test_artifact_metric_satisfies_result_gate_when_final_response_metric_is_incomplete():
+    from skills.harness.modes import WITH_SKILLS_MODE
+    from skills.harness.reports.benchmark_insights import (
+        benchmark_outcome,
+        failure_analysis_section,
+        human_readable_status,
+        missing_result_metrics_section,
+        quality_signal_table,
+        run_quality_issues,
+    )
+
+    run = {
+        "available": True,
+        "label": "With skills",
+        "container_exit": {"exit_code": 0},
+        "run": {"final_container_exit_code": 0},
+        "record": {
+            "quality_signals": {
+                "job_guidance_primary_validation_metric": {
+                    "status": "missing",
+                    "expected_primary_metric": "AUROC",
+                    "evidence": (
+                        "Job guidance declares AUROC as the primary metric, and the final response mentioned "
+                        "AUROC but did not report a plausible numeric value."
+                    ),
+                    "reported_validation_metric": {
+                        "name": "AUROC",
+                        "value": None,
+                        "reported_values": [],
+                        "reported_value_entries": [],
+                    },
+                }
+            }
+        },
+        "validation_metric": {
+            "name": "AUROC",
+            "source": "metrics_artifact",
+            "summary_value_label": "artifact aggregated validation metric final_aggregated_metrics.[2].value",
+            "value": 0.7816101804960395,
+            "value_scope": "fl_summary_metric",
+        },
+    }
+    runs = {WITH_SKILLS_MODE: run}
+
+    assert run_quality_issues(run) == []
+    assert human_readable_status(run) == "passed"
+    assert benchmark_outcome(run) == "pass: scalar FL result metric available"
+    assert missing_result_metrics_section(runs, [WITH_SKILLS_MODE]) == ""
+    failure_analysis = failure_analysis_section(runs, [WITH_SKILLS_MODE])
+    assert "Outcome: passed. AUROC 0.7816" in failure_analysis
+    assert "Reporting note: Final response reporting gap" in failure_analysis
+    quality_table = quality_signal_table(runs, [WITH_SKILLS_MODE])
+    assert "artifact metric present; final response gap" in quality_table
+
+
 def test_metric_mismatch_evidence_includes_integer_metric_value():
     from skills.harness.quality_signals import format_metric_value
 
@@ -1442,6 +1653,7 @@ def test_agent_command_spans_pair_claude_bash_tool_use_and_result():
     assert spans == [
         {
             "command": "uv pip install -r requirements.txt",
+            "description": "",
             "duration_seconds": 25.0,
             "exit_code": 0,
             "id": tool_id,
@@ -1799,7 +2011,9 @@ while flare.is_running():
 
     explanation = "\n".join(_why_slower(with_run, base_run))
 
-    assert "Long-running commands dominate the wall-clock slowdown" in explanation
+    assert "Slowdown driver comparison" in explanation
+    assert "captured command time contributing to wall-clock slowdown" in explanation
+    assert "| Captured command time | 3000s | 349s | +2651s |" in explanation
     assert "Elapsed time accounting" in explanation
     assert "| Run | Total | Dependency install | Runtime after install | Captured non-install commands |" in explanation
     assert "| With skills | 3200s | 1200s | 2000s | 1800s |" in explanation
@@ -1824,7 +2038,15 @@ while flare.is_running():
     assert "baseline longest install log showed no captured network retry/timeout markers" in explanation
     assert "targeted package install" in explanation
     assert "NVFLARE runtime path diverged" in explanation
-    assert "| Run | Runtime path | Evidence command |" in explanation
+    assert "| Run | Runtime path | Successful runs | Total captured time | Representative command |" in explanation
+    assert (
+        "| With skills | `recipe.execute(SimEnv(...))` with `PTInProcessClientAPIExecutor` | 1 command | 1800s |"
+        in explanation
+    )
+    assert (
+        "| No skills baseline | exported job + `nvflare.cli simulator ... -t 3` with external client processes | 1 command | 120s |"
+        in explanation
+    )
     assert "recipe.execute(SimEnv(...))" in explanation
     assert "PTInProcessClientAPIExecutor" in explanation
     assert "nvflare.cli simulator ... -t 3" in explanation
@@ -1915,12 +2137,12 @@ def test_why_section_reports_runtime_regression_when_total_time_is_not_slower():
     assert "Why With skills has longer runtime after install" in section
     assert "| With skills | 500s | 50s | 450s | 400s |" in section
     assert "| No skills baseline | 600s | 300s | 300s | 40s |" in section
-    assert "Long-running commands dominate the runtime-after-install regression" in section
-    assert "400s vs 40s paired non-install command time" in section
-    assert "450s vs 340s paired command time" not in section
-    assert "extra non-install runtime came from tools" in section
+    assert "Slowdown driver comparison" in section
+    assert "| Captured non-install command time | 400s | 40s | +360s |" in section
+    assert "450s vs 340s Captured command time" not in section
+    assert "captured non-install command time contributing to runtime-after-install regression" in section
     assert "extra wall time came from tools" not in section
-    assert "runtime-after-install overhead" in section
+    assert "| Assistant turns | 5 | 2 | +3 | extra model round-trips |" in section
     assert "wall-clock overhead;" not in section
 
 
@@ -1970,11 +2192,20 @@ def test_runtime_path_note_includes_baseline_fallback_command_time():
         "label": "No skills baseline",
         "agent_events_text": "\n".join(
             json.dumps(event)
-            for event in command_events(
-                "python run_experiment.py",
-                "2026-06-13T08:00:00Z",
-                "2026-06-13T08:03:00Z",
-                "base_cmd",
+            for event in (
+                command_events(
+                    "python run_experiment.py",
+                    "2026-06-13T08:00:00Z",
+                    "2026-06-13T08:03:00Z",
+                    "base_cmd",
+                )
+                + command_events(
+                    "nl -ba nvflare_scaffold_job.py | sed -n '1,240p'",
+                    "2026-06-13T08:04:00Z",
+                    "2026-06-13T08:04:01Z",
+                    "inspect_job_source",
+                    output='print("Finished FedAvg.")\ncmd = "python -m nvflare.cli simulator job -w workspace"\n',
+                )
             )
         ),
     }
@@ -1982,9 +2213,15 @@ def test_runtime_path_note_includes_baseline_fallback_command_time():
     note = "\n".join(_runtime_path_slowdown_note(with_run, base_run))
 
     assert "NVFLARE runtime path diverged" in note
+    assert "| Run | Runtime path | Successful runs | Total captured time | Representative command |" in note
+    assert (
+        "| With skills | `recipe.execute(SimEnv(...))` with `PTInProcessClientAPIExecutor` | 1 command | 842s |" in note
+    )
+    assert "| No skills baseline | no classified successful job/simulator command | 0 commands | NA |" in note
     assert "`python job.py` (842s, exit 0)" in note
     assert "no classified successful job/simulator command" in note
     assert "`python run_experiment.py` (180s, exit 0)" in note
+    assert "nl -ba nvflare_scaffold_job.py" not in note
 
 
 def test_longest_command_table_empty_cells_preserve_threshold():
@@ -2052,8 +2289,7 @@ def test_fewer_turns_note_does_not_invent_command_runtime_cause():
 
     explanation = "\n".join(_why_slower(with_run, base_run))
 
-    assert "Fewer conversation turns" in explanation
-    assert "turn count did not cause the slowdown" in explanation
+    assert "Assistant turns" not in explanation
     assert "better explained by captured command/runtime duration" not in explanation
 
 
@@ -2662,6 +2898,7 @@ def test_metrics_chart_names_metric_once_in_panel_title():
     )
 
     assert "Metrics (AUROC)" in chart
+    assert "Code quality" in chart
     assert "FL scalar result" not in chart
     assert "AUROC 0." not in chart
     assert chart.count("AUROC") == 1
