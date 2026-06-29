@@ -1,0 +1,347 @@
+{
+  "skill_name": "nvflare-job-lifecycle",
+  "evals": [
+    {
+      "id": "lifecycle-validate-only-exported-job",
+      "prompt": "Validate this exported FLARE job folder before I decide whether to submit it: evals/files/exported-basic.",
+      "expected_output": "The agent treats the target as an exported FLARE job, routes to nvflare-job-lifecycle, performs bounded validate-only inspection, and does not submit the job.",
+      "files": [
+        "evals/files/exported-basic/meta.json",
+        "evals/files/exported-basic/app/config/config_fed_server.json",
+        "evals/files/exported-basic/app/config/config_fed_client.json"
+      ],
+      "assertions": [
+        "The selected skill is nvflare-job-lifecycle.",
+        "The agent treats the prompt as validation-only and does not run nvflare job submit.",
+        "The agent inspects the requested exported job root without appending another job-name path component.",
+        "The agent does not use deprecated nvflare job create."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-job-lifecycle",
+        "mandatory_behavior": [
+          {
+            "id": "validate-only-routing",
+            "description": "routes exported job validation requests to lifecycle validation instead of conversion or submission"
+          },
+          {
+            "id": "bounded-exported-job-inspection",
+            "description": "keeps validation to deterministic file/config inspection and supported NVFLARE inspection commands"
+          },
+          {
+            "id": "exact-export-root",
+            "description": "uses the requested exported job root exactly rather than appending or guessing another job directory"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-submit-on-validate",
+            "description": "does not run nvflare job submit for validate-only prompts"
+          },
+          {
+            "id": "no-job-create",
+            "description": "does not use deprecated nvflare job create"
+          },
+          {
+            "id": "no-conversion",
+            "description": "does not route an already exported FLARE job to a conversion skill"
+          }
+        ],
+        "process_metrics": [
+          {
+            "id": "first_pass_route_correct",
+            "description": "whether the first skill selection chooses nvflare-job-lifecycle for exported job lifecycle work"
+          },
+          {
+            "id": "command_selection_correct",
+            "description": "whether lifecycle commands match user intent, such as validate-only versus submit versus monitor/download"
+          },
+          {
+            "id": "deprecated_command_count",
+            "description": "number of deprecated nvflare job create invocations attempted"
+          },
+          {
+            "id": "unwanted_mutation_count",
+            "description": "number of submissions, aborts, deletes, conversions, or file edits attempted without explicit user intent"
+          },
+          {
+            "id": "evidence_completeness",
+            "description": "whether the final answer reports command evidence, job id or target path, current or terminal status, and blockers when applicable"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lifecycle-submit-exported-job-directly",
+      "prompt": "Submit the exported FLARE job at evals/files/exported-basic to my configured POC system and report the submitted job id.",
+      "expected_output": "The agent routes to nvflare-job-lifecycle, performs minimal path and target-context checks, submits the requested exported job root directly with nvflare job submit, and reports the resulting job id/status evidence.",
+      "files": [
+        "evals/files/exported-basic/meta.json",
+        "evals/files/exported-basic/app/config/config_fed_server.json",
+        "evals/files/exported-basic/app/config/config_fed_client.json"
+      ],
+      "assertions": [
+        "The selected skill is nvflare-job-lifecycle.",
+        "The agent treats the user request as explicit submit intent.",
+        "The agent uses nvflare job submit -j evals/files/exported-basic --format json.",
+        "The agent does not use deprecated nvflare job create.",
+        "The agent does not regenerate or reconvert the job before submission."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-job-lifecycle",
+        "mandatory_behavior": [
+          {
+            "id": "explicit-submit-intent",
+            "description": "submits only because the user explicitly asked to submit"
+          },
+          {
+            "id": "direct-submit",
+            "description": "uses nvflare job submit -j <exported_job_root> --format json on the requested exported job root"
+          },
+          {
+            "id": "report-submission-evidence",
+            "description": "reports job id and queued, submitted, or running status evidence without claiming terminal completion"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-job-create",
+            "description": "does not use deprecated nvflare job create"
+          },
+          {
+            "id": "no-pre-submit-conversion",
+            "description": "does not call conversion skills, edit framework code, or run job.py export before submitting an already exported job"
+          },
+          {
+            "id": "no-sdk-source-command-discovery",
+            "description": "does not inspect NVFLARE SDK source or docstrings to replace public job CLI schema/skill guidance"
+          },
+          {
+            "id": "no-terminal-success-claim",
+            "description": "does not treat successful submission as completed training"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lifecycle-wrong-root-submit-failure",
+      "prompt": "Submit evals/files/exported-wrong-root exactly as provided. If it fails, tell me what happened.",
+      "expected_output": "The agent attempts the requested path, reports the CLI failure for that exact wrong root, and does not guess or resubmit the nested exported job folder without user approval.",
+      "files": [
+        "evals/files/exported-wrong-root/README.md",
+        "evals/files/exported-wrong-root/nested-exported-job/meta.json",
+        "evals/files/exported-wrong-root/nested-exported-job/app/config/config_fed_server.json",
+        "evals/files/exported-wrong-root/nested-exported-job/app/config/config_fed_client.json"
+      ],
+      "assertions": [
+        "The selected skill is nvflare-job-lifecycle.",
+        "The agent uses the requested wrong-root path as the submit target.",
+        "The agent reports the failed submit path and CLI error.",
+        "The agent may identify the nested exported job as a likely correction, but does not resubmit it without user approval.",
+        "The agent does not use deprecated nvflare job create."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-job-lifecycle",
+        "mandatory_behavior": [
+          {
+            "id": "report-exact-submit-failure",
+            "description": "reports the exact path and CLI error when submit fails"
+          },
+          {
+            "id": "no-guess-resubmit",
+            "description": "does not automatically submit a nearby or nested folder after a wrong-root failure"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-resubmit-nested-job",
+            "description": "does not resubmit evals/files/exported-wrong-root/nested-exported-job without explicit user approval"
+          },
+          {
+            "id": "no-job-create",
+            "description": "does not use deprecated nvflare job create"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lifecycle-monitor-download",
+      "prompt": "Monitor job job-123 until it finishes, then download the results to /tmp/nvflare/lifecycle-results and summarize the artifacts.",
+      "expected_output": "The agent routes to nvflare-job-lifecycle, uses nvflare job monitor or wait for completion evidence, downloads results only after a terminal state, and reports job id, status, result directory, and artifact evidence.",
+      "files": [],
+      "assertions": [
+        "The selected skill is nvflare-job-lifecycle.",
+        "The agent uses nvflare job monitor job-123 --format jsonl or nvflare job wait job-123 --format json.",
+        "The agent uses nvflare job download job-123 -o /tmp/nvflare/lifecycle-results --format json after terminal completion.",
+        "The agent reports the observed terminal state or a timeout/current-state blocker.",
+        "The agent does not submit a new job or use deprecated nvflare job create."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-job-lifecycle",
+        "mandatory_behavior": [
+          {
+            "id": "monitor-or-wait",
+            "description": "uses nvflare job monitor or nvflare job wait for lifecycle progress evidence"
+          },
+          {
+            "id": "download-after-terminal",
+            "description": "downloads results with nvflare job download only after terminal state evidence when the user asks for results"
+          },
+          {
+            "id": "report-result-evidence",
+            "description": "reports job id, terminal or current status, result directory, metrics/artifact paths, and missing evidence"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-new-submit",
+            "description": "does not submit a new job while monitoring an existing job id"
+          },
+          {
+            "id": "no-job-create",
+            "description": "does not use deprecated nvflare job create"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lifecycle-exported-job-with-framework-files",
+      "prompt": "This exported job includes train.py and model.py under its app custom folder. Submit evals/files/exported-with-framework-files as an exported FLARE job.",
+      "expected_output": "The agent routes to nvflare-job-lifecycle because the target is an exported FLARE job, submits the exported job root directly, and does not route to PyTorch conversion just because framework files are present.",
+      "files": [
+        "evals/files/exported-with-framework-files/meta.json",
+        "evals/files/exported-with-framework-files/app/config/config_fed_server.json",
+        "evals/files/exported-with-framework-files/app/config/config_fed_client.json",
+        "evals/files/exported-with-framework-files/app/custom/train.py",
+        "evals/files/exported-with-framework-files/app/custom/model.py"
+      ],
+      "assertions": [
+        "The selected skill is nvflare-job-lifecycle, not nvflare-convert-pytorch.",
+        "The agent treats config_fed_server.json, config_fed_client.json, and meta.json as exported job evidence.",
+        "The agent does not edit train.py or model.py.",
+        "The agent does not run conversion before submission.",
+        "The agent does not use deprecated nvflare job create."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-job-lifecycle",
+        "negative_for": "nvflare-convert-pytorch",
+        "mandatory_behavior": [
+          {
+            "id": "exported-job-over-framework-files",
+            "description": "routes exported FLARE job folders to lifecycle even when framework source files are included as job custom code"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-framework-conversion",
+            "description": "does not treat app/custom train.py or model.py inside an exported job as raw source needing conversion"
+          },
+          {
+            "id": "no-job-create",
+            "description": "does not use deprecated nvflare job create"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lifecycle-failed-job-logs-stats",
+      "prompt": "Job job-789 failed. Show me its logs and stats so I can see what happened.",
+      "expected_output": "The agent routes to nvflare-job-lifecycle because the user asked for lifecycle evidence, uses nvflare job logs/stats with JSON output, and does not perform root-cause diagnosis unless asked.",
+      "files": [],
+      "assertions": [
+        "The selected skill is nvflare-job-lifecycle.",
+        "The agent uses nvflare job logs job-789 --format json and/or nvflare job stats job-789 --format json.",
+        "The agent preserves server/site labels and reports bounded evidence.",
+        "The agent does not abort, delete, resubmit, clone, or start deep diagnosis without explicit user intent."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-job-lifecycle",
+        "negative_for": "nvflare-diagnose-job",
+        "mandatory_behavior": [
+          {
+            "id": "failed-job-evidence-is-lifecycle",
+            "description": "keeps failed-job logs/stats requests in lifecycle when the user asks to show evidence rather than diagnose root cause"
+          },
+          {
+            "id": "bounded-logs-stats",
+            "description": "uses bounded nvflare job logs/stats commands with JSON evidence"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-unrequested-diagnosis",
+            "description": "does not escalate to root-cause diagnosis when the user only asked to show logs/stats"
+          },
+          {
+            "id": "no-lifecycle-mutation",
+            "description": "does not abort, delete, resubmit, or clone without explicit user intent"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lifecycle-negative-raw-pytorch-code",
+      "prompt": "Convert this raw PyTorch training script into an NVFLARE federated job: evals/files/raw-pytorch/train.py.",
+      "expected_output": "The lifecycle skill should not trigger; raw framework training code should route to nvflare-convert-pytorch rather than job lifecycle management.",
+      "files": [
+        "evals/files/raw-pytorch/train.py"
+      ],
+      "assertions": [
+        "The selected skill is nvflare-convert-pytorch, not nvflare-job-lifecycle.",
+        "The agent does not run nvflare job submit against a raw training-code folder.",
+        "The agent does not treat a missing exported-job meta/config layout as something to submit."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-convert-pytorch",
+        "negative_for": "nvflare-job-lifecycle",
+        "prohibited_behavior": [
+          {
+            "id": "no-submit-raw-code",
+            "description": "does not submit raw framework training code as though it were an exported FLARE job"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lifecycle-negative-failed-stalled-job",
+      "prompt": "Job job-456 has been RUNNING for 2 hours with no progress and one client shows EXECUTION_EXCEPTION. Diagnose what is wrong using this status sample.",
+      "expected_output": "The lifecycle skill should not be the lead; failed, stalled, or suspicious jobs should route to nvflare-diagnose-job for bounded evidence collection and failure-pattern matching.",
+      "files": [
+        "evals/files/stalled-job-status.json"
+      ],
+      "assertions": [
+        "The selected skill is nvflare-diagnose-job, not nvflare-job-lifecycle.",
+        "The agent treats stalled or failed status as a diagnosis request rather than normal lifecycle monitoring.",
+        "The agent does not abort, delete, resubmit, or clone the job without explicit user intent."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-diagnose-job",
+        "negative_for": "nvflare-job-lifecycle",
+        "mandatory_behavior": [
+          {
+            "id": "diagnose-failed-stalled-job",
+            "description": "routes failed, stalled, or suspicious job states to nvflare-diagnose-job"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-lifecycle-mutation",
+            "description": "does not abort, delete, resubmit, or clone while diagnosing a failed or stalled job unless explicitly requested"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lifecycle-global-negative-dashboard",
+      "prompt": "Build a dashboard that charts daily bakery orders from a CSV file.",
+      "expected_output": "No NVFLARE job lifecycle skill should trigger.",
+      "files": [],
+      "assertions": [
+        "The selected skill is none."
+      ],
+      "nvflare": {
+        "expected_skill": null,
+        "negative_for": "*"
+      }
+    }
+  ]
+}

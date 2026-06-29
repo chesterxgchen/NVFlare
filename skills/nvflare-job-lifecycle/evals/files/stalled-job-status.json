@@ -1,0 +1,18 @@
+{
+  "job_id": "job-456",
+  "status": "RUNNING",
+  "elapsed_minutes": 120,
+  "last_progress_minutes": 95,
+  "site_status": {
+    "server": "RUNNING",
+    "site-1": "RUNNING",
+    "site-2": "EXECUTION_EXCEPTION"
+  },
+  "recent_events": [
+    {
+      "site": "site-2",
+      "level": "ERROR",
+      "message": "EXECUTION_EXCEPTION while executing train"
+    }
+  ]
+}

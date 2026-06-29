@@ -1,0 +1,9 @@
+{
+  "name": "exported-with-framework-files",
+  "resource_spec": {},
+  "deploy_map": {
+    "app": [
+      "@ALL"
+    ]
+  }
+}

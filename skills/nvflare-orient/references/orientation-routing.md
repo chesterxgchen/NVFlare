@@ -15,11 +15,19 @@ turn project evidence and user intent into one narrow next action.
 
 - Existing PyTorch training loop needing FLARE conversion:
   `nvflare-convert-pytorch`.
+- Exported FLARE job folders with lifecycle intent such as validate, submit,
+  monitor, wait, download, abort, delete, or clone: `nvflare-job-lifecycle`.
+- Exported FLARE job folders stay lifecycle work even when framework source
+  files such as `train.py` or `model.py` are included as job custom code.
+- Raw framework training code without exported FLARE job metadata/config remains
+  conversion work, not lifecycle work.
 - Generic "help me use FLARE here" with no clear workflow: inspect first, then
   recommend the narrowest skill.
-- Existing FLARE job that fails or produces suspicious logs:
-  `nvflare-diagnose-job`, not conversion.
-- POC startup, production submission, Kubernetes deployment, or identity setup:
+- Existing FLARE job where the user asks for logs, stats, metadata, monitoring,
+  or download remains `nvflare-job-lifecycle`, even if the status is failed.
+- Existing FLARE job where the user asks why it failed, why it is stalled, or
+  how to recover: `nvflare-diagnose-job`, not lifecycle.
+- POC startup/cleanup, Kubernetes deployment, or identity/startup-kit setup:
   route to the corresponding operations or deployment skill when available.
 - Non-FLARE Python, web, data science, or generic ML questions: no FLARE skill.
 

@@ -1,0 +1,33 @@
+{
+  "format_version": 2,
+  "server": {
+    "heart_beat_timeout": 600
+  },
+  "task_data_filters": [],
+  "task_result_filters": [],
+  "components": [
+    {
+      "id": "persistor",
+      "path": "nvflare.app_opt.pt.file_model_persistor.PTFileModelPersistor",
+      "args": {
+        "model": {
+          "path": "model.TinyNet",
+          "args": {}
+        }
+      }
+    }
+  ],
+  "workflows": [
+    {
+      "id": "scatter_and_gather",
+      "path": "nvflare.app_common.workflows.scatter_and_gather.ScatterAndGather",
+      "args": {
+        "min_clients": 2,
+        "num_rounds": 1,
+        "persistor_id": "persistor",
+        "train_task_name": "train",
+        "train_timeout": 600
+      }
+    }
+  ]
+}
