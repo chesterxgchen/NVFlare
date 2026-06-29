@@ -1,8 +1,11 @@
 {
-  "status": "stopped",
-  "server": {
-    "name": "server",
-    "status": "stopped"
-  },
-  "clients": []
+  "schema_version": "1",
+  "status": "ok",
+  "exit_code": 0,
+  "data": {
+    "server_status": "stopped",
+    "server_start_time": null,
+    "clients": [],
+    "client_status": []
+  }
 }

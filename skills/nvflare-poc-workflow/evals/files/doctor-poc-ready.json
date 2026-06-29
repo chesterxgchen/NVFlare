@@ -1,21 +1,53 @@
 {
   "schema_version": "1",
   "status": "ok",
-  "checks": [
-    {
-      "id": "cli_available",
-      "status": "ok",
-      "message": "nvflare CLI is available"
+  "exit_code": 0,
+  "data": {
+    "schema_version": "1",
+    "timestamp": "2026-06-28T00:00:00Z",
+    "status": "ok",
+    "nvflare": {
+      "import_ok": true,
+      "version": "2.7.0"
     },
-    {
-      "id": "poc_workspace",
+    "commands": {
       "status": "ok",
-      "message": "POC workspace is configured"
+      "commands": ["poc", "job", "system"]
     },
-    {
-      "id": "poc_runtime",
+    "startup_kits": {
+      "config_file": "/tmp/nvflare/poc-demo/cli_config.json",
+      "active_id": "poc-demo",
+      "entries": [],
+      "findings": []
+    },
+    "optional_dependencies": [],
+    "skills": {
       "status": "ok",
-      "message": "server and two clients are reachable"
-    }
-  ]
+      "available_count": 1,
+      "findings": []
+    },
+    "poc": {
+      "workspace": "/tmp/nvflare/poc-demo",
+      "status": "present",
+      "startup_dir_exists": true,
+      "local_dir_exists": true,
+      "findings": []
+    },
+    "online": {
+      "enabled": true,
+      "status": "ok",
+      "server_status": "started",
+      "clients": [
+        {"client_name": "site-1", "fqcn": "site-1"},
+        {"client_name": "site-2", "fqcn": "site-2"}
+      ],
+      "client_status": [
+        {"client_name": "site-1", "status": "started"},
+        {"client_name": "site-2", "status": "started"}
+      ],
+      "recommended_ttl_seconds": 30,
+      "findings": []
+    },
+    "findings": []
+  }
 }

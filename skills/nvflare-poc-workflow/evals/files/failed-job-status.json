@@ -1,11 +1,17 @@
 {
-  "job_id": "job-456",
-  "status": "FINISHED:EXECUTION_EXCEPTION",
-  "sites": [
-    {
-      "name": "site-1",
-      "status": "EXECUTION_EXCEPTION",
-      "last_error": "ComponentNotAuthorized"
-    }
-  ]
+  "schema_version": "1",
+  "status": "ok",
+  "exit_code": 0,
+  "data": {
+    "job_id": "job-456",
+    "name": "failed-demo",
+    "status": "FINISHED:EXECUTION_EXCEPTION",
+    "sites": [
+      {
+        "name": "site-1",
+        "status": "EXECUTION_EXCEPTION",
+        "last_error": "ComponentNotAuthorized"
+      }
+    ]
+  }
 }

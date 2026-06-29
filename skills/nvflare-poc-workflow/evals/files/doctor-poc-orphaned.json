@@ -1,16 +1,81 @@
 {
   "schema_version": "1",
-  "status": "blocked",
-  "checks": [
-    {
-      "id": "poc_runtime",
-      "status": "error",
-      "message": "startup blocked by stale local POC processes"
+  "status": "ok",
+  "exit_code": 0,
+  "data": {
+    "schema_version": "1",
+    "timestamp": "2026-06-28T00:00:00Z",
+    "status": "attention",
+    "nvflare": {
+      "import_ok": true,
+      "version": "2.7.0"
     },
-    {
-      "id": "port_8002",
-      "status": "error",
-      "message": "port is held by pid 43110 from the same POC workspace"
-    }
-  ]
+    "commands": {
+      "status": "ok",
+      "commands": ["poc", "job", "system"]
+    },
+    "startup_kits": {
+      "config_file": "/tmp/nvflare/poc-demo/cli_config.json",
+      "active_id": "poc-demo",
+      "entries": [],
+      "findings": []
+    },
+    "optional_dependencies": [],
+    "skills": {
+      "status": "ok",
+      "available_count": 1,
+      "findings": []
+    },
+    "poc": {
+      "workspace": "/tmp/nvflare/poc-demo",
+      "status": "present",
+      "startup_dir_exists": true,
+      "local_dir_exists": true,
+      "findings": [
+        {
+          "code": "POC_RUNTIME_BLOCKED",
+          "severity": "error",
+          "message": "startup blocked by stale local POC processes",
+          "hint": "Stop leftover POC processes, then run nvflare poc start."
+        },
+        {
+          "code": "POC_PORT_HELD",
+          "severity": "error",
+          "message": "port 8002 is held by pid 43110 from the same POC workspace",
+          "hint": "Terminate the orphaned POC process holding the port before starting."
+        }
+      ]
+    },
+    "online": {
+      "enabled": true,
+      "status": "connection_failed",
+      "recommended_ttl_seconds": 0,
+      "findings": [
+        {
+          "code": "CONNECTION_FAILED",
+          "severity": "warning",
+          "message": "could not connect to the FL server"
+        }
+      ]
+    },
+    "findings": [
+      {
+        "code": "POC_RUNTIME_BLOCKED",
+        "severity": "error",
+        "message": "startup blocked by stale local POC processes",
+        "hint": "Stop leftover POC processes, then run nvflare poc start."
+      },
+      {
+        "code": "POC_PORT_HELD",
+        "severity": "error",
+        "message": "port 8002 is held by pid 43110 from the same POC workspace",
+        "hint": "Terminate the orphaned POC process holding the port before starting."
+      },
+      {
+        "code": "CONNECTION_FAILED",
+        "severity": "warning",
+        "message": "could not connect to the FL server"
+      }
+    ]
+  }
 }

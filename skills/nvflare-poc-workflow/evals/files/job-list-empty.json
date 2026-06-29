@@ -1,3 +1,6 @@
 {
-  "jobs": []
+  "schema_version": "1",
+  "status": "ok",
+  "exit_code": 0,
+  "data": []
 }

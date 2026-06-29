@@ -1,17 +1,31 @@
 {
-  "status": "running",
-  "server": {
-    "name": "server",
-    "status": "ready"
-  },
-  "clients": [
-    {
-      "name": "site-1",
-      "status": "ready"
-    },
-    {
-      "name": "site-2",
-      "status": "ready"
-    }
-  ]
+  "schema_version": "1",
+  "status": "ok",
+  "exit_code": 0,
+  "data": {
+    "server_status": "started",
+    "server_start_time": 1719500000.0,
+    "clients": [
+      {
+        "client_name": "site-1",
+        "fqcn": "site-1",
+        "client_last_conn_time": 1719500050.0
+      },
+      {
+        "client_name": "site-2",
+        "fqcn": "site-2",
+        "client_last_conn_time": 1719500051.0
+      }
+    ],
+    "client_status": [
+      {
+        "client_name": "site-1",
+        "status": "started"
+      },
+      {
+        "client_name": "site-2",
+        "status": "started"
+      }
+    ]
+  }
 }
