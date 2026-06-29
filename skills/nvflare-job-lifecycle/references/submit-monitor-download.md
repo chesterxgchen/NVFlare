@@ -44,7 +44,11 @@ For normal submit requests:
 3. Do not run full structural validation unless the user asked to validate or a
    prior submit failed.
 4. Check target readiness with the selected startup-kit context when online
-   submission is requested:
+   submission is requested. Inspect `nvflare agent doctor --schema`; when the
+   installed command supports per-command startup-kit selectors, use the same
+   selector you will use for submit so readiness validates the selected kit, not
+   an unrelated active default. When no explicit kit is supplied, validate the
+   active default kit:
 
 ```bash
 nvflare agent doctor --online --format json
@@ -138,8 +142,9 @@ report:
 
 - job ID and terminal status;
 - result directory;
-- `data.artifacts.global_model`, `data.artifacts.metrics_summary`, and
-  `data.artifacts.round_metrics` when present;
+- `data.artifacts.global_model`, `data.artifacts.metrics_summary`,
+  `data.artifacts.client_logs`, and `data.artifacts.round_metrics` when
+  present;
 - `data.missing_artifacts` or equivalent missing-evidence details;
 - any mismatch between requested results and available artifacts.
 
@@ -159,11 +164,13 @@ possible:
 nvflare job meta <job_id> --format json
 ```
 
-Then use the specific requested command:
+Then use the specific requested command. Abort and delete are destructive and
+the CLI rejects them in non-interactive mode without `--force`; add `--force`
+only after the user explicitly requested the operation or confirmed it:
 
 ```bash
-nvflare job abort <job_id> --format json
-nvflare job delete <job_id> --format json
+nvflare job abort <job_id> --force --format json
+nvflare job delete <job_id> --force --format json
 nvflare job clone <job_id> --format json
 ```
 

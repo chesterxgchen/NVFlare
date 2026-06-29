@@ -279,6 +279,87 @@
       }
     },
     {
+      "id": "lifecycle-explicit-abort-force",
+      "prompt": "Abort job job-321 now. I know it is running and I want it stopped.",
+      "expected_output": "The agent routes to nvflare-job-lifecycle, treats this as explicit abort intent, confirms the target job with metadata, and runs nvflare job abort with --force so the destructive command is not rejected in non-interactive mode.",
+      "files": [],
+      "assertions": [
+        "The selected skill is nvflare-job-lifecycle.",
+        "The agent treats the request as explicit abort intent.",
+        "The agent uses nvflare job abort job-321 --force --format json.",
+        "The agent confirms the target job id/status with metadata before aborting when possible.",
+        "The agent does not delete, clone, or resubmit the job."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-job-lifecycle",
+        "mandatory_behavior": [
+          {
+            "id": "explicit-abort-intent",
+            "description": "aborts only because the user explicitly asked to stop the job"
+          },
+          {
+            "id": "force-on-destructive-noninteractive",
+            "description": "passes --force on abort so the CLI does not reject the destructive command in non-interactive mode"
+          },
+          {
+            "id": "confirm-target-before-abort",
+            "description": "confirms the target job id and current status with nvflare job meta before aborting when possible"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-delete-or-clone",
+            "description": "does not delete, clone, or resubmit the job when only an abort was requested"
+          },
+          {
+            "id": "no-job-create",
+            "description": "does not use deprecated nvflare job create"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lifecycle-explicit-delete-force",
+      "prompt": "Delete job job-654 from the server. I already downloaded the results I needed.",
+      "expected_output": "The agent routes to nvflare-job-lifecycle, treats this as explicit delete intent, confirms the target job with metadata, and runs nvflare job delete with --force so the destructive command is not rejected in non-interactive mode, reporting that results were already downloaded.",
+      "files": [],
+      "assertions": [
+        "The selected skill is nvflare-job-lifecycle.",
+        "The agent treats the request as explicit delete intent.",
+        "The agent uses nvflare job delete job-654 --force --format json.",
+        "The agent confirms the target job id/status with metadata before deleting when possible.",
+        "The agent reports that results were already downloaded or that the user chose to skip download.",
+        "The agent does not abort, clone, or resubmit the job."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-job-lifecycle",
+        "mandatory_behavior": [
+          {
+            "id": "explicit-delete-intent",
+            "description": "deletes only because the user explicitly asked to delete the job"
+          },
+          {
+            "id": "force-on-destructive-noninteractive",
+            "description": "passes --force on delete so the CLI does not reject the destructive command in non-interactive mode"
+          },
+          {
+            "id": "report-download-before-delete",
+            "description": "reports whether results were downloaded first or that the user chose to skip download"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-abort-or-clone",
+            "description": "does not abort, clone, or resubmit the job when only a delete was requested"
+          },
+          {
+            "id": "no-job-create",
+            "description": "does not use deprecated nvflare job create"
+          }
+        ]
+      }
+    },
+    {
       "id": "lifecycle-negative-raw-pytorch-code",
       "prompt": "Convert this raw PyTorch training script into an NVFLARE federated job: evals/files/raw-pytorch/train.py.",
       "expected_output": "The lifecycle skill should not trigger; raw framework training code should route to nvflare-convert-pytorch rather than job lifecycle management.",
