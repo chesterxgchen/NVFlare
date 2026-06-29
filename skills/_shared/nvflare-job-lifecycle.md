@@ -196,13 +196,16 @@ looks good. Start POC and submit the exported job" or "I have a POC workspace
 here; submit the job to it."
 
 Treat this as explicit POC approval. Validate the exported job folder first,
-then use the supplied POC workspace or start POC as requested, submit the job,
-and wait or monitor if requested.
+then hand off the local system operation to `nvflare-poc-workflow` when the POC
+system must be prepared, started, verified, stopped, or cleaned. Once a local
+POC system is running, hand off exported-job submit, wait, monitor, stats, logs,
+download, abort, delete, or clone to `nvflare-job-lifecycle`.
 
-Report the POC workspace, submitted job folder, job ID, final status or current
-status, command evidence, and log/result paths. For terminal POC or production
-runs, follow `metrics-and-artifact-reporting.md` for downloaded artifact
-handling. If the POC run fails, record the failure as evaluation evidence.
+Report the handoff target, POC workspace, submitted job folder, job ID, final
+status or current status, command evidence, and log/result paths when those
+phases complete. For terminal POC or production runs, follow
+`metrics-and-artifact-reporting.md` for downloaded artifact handling. If the POC
+run fails, record the failure as evaluation evidence.
 
 ## Approval Boundary
 

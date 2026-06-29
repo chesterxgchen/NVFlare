@@ -1,0 +1,21 @@
+{
+  "schema_version": "1",
+  "status": "ok",
+  "checks": [
+    {
+      "id": "cli_available",
+      "status": "ok",
+      "message": "nvflare CLI is available"
+    },
+    {
+      "id": "poc_workspace",
+      "status": "ok",
+      "message": "POC workspace is configured"
+    },
+    {
+      "id": "poc_runtime",
+      "status": "ok",
+      "message": "server and two clients are reachable"
+    }
+  ]
+}

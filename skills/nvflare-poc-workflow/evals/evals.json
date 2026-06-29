@@ -1,0 +1,374 @@
+{
+  "skill_name": "nvflare-poc-workflow",
+  "evals": [
+    {
+      "id": "poc-prepare-start-readiness",
+      "prompt": "Prepare a local NVFLARE POC workspace under /tmp/nvflare/poc-demo, start it, and tell me when it is ready.",
+      "expected_output": "The agent routes to nvflare-poc-workflow, treats the request as explicit prepare/start intent, runs nvflare poc prepare and nvflare poc start, verifies readiness with nvflare system status --format json and/or nvflare agent doctor --format json, and does not use nvflare poc status.",
+      "files": [
+        "evals/files/doctor-poc-ready.json",
+        "evals/files/system-status-ready.json"
+      ],
+      "assertions": [
+        "The selected skill is nvflare-poc-workflow.",
+        "The agent uses nvflare poc prepare for workspace preparation.",
+        "The agent uses nvflare poc start for explicit startup intent.",
+        "The agent verifies readiness with nvflare system status --format json and/or nvflare agent doctor --format json.",
+        "The agent does not use nvflare poc status.",
+        "The final response reports observed readiness evidence or the current blocker."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-poc-workflow",
+        "mandatory_behavior": [
+          {
+            "id": "explicit-poc-prepare-start-intent",
+            "description": "runs POC prepare/start only because the user explicitly asked to prepare and start a local POC workspace"
+          },
+          {
+            "id": "poc-readiness-via-system-status-or-doctor",
+            "description": "checks local POC readiness using nvflare system status --format json and/or nvflare agent doctor --format json"
+          },
+          {
+            "id": "report-observed-readiness",
+            "description": "reports observed readiness evidence, partial readiness, or a current blocker instead of ending with a vague availability statement"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-poc-status",
+            "description": "does not use nonexistent or unsupported nvflare poc status"
+          },
+          {
+            "id": "no-job-create",
+            "description": "does not use deprecated nvflare job create"
+          },
+          {
+            "id": "no-sdk-source-command-discovery",
+            "description": "does not inspect NVFLARE SDK source or docstrings to discover or override public CLI command guidance"
+          },
+          {
+            "id": "no-mutating-poc-operation-without-explicit-intent",
+            "description": "does not prepare, start, stop, clean, or kill POC processes unless the user explicitly requested that operation"
+          },
+          {
+            "id": "no-standing-by-without-evidence",
+            "description": "does not finish with a generic standing-by message without observed readiness, shutdown evidence, or a current blocker"
+          }
+        ],
+        "process_metrics": [
+          {
+            "id": "first_pass_route_correct",
+            "description": "whether the first skill selection chooses nvflare-poc-workflow for local POC operations"
+          },
+          {
+            "id": "command_selection_correct",
+            "description": "whether POC commands match the explicit user intent and avoid unsupported or deprecated commands"
+          },
+          {
+            "id": "readiness_evidence_complete",
+            "description": "whether final output cites observed system status, doctor readiness, shutdown state, or a current blocker"
+          },
+          {
+            "id": "unwanted_mutation_count",
+            "description": "number of POC mutations or process kills attempted without explicit user intent and required confirmation"
+          },
+          {
+            "id": "deprecated_or_unsupported_command_count",
+            "description": "number of nvflare poc status, nvflare job create, or SDK-source command-discovery attempts"
+          }
+        ]
+      }
+    },
+    {
+      "id": "poc-verify-running-read-only",
+      "prompt": "Check whether my local NVFLARE POC system is running and healthy. Do not change anything.",
+      "expected_output": "The agent routes to nvflare-poc-workflow, performs read-only verification using nvflare system status --format json and/or nvflare agent doctor --format json, and does not run mutating POC or job commands.",
+      "files": [
+        "evals/files/system-status-ready.json",
+        "evals/files/doctor-poc-ready.json"
+      ],
+      "assertions": [
+        "The selected skill is nvflare-poc-workflow.",
+        "The agent treats the request as read-only verification.",
+        "The agent uses nvflare system status --format json and/or nvflare agent doctor --format json.",
+        "The agent does not run nvflare poc prepare, nvflare poc start, nvflare poc stop, nvflare poc clean, job submit, or process kill commands.",
+        "The agent does not use nvflare poc status."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-poc-workflow",
+        "mandatory_behavior": [
+          {
+            "id": "read-only-poc-verification",
+            "description": "uses only read-only status and doctor evidence for verify/check-local-POC-running prompts"
+          },
+          {
+            "id": "poc-readiness-via-system-status-or-doctor",
+            "description": "checks readiness using nvflare system status --format json and/or nvflare agent doctor --format json"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-poc-status",
+            "description": "does not use nonexistent or unsupported nvflare poc status"
+          },
+          {
+            "id": "no-mutating-poc-operation-without-explicit-intent",
+            "description": "does not prepare, start, stop, clean, submit jobs, or kill processes during read-only verification"
+          },
+          {
+            "id": "no-standing-by-without-evidence",
+            "description": "does not finish with a generic standing-by message without observed readiness or a current blocker"
+          }
+        ]
+      }
+    },
+    {
+      "id": "poc-stop-active-job-blocks",
+      "prompt": "Stop my local NVFLARE POC workspace, but do not interrupt active jobs.",
+      "expected_output": "The agent routes to nvflare-poc-workflow, treats the request as explicit stop intent, checks active jobs with nvflare job list --format json, blocks or asks when visible active job IDs exist, and runs nvflare poc stop only when it is safe or explicitly approved.",
+      "files": [
+        "evals/files/job-list-active.json",
+        "evals/files/system-status-ready.json"
+      ],
+      "assertions": [
+        "The selected skill is nvflare-poc-workflow.",
+        "The agent uses nvflare job list --format json before stopping.",
+        "The agent detects visible active job IDs and asks or blocks instead of stopping immediately.",
+        "The agent runs nvflare poc stop only with explicit stop intent and no active-job blocker or after explicit approval.",
+        "The agent reports stopped evidence or the active-job blocker."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-poc-workflow",
+        "mandatory_behavior": [
+          {
+            "id": "explicit-poc-stop-intent",
+            "description": "runs nvflare poc stop only when the user explicitly asks to stop the POC"
+          },
+          {
+            "id": "active-job-check-before-poc-stop",
+            "description": "checks nvflare job list --format json before stopping and surfaces visible active job IDs"
+          },
+          {
+            "id": "block-stop-on-visible-active-jobs",
+            "description": "asks or blocks when active job IDs are visible and the user asked not to interrupt jobs"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-mutating-poc-operation-without-explicit-intent",
+            "description": "does not stop POC unless the user explicitly requested stop"
+          },
+          {
+            "id": "no-standing-by-without-evidence",
+            "description": "does not finish without stopped evidence, active-job IDs, or a current blocker"
+          }
+        ]
+      }
+    },
+    {
+      "id": "poc-clean-force-after-confirmation",
+      "prompt": "Clean my local POC workspace at /tmp/nvflare/poc-demo. Force it if there are no active jobs.",
+      "expected_output": "The agent routes to nvflare-poc-workflow, treats the prompt as explicit clean intent, checks active jobs first, and runs nvflare poc clean --force only after explicit force/confirmation and no active-job blocker.",
+      "files": [
+        "evals/files/job-list-empty.json",
+        "evals/files/system-status-stopped.json"
+      ],
+      "assertions": [
+        "The selected skill is nvflare-poc-workflow.",
+        "The agent recognizes explicit clean and force intent.",
+        "The agent uses nvflare job list --format json before cleaning.",
+        "The agent runs nvflare poc clean --force only after explicit force/confirmation and no active-job blocker.",
+        "The agent does not use broad filesystem deletion as a substitute for the POC clean command."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-poc-workflow",
+        "mandatory_behavior": [
+          {
+            "id": "explicit-poc-clean-intent",
+            "description": "runs POC clean only when the user explicitly asks to clean the local POC workspace"
+          },
+          {
+            "id": "active-job-check-before-poc-clean",
+            "description": "checks nvflare job list --format json before cleaning POC workspace state"
+          },
+          {
+            "id": "force-clean-requires-explicit-confirmation",
+            "description": "uses nvflare poc clean --force only after explicit force or confirmation from the user"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-mutating-poc-operation-without-explicit-intent",
+            "description": "does not clean or force-clean POC workspace state without explicit clean intent"
+          },
+          {
+            "id": "no-broad-filesystem-delete",
+            "description": "does not replace nvflare poc clean with broad rm -rf cleanup of guessed workspace directories"
+          },
+          {
+            "id": "no-standing-by-without-evidence",
+            "description": "does not finish without clean/shutdown evidence or a current blocker"
+          }
+        ]
+      }
+    },
+    {
+      "id": "poc-orphan-recovery-confirmed-kill",
+      "prompt": "My POC start is blocked by orphaned local processes. Find the stale POC processes and recover, but ask me before killing anything.",
+      "expected_output": "The agent routes to nvflare-poc-workflow, loads cleanup/recovery guidance, gathers pid/process evidence, presents candidate PID evidence, asks for explicit confirmation before killing, attempts graceful termination first, and avoids broad kill-by-name behavior.",
+      "files": [
+        "evals/files/process-table-orphans.txt",
+        "evals/files/doctor-poc-orphaned.json"
+      ],
+      "assertions": [
+        "The selected skill is nvflare-poc-workflow.",
+        "The agent treats the prompt as orphan recovery, not normal job diagnosis.",
+        "The agent gathers process evidence and presents a candidate PID table before any kill.",
+        "The agent asks for explicit confirmation before killing candidate PIDs.",
+        "The agent tries graceful termination before forceful kill.",
+        "The agent does not kill processes by broad name match alone."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-poc-workflow",
+        "mandatory_behavior": [
+          {
+            "id": "load-poc-cleanup-recovery-guidance",
+            "description": "uses the POC cleanup/recovery guidance for orphaned local POC process recovery"
+          },
+          {
+            "id": "pid-process-evidence-before-kill",
+            "description": "collects PID, command, parent, workspace, and age evidence before recommending process termination"
+          },
+          {
+            "id": "candidate-pid-table",
+            "description": "presents candidate PIDs and why each appears tied to the stale POC workspace"
+          },
+          {
+            "id": "explicit-confirmation-before-kill",
+            "description": "asks for explicit user confirmation before terminating candidate PIDs"
+          },
+          {
+            "id": "graceful-first-process-termination",
+            "description": "attempts graceful termination before forceful kill when recovery is confirmed"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-broad-kill-by-name-alone",
+            "description": "does not kill all matching process names without PID/workspace evidence and confirmation"
+          },
+          {
+            "id": "no-mutating-poc-operation-without-explicit-intent",
+            "description": "does not kill or clean POC processes unless the user explicitly requested recovery"
+          },
+          {
+            "id": "no-standing-by-without-evidence",
+            "description": "does not finish without observed recovery evidence, remaining blockers, or explicit confirmation needed"
+          }
+        ]
+      }
+    },
+    {
+      "id": "poc-negative-running-poc-submit-exported-job",
+      "prompt": "My POC is already running. Submit the exported FLARE job in evals/files/exported-basic, monitor it, and download the results.",
+      "expected_output": "The POC workflow skill should not be the lead; already-running POC plus exported-job submit/monitor/download intent routes to nvflare-job-lifecycle.",
+      "files": [
+        "evals/files/exported-basic/meta.json",
+        "evals/files/exported-basic/app/config/config_fed_server.json",
+        "evals/files/exported-basic/app/config/config_fed_client.json",
+        "evals/files/system-status-ready.json"
+      ],
+      "assertions": [
+        "The selected skill is nvflare-job-lifecycle, not nvflare-poc-workflow.",
+        "The agent treats the running POC as target context for job lifecycle work.",
+        "The agent does not prepare, start, stop, or clean the POC for a submit/monitor/download request.",
+        "The agent does not use deprecated nvflare job create."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-job-lifecycle",
+        "negative_for": "nvflare-poc-workflow",
+        "mandatory_behavior": [
+          {
+            "id": "running-poc-job-lifecycle-handoff",
+            "description": "routes exported-job submit, monitor, and download work to nvflare-job-lifecycle once POC is already running"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-job-create",
+            "description": "does not use deprecated nvflare job create"
+          },
+          {
+            "id": "no-mutating-poc-operation-without-explicit-intent",
+            "description": "does not prepare, start, stop, or clean the POC when the user asked for job lifecycle work"
+          }
+        ]
+      }
+    },
+    {
+      "id": "poc-negative-raw-pytorch-conversion",
+      "prompt": "Convert this raw PyTorch training script into an NVFLARE federated job and then I will run it locally: evals/files/raw-pytorch/train.py.",
+      "expected_output": "The POC workflow skill should not trigger; raw framework training code routes to nvflare-convert-pytorch.",
+      "files": [
+        "evals/files/raw-pytorch/train.py"
+      ],
+      "assertions": [
+        "The selected skill is nvflare-convert-pytorch, not nvflare-poc-workflow.",
+        "The agent does not run POC prepare/start just because the user eventually plans local execution.",
+        "The agent does not submit raw framework code as an exported FLARE job."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-convert-pytorch",
+        "negative_for": "nvflare-poc-workflow",
+        "prohibited_behavior": [
+          {
+            "id": "no-mutating-poc-operation-without-explicit-intent",
+            "description": "does not prepare or start POC while handling raw training-code conversion"
+          }
+        ]
+      }
+    },
+    {
+      "id": "poc-negative-root-cause-diagnosis",
+      "prompt": "My POC job job-456 failed with EXECUTION_EXCEPTION on one client. Diagnose the root cause and tell me how to fix it.",
+      "expected_output": "The POC workflow skill should not be the lead; root-cause failure diagnosis routes to nvflare-diagnose-job.",
+      "files": [
+        "evals/files/failed-job-status.json"
+      ],
+      "assertions": [
+        "The selected skill is nvflare-diagnose-job, not nvflare-poc-workflow.",
+        "The agent treats failed job root-cause analysis as diagnosis, not POC lifecycle management.",
+        "The agent does not stop, clean, or restart POC unless explicitly requested as a recovery action after diagnosis."
+      ],
+      "nvflare": {
+        "expected_skill": "nvflare-diagnose-job",
+        "negative_for": "nvflare-poc-workflow",
+        "mandatory_behavior": [
+          {
+            "id": "failed-job-diagnosis-handoff",
+            "description": "routes failed or suspicious POC job root-cause requests to nvflare-diagnose-job"
+          }
+        ],
+        "prohibited_behavior": [
+          {
+            "id": "no-mutating-poc-operation-without-explicit-intent",
+            "description": "does not stop, clean, or restart POC just because a job failed"
+          }
+        ]
+      }
+    },
+    {
+      "id": "poc-global-negative-react-dashboard",
+      "prompt": "Build a React dashboard that charts bakery orders by day.",
+      "expected_output": "No FLARE skill should trigger.",
+      "files": [],
+      "assertions": [
+        "The selected skill is none."
+      ],
+      "nvflare": {
+        "expected_skill": null,
+        "negative_for": "*"
+      }
+    }
+  ]
+}

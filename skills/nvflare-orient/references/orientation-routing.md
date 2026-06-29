@@ -27,8 +27,17 @@ turn project evidence and user intent into one narrow next action.
   or download remains `nvflare-job-lifecycle`, even if the status is failed.
 - Existing FLARE job where the user asks why it failed, why it is stalled, or
   how to recover: `nvflare-diagnose-job`, not lifecycle.
-- POC startup/cleanup, Kubernetes deployment, or identity/startup-kit setup:
-  route to the corresponding operations or deployment skill when available.
+- Local POC prepare, start, verify/check running, stop, clean, cleanup, or
+  orphan-process recovery: `nvflare-poc-workflow`.
+- Once a POC is already running and the user asks to submit, monitor, wait,
+  download, abort, delete, or clone an exported job: `nvflare-job-lifecycle`,
+  not POC workflow.
+- Raw framework training code remains conversion work even when the user plans
+  to run the converted job in local POC afterward.
+- Failed, stalled, or suspicious jobs where the user asks for root cause remain
+  `nvflare-diagnose-job`, even in POC.
+- Kubernetes deployment or identity/startup-kit setup: route to the
+  corresponding operations or deployment skill when available.
 - Non-FLARE Python, web, data science, or generic ML questions: no FLARE skill.
 
 ## Output Shape

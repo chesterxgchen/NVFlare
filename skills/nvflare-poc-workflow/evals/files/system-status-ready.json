@@ -1,0 +1,17 @@
+{
+  "status": "running",
+  "server": {
+    "name": "server",
+    "status": "ready"
+  },
+  "clients": [
+    {
+      "name": "site-1",
+      "status": "ready"
+    },
+    {
+      "name": "site-2",
+      "status": "ready"
+    }
+  ]
+}

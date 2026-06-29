@@ -1,0 +1,11 @@
+{
+  "job_id": "job-456",
+  "status": "FINISHED:EXECUTION_EXCEPTION",
+  "sites": [
+    {
+      "name": "site-1",
+      "status": "EXECUTION_EXCEPTION",
+      "last_error": "ComponentNotAuthorized"
+    }
+  ]
+}

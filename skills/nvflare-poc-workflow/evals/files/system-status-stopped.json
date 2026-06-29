@@ -1,0 +1,8 @@
+{
+  "status": "stopped",
+  "server": {
+    "name": "server",
+    "status": "stopped"
+  },
+  "clients": []
+}

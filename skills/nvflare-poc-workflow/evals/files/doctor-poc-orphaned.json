@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "status": "blocked",
+  "checks": [
+    {
+      "id": "poc_runtime",
+      "status": "error",
+      "message": "startup blocked by stale local POC processes"
+    },
+    {
+      "id": "port_8002",
+      "status": "error",
+      "message": "port is held by pid 43110 from the same POC workspace"
+    }
+  ]
+}

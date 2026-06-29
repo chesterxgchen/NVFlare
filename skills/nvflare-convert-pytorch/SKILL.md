@@ -18,8 +18,11 @@ loop into an NVFLARE federated training job.
 ## Do Not Use When
 
 Do not use for PyTorch Lightning, Hugging Face Trainer, TensorFlow, XGBoost,
-scikit-learn, Kubernetes deployment, production submission, or generic PyTorch
-debugging that does not ask for FLARE conversion.
+scikit-learn, an already exported FLARE job (route to
+`nvflare-job-lifecycle`), a failed existing job (route to
+`nvflare-diagnose-job`), standalone POC prepare/start/stop/clean (route to
+`nvflare-poc-workflow`), Kubernetes deployment, production submission, or
+generic PyTorch debugging that does not ask for FLARE conversion.
 
 ## Workflow
 

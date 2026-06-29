@@ -1,0 +1,5 @@
+PID    PPID   AGE     WORKSPACE                 COMMAND
+43110  1      02:14   /tmp/nvflare/poc-demo     python -m nvflare.private.fed.app.server.server_train
+43111  1      02:14   /tmp/nvflare/poc-demo     python -m nvflare.private.fed.app.client.client_train site-1
+43112  1      02:14   /tmp/nvflare/poc-demo     python -m nvflare.private.fed.app.client.client_train site-2
+59001  1      00:03   /tmp/other-project        python train.py
