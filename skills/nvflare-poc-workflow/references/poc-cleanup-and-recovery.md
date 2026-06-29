@@ -104,11 +104,14 @@ Use normal metadata first:
 - pid files or service metadata under the known POC workspace/startup kits when
   visible without reading secrets.
 
-Use `ps -aef` only when normal metadata is missing, stale, or insufficient to
-identify leftover local FLARE processes. Bound the search to evidence that
-matches the POC workspace, startup-kit paths, participant names, or configured
-ports. Do not run broad process cleanup based on a generic Python or NVFLARE
-string alone.
+On POSIX systems, use `ps -aef` only when normal metadata is missing, stale, or
+insufficient to identify leftover local FLARE processes. Bound the search to
+evidence that matches the POC workspace, startup-kit paths, participant names,
+or configured ports. Do not run broad process cleanup based on a generic Python
+or NVFLARE string alone. On non-POSIX platforms, use the platform's process
+listing only if it can provide the same PID, command-line, workspace, and
+startup-kit evidence; otherwise report that orphan recovery needs manual
+platform-specific inspection.
 
 Before killing any process, report:
 

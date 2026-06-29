@@ -21,9 +21,10 @@ Lightning DDP/multi-GPU job.
 Do not use for plain `torch.nn.Module` manual training loops without Lightning
 (route to `nvflare-convert-pytorch`), Hugging Face Trainer, TensorFlow, XGBoost,
 scikit-learn, an already exported FLARE job (route to `nvflare-job-lifecycle`),
-a failed existing job (route to `nvflare-diagnose-job`), Kubernetes deployment,
-production submission, or generic Lightning debugging that does not ask for
-FLARE conversion.
+a failed existing job (route to `nvflare-diagnose-job`), standalone POC
+prepare/start/stop/clean (route to `nvflare-poc-workflow`), Kubernetes
+deployment, production submission, or generic Lightning debugging that does not
+ask for FLARE conversion.
 
 ## Workflow
 
