@@ -177,11 +177,64 @@ recipe = FedAvgRecipe(
     train_args="...",
 )
 add_final_global_evaluation(recipe)
-recipe.execute(SimEnv(num_clients=2))
+env = create_environment(args)
+recipe.execute(env)
 ```
 
 The recipe initializes the global model, sends it to selected clients, collects local updates, performs weighted
 FedAvg aggregation, persists the result, and requests the final evaluation.
+
+## Continue with the same application
+
+The Recipe, model, client script, and local training loop do not change as execution moves between environments:
+
+| Stage | What changes | Application command |
+| --- | --- | --- |
+| Simulation | Everything runs through the local simulator. | `python job.py` |
+| POC | NVFlare provisions and starts separate local server and client processes. | `python job.py --env poc` |
+| Production | `ProdEnv` connects through a provisioned admin startup kit. | `python job.py --env prod --startup-kit <admin-kit>` |
+
+### Run the local POC stage
+
+After the simulation succeeds, run the same job in a more production-like local deployment:
+
+```bash
+python job.py --env poc
+```
+
+`PocEnv` provisions a temporary local federation, starts separate server and client processes, submits the same
+Recipe, downloads the result, and stops the services. The command needs permission to start local processes and bind
+the NVFlare POC ports. It does not require a production startup kit.
+
+This is an optional second-stage check, not the first-run path. Expect it to take longer than simulation because it
+provisions and starts a fresh federation before training, then downloads the result and stops the services. Runtime
+depends on the machine, so this example does not promise a fixed POC duration.
+
+### Export or submit to production
+
+A production run requires an already provisioned and running NVFlare deployment, network access to its server, and an
+admin startup kit authorized to submit jobs. Given those prerequisites, the same `job.py` can submit directly:
+
+```bash
+python job.py --env prod --startup-kit /path/to/admin/startup-kit
+```
+
+Alternatively, export the job without connecting to a federation:
+
+```bash
+python job.py --export --export-dir /tmp/nvflare/jobs/job_config
+```
+
+The export is written to `/tmp/nvflare/jobs/job_config/hello-pt`. An authorized administrator can submit it later:
+
+```bash
+nvflare job submit \
+    -j /tmp/nvflare/jobs/job_config/hello-pt \
+    --startup-kit /path/to/admin/startup-kit
+```
+
+Export verifies construction of the deployable application; it does not prove connectivity, identity, authorization,
+or successful execution on an external production federation.
 
 ## Customize the run
 
@@ -224,14 +277,6 @@ the clients' final local models to the evaluation inventory.
 
 The example also supports `--enable_log_streaming`, `--launch_external_process`, and
 `--client_memory_gc_rounds`. See `python job.py --help` for details.
-
-## Export a deployable job
-
-```bash
-python job.py --export --export-dir /tmp/nvflare/jobs/job_config
-```
-
-The exported job is written under `/tmp/nvflare/jobs/job_config/hello-pt`.
 
 ## Notebook
 

@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Run the Hello PyTorch FedAvg job in an NVFLARE simulation."""
+"""Run the Hello PyTorch FedAvg job in simulation, POC, or production."""
 
 import argparse
 import shlex
@@ -19,7 +19,7 @@ import shlex
 from model import create_model
 
 from nvflare.app_opt.pt.recipes.fedavg import FedAvgRecipe
-from nvflare.recipe import SimEnv, add_experiment_tracking, add_final_global_evaluation
+from nvflare.recipe import PocEnv, ProdEnv, SimEnv, add_experiment_tracking, add_final_global_evaluation
 from nvflare.recipe.utils import add_cross_site_evaluation
 
 DEFAULT_BATCH_SIZE = 32
@@ -36,6 +36,17 @@ DEFAULT_SYNTHETIC_LEARNING_RATE = 0.1
 def define_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--n_clients", type=int, default=DEFAULT_NUM_CLIENTS)
+    parser.add_argument(
+        "--env",
+        choices=("sim", "poc", "prod"),
+        default="sim",
+        help="Execution environment: local simulation, local POC processes, or a provisioned production system.",
+    )
+    parser.add_argument(
+        "--startup-kit",
+        default=None,
+        help="Path to an admin startup kit. Required with --env prod and unused for simulation or POC.",
+    )
     parser.add_argument("--num_rounds", type=int, default=DEFAULT_NUM_ROUNDS)
     parser.add_argument("--batch_size", type=int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS)
@@ -84,6 +95,16 @@ def define_parser() -> argparse.ArgumentParser:
     )
 
     return parser
+
+
+def parse_args(argv=None):
+    parser = define_parser()
+    args = parser.parse_args(argv)
+    if args.env == "prod" and not args.startup_kit:
+        parser.error("--startup-kit is required with --env prod")
+    if args.env != "prod" and args.startup_kit:
+        parser.error("--startup-kit can only be used with --env prod")
+    return args
 
 
 def create_recipe(args):
@@ -137,15 +158,26 @@ def create_recipe(args):
     return recipe
 
 
-def main():
-    args = define_parser().parse_args()
-    recipe = create_recipe(args)
+def create_environment(args):
+    """Construct the selected environment without changing the application recipe."""
+    if args.env == "sim":
+        return SimEnv(num_clients=args.n_clients)
+    if args.env == "poc":
+        return PocEnv(num_clients=args.n_clients)
+    return ProdEnv(startup_kit_location=args.startup_kit)
 
-    env = SimEnv(num_clients=args.n_clients)
+
+def main():
+    args = parse_args()
+    recipe = create_recipe(args)
+    env = create_environment(args)
+
     run = recipe.execute(env)
+    result = run.get_result()
+    status = run.get_status()
     print()
-    print("Job Status is:", run.get_status())
-    print("Result can be found in :", run.get_result())
+    print("Job Status is:", status)
+    print("Result can be found in :", result)
     print()
 
 
