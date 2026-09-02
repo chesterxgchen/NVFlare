@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,16 +19,23 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+MODEL_SEED = 202610
+
 
 class SimpleNetwork(nn.Module):
     def __init__(self):
         super(SimpleNetwork, self).__init__()
-        self.conv1 = nn.Conv2d(3, 6, 5)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 5 * 5, 120)
-        self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, 10)
+        # The recipe serializes the model as a class configuration and the
+        # server constructs a new instance. Seed inside the constructor so
+        # those server-side parameters are reproducible too.
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(MODEL_SEED)
+            self.conv1 = nn.Conv2d(3, 6, 5)
+            self.pool = nn.MaxPool2d(2, 2)
+            self.conv2 = nn.Conv2d(6, 16, 5)
+            self.fc1 = nn.Linear(16 * 5 * 5, 120)
+            self.fc2 = nn.Linear(120, 84)
+            self.fc3 = nn.Linear(84, 10)
 
     def forward(self, x):
         x = self.pool(F.relu(self.conv1(x)))
@@ -38,3 +45,8 @@ class SimpleNetwork(nn.Module):
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
         return x
+
+
+def create_model():
+    """Create the example model with reproducible initial parameters."""
+    return SimpleNetwork()
