@@ -81,37 +81,87 @@ hello-pt/
 
 ## Client-side workflow
 
-Most of [`client.py`](client.py) is ordinary PyTorch training code. The Client API adds the federated exchange:
+Most of [`client.py`](client.py) is ordinary PyTorch training code. The block below is the actual task loop from that
+file, with only its indentation normalized. The complete `main()` initializes `client_name`, `model`, `optimizer`,
+`loss`, `train_loader`, `test_loader`, `device`, `summary_writer`, `last_params`, and the parsed `args` immediately
+before this loop. The module imports `torch` and `nvflare.client` (as `flare`), defines `LOCAL_MODEL_PATH`, and calls
+`flare.init()` before entering the loop.
 
 ```python
-import nvflare.client as flare
-
-flare.init()
 while flare.is_running():
+    # (4) receives FLModel from NVFlare
     input_model = flare.receive()
-    model.load_state_dict(input_model.params)
+    print(f"site = {client_name}, current_round={input_model.current_round}")
 
-    # Evaluate and train with this site's local data.
-    global_accuracy = evaluate(model)
-    steps = train(model)
-    local_accuracy = evaluate(model)
-    trained_params = {
-        name: value.detach().cpu().clone()
-        for name, value in model.state_dict().items()
-    }
-    flare.send(
-        flare.FLModel(
-            params=trained_params,
-            metrics={
-                "accuracy": global_accuracy,
-                "accuracy_after_local_training": local_accuracy,
-            },
-            meta={"NUM_STEPS_CURRENT_ROUND": steps},
-        )
+    # Cross-site evaluation requests the client's latest local model without
+    # sending model parameters in the request.
+    if flare.is_submit_model():
+        if last_params is None:
+            error_msg = "submit_model called before a local model was trained"
+            print(f"ERROR: {error_msg}")
+            # TaskScriptRunner converts this exception into TOPIC_ABORT so the
+            # executor can report the task failure instead of waiting for a result.
+            raise RuntimeError(error_msg)
+        print(f"site = {client_name}, submitting local model")
+        flare.send(flare.FLModel(params=last_params))
+        continue
+
+    # (5) loads model from NVFlare
+    model.load_state_dict(input_model.params)
+    # (6) evaluate the received global model before local training
+    accuracy_before_training = evaluate(model, test_loader, device)
+
+    # (optional) Task branch for cross-site evaluation
+    if flare.is_evaluate():
+        print(f"site = {client_name}, running cross-site evaluation")
+        # For CSE, just return the evaluation metrics without training
+        output_model = flare.FLModel(metrics={"accuracy": accuracy_before_training})
+        flare.send(output_model)
+        continue
+
+    steps = args.epochs * len(train_loader)
+    for epoch in range(args.epochs):
+        running_loss = 0.0
+        for i, batch in enumerate(train_loader):
+            images, labels = batch[0].to(device), batch[1].to(device)
+            optimizer.zero_grad()
+
+            predictions = model(images)
+            cost = loss(predictions, labels)
+            cost.backward()
+            optimizer.step()
+
+            running_loss += cost.item()
+        avg_loss = running_loss / len(train_loader)
+        print(f"site={client_name}, epoch={epoch + 1}/{args.epochs}, loss={avg_loss:.4f}")
+        if summary_writer:
+            global_step = input_model.current_round * args.epochs + epoch
+            summary_writer.add_scalar(tag="train_loss", scalar=avg_loss, global_step=global_step)
+
+    print(f"Finished Training for {client_name}")
+    trained_accuracy = evaluate(model, test_loader, device)
+
+    last_params = {name: param.detach().cpu().clone() for name, param in model.state_dict().items()}
+    torch.save(last_params, LOCAL_MODEL_PATH)
+
+    # (7) construct trained FL model
+    output_model = flare.FLModel(
+        params=last_params,
+        # The primary metric evaluates the received global model, which is
+        # the model the server considers for best-model selection. Report
+        # the trained local model separately to make progress visible.
+        metrics={
+            "accuracy": accuracy_before_training,
+            "accuracy_after_local_training": trained_accuracy,
+        },
+        meta={"NUM_STEPS_CURRENT_ROUND": steps},
     )
+    print(f"site: {client_name}, sending model to server.")
+    # (8) send model back to NVFlare
+    flare.send(output_model)
 ```
 
-This is a focused excerpt; the complete client also handles evaluation and local-model submission tasks.
+The linked file is the runnable source; this excerpt introduces no alternate helper functions or signatures.
 
 ## Server-side workflow
 
