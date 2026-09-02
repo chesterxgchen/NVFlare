@@ -65,6 +65,8 @@ def create_data_loaders(dataset, site_name, train_size, test_size, batch_size, n
         import torchvision
         from torchvision.transforms import Compose, Normalize, ToTensor
 
+        # Simulation clients share this cache. Pre-download CIFAR-10 once as
+        # documented in the README; concurrent first-use downloads can race.
         transform = Compose(
             [
                 ToTensor(),

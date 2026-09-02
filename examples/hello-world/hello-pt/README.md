@@ -6,7 +6,15 @@ data. The zero-argument path is deterministic, runs on CPU, downloads no dataset
 
 ## Install
 
-Create and activate a virtual environment, then install the example dependencies:
+Create and activate a virtual environment, then get the source and enter the
+example directory:
+
+```bash
+git clone https://github.com/NVIDIA/NVFlare.git
+cd NVFlare/examples/hello-world/hello-pt
+```
+
+Install the example dependencies from that directory:
 
 ```bash
 python -m pip install -r requirements.txt
@@ -191,39 +199,35 @@ See all options:
 python job.py --help
 ```
 
-Use a larger synthetic workload:
-
-```bash
-python job.py --train_size 1000 --test_size 200 --num_rounds 3
-```
-
 Use CIFAR-10 instead of the deterministic quickstart data:
 
-```bash
-python job.py --dataset cifar10 --epochs 2 --batch_size 16 --num_workers 2
-```
-
-CIFAR-10 is downloaded on first use. In this simulated example, each client receives its own local copy of the same
-dataset; this option is useful for experimentation but does not demonstrate a federated data partition.
-
-Enable TensorBoard explicitly:
+Simulated clients share the cache at `/tmp/nvflare/data`. If CIFAR-10 is not
+already present, download both splits once before starting the simulation;
+concurrent first-use downloads from multiple clients can race:
 
 ```bash
-python -m pip install tensorboard
-python job.py --experiment_tracking tensorboard
-```
+python - <<'PY'
+from torchvision.datasets import CIFAR10
 
-Add full cross-site evaluation, including the clients' submitted local models:
+for train in (True, False):
+    CIFAR10(root="/tmp/nvflare/data", train=train, download=True)
+PY
+```
 
 ```bash
-python job.py --cross_site_eval
+python job.py --dataset cifar10
 ```
 
-The default post-training workflow guarantees evaluation of the final global model. Full cross-site evaluation adds
-the clients' final local models to the evaluation inventory.
+All simulated clients then read the same logical CIFAR-10 training and test
+datasets from that shared cache. This option is useful for experimentation but
+does not demonstrate a federated data partition. The default synthetic path
+remains offline and gives every site distinct training and evaluation samples.
 
-The example also supports `--enable_log_streaming`, `--launch_external_process`, and
-`--client_memory_gc_rounds`. See `python job.py --help` for details.
+The beginner entry point intentionally exposes only the number of clients,
+number of rounds, and dataset choice. Environment selection, experiment
+tracking, full cross-site evaluation, external-process execution, and memory
+tuning belong in the environment-continuity follow-up rather than the first
+federated-learning run.
 
 ## Export a deployable job
 

@@ -14,7 +14,6 @@
 
 import importlib.util
 import os
-import shlex
 import sys
 from types import SimpleNamespace
 
@@ -51,21 +50,9 @@ def test_zero_flag_defaults_are_portable_and_bounded():
     args = job_module.define_parser().parse_args([])
 
     assert vars(args) == {
-        "batch_size": 32,
-        "client_memory_gc_rounds": 0,
-        "cross_site_eval": False,
         "dataset": "synthetic",
-        "enable_log_streaming": False,
-        "epochs": 1,
-        "experiment_tracking": "none",
-        "launch_external_process": False,
-        "learning_rate": None,
         "n_clients": 2,
         "num_rounds": 2,
-        "num_workers": 0,
-        "test_size": 100,
-        "train_script": "client.py",
-        "train_size": 200,
     }
 
 
@@ -77,10 +64,46 @@ def test_legacy_synthetic_flag_keeps_selecting_the_default_dataset():
     assert args.dataset == "synthetic"
 
 
-def test_default_recipe_uses_final_global_evaluation_without_tracking(monkeypatch):
+def test_help_includes_recipe_export_options():
+    job_module = _load_job_module()
+
+    help_text = job_module.define_parser().format_help()
+
+    assert "--export" in help_text
+    assert "--export-dir EXPORT_DIR" in help_text
+
+
+def test_main_reports_simulation_success_without_requesting_status(tmp_path, monkeypatch, capsys):
+    job_module = _load_job_module()
+    result_dir = tmp_path / "simulation-result"
+    result_dir.mkdir()
+    calls = []
+
+    def unsupported_status():
+        raise AssertionError("SimEnv status must not be requested by the example")
+
+    run = SimpleNamespace(
+        get_result=lambda: calls.append(("get_result",)) or str(result_dir),
+        get_status=unsupported_status,
+    )
+    env = object()
+    recipe = SimpleNamespace(execute=lambda value: calls.append(("execute", value)) or run)
+    monkeypatch.setattr(job_module, "create_recipe", lambda args: recipe)
+    monkeypatch.setattr(job_module, "SimEnv", lambda num_clients: env)
+
+    result = job_module.main([])
+
+    assert result == str(result_dir)
+    assert calls == [("execute", env), ("get_result",)]
+    output = capsys.readouterr().out
+    assert "Simulation completed successfully." in output
+    assert "Job Status is: None" not in output
+
+
+def test_default_recipe_uses_final_global_evaluation(monkeypatch):
     job_module = _load_job_module()
     calls = []
-    recipe = SimpleNamespace(enable_log_streaming=lambda: calls.append("log_streaming"))
+    recipe = object()
     recipe_kwargs = {}
 
     def make_recipe(**kwargs):
@@ -90,12 +113,6 @@ def test_default_recipe_uses_final_global_evaluation_without_tracking(monkeypatc
     monkeypatch.setattr(job_module, "FedAvgRecipe", make_recipe)
     monkeypatch.setattr(job_module, "create_model", lambda: "model")
     monkeypatch.setattr(job_module, "add_final_global_evaluation", lambda value: calls.append(("final", value)))
-    monkeypatch.setattr(job_module, "add_cross_site_evaluation", lambda value: calls.append(("cross", value)))
-    monkeypatch.setattr(
-        job_module,
-        "add_experiment_tracking",
-        lambda value, tracking_type: calls.append(("tracking", value, tracking_type)),
-    )
 
     result = job_module.create_recipe(job_module.define_parser().parse_args([]))
 
@@ -103,29 +120,15 @@ def test_default_recipe_uses_final_global_evaluation_without_tracking(monkeypatc
     assert recipe_kwargs["model"] == "model"
     assert recipe_kwargs["min_clients"] == 2
     assert recipe_kwargs["num_rounds"] == 2
-    assert shlex.split(recipe_kwargs["train_args"]) == [
-        "--batch_size",
-        "32",
-        "--epochs",
-        "1",
-        "--learning_rate",
-        "0.1",
-        "--num_workers",
-        "0",
-        "--dataset",
-        "synthetic",
-        "--train_size",
-        "200",
-        "--test_size",
-        "100",
-    ]
+    assert recipe_kwargs["train_script"] == "client.py"
+    assert recipe_kwargs["train_args"] == "--dataset synthetic"
     assert calls == [("final", recipe)]
 
 
-def test_cifar_and_tracking_remain_explicit_options(monkeypatch):
+def test_cifar_remains_an_explicit_option(monkeypatch):
     job_module = _load_job_module()
     calls = []
-    recipe = SimpleNamespace(enable_log_streaming=lambda: calls.append("log_streaming"))
+    recipe = object()
     recipe_kwargs = {}
 
     def make_recipe(**kwargs):
@@ -135,30 +138,9 @@ def test_cifar_and_tracking_remain_explicit_options(monkeypatch):
     monkeypatch.setattr(job_module, "FedAvgRecipe", make_recipe)
     monkeypatch.setattr(job_module, "create_model", lambda: "model")
     monkeypatch.setattr(job_module, "add_final_global_evaluation", lambda value: calls.append(("final", value)))
-    monkeypatch.setattr(job_module, "add_cross_site_evaluation", lambda value: calls.append(("cross", value)))
-    monkeypatch.setattr(
-        job_module,
-        "add_experiment_tracking",
-        lambda value, tracking_type: calls.append(("tracking", value, tracking_type)),
-    )
-    args = job_module.define_parser().parse_args(
-        ["--dataset", "cifar10", "--experiment_tracking", "tensorboard", "--cross_site_eval"]
-    )
+    args = job_module.define_parser().parse_args(["--dataset", "cifar10"])
 
     job_module.create_recipe(args)
 
-    train_args = shlex.split(recipe_kwargs["train_args"])
-    assert train_args == [
-        "--batch_size",
-        "32",
-        "--epochs",
-        "1",
-        "--learning_rate",
-        "0.01",
-        "--num_workers",
-        "0",
-        "--dataset",
-        "cifar10",
-        "--track_metrics",
-    ]
-    assert calls == [("tracking", recipe, "tensorboard"), ("cross", recipe)]
+    assert recipe_kwargs["train_args"] == "--dataset cifar10"
+    assert calls == [("final", recipe)]
