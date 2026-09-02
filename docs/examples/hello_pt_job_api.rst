@@ -15,13 +15,16 @@ The same ``job.py`` also demonstrates the execution-environment progression:
 
    python job.py
    python job.py --env poc
-   python job.py --env prod --startup-kit /path/to/admin/startup-kit
+   python job.py --env prod --startup-kit /path/to/admin/startup-kit \
+       --username researcher@example.com
 
 These commands reuse one
 :class:`FedAvgRecipe<nvflare.app_opt.pt.recipes.fedavg.FedAvgRecipe>`, model,
 client script, and local training loop. Simulation is the fast first run, POC
 checks separate local processes, and production requires an existing
-provisioned deployment and authorized startup kit.
+provisioned deployment and authorized startup kit. The production username must
+match the identity represented by that startup kit; it defaults to
+``admin@nvidia.com``.
 
 See the :github_nvflare_link:`example README <examples/hello-world/hello-pt/README.md>`
 for the authoritative commands, options, artifacts, data contract, and

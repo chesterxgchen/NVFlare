@@ -76,6 +76,7 @@ def test_zero_flag_defaults_are_portable_and_bounded():
         "test_size": 100,
         "train_script": "client.py",
         "train_size": 200,
+        "username": None,
     }
 
 
@@ -98,6 +99,10 @@ def test_environment_arguments_require_startup_kit_only_for_production(capsys):
         job_module.parse_args(["--startup-kit", "/tmp/admin"])
     assert "--startup-kit can only be used with --env prod" in capsys.readouterr().err
 
+    with pytest.raises(SystemExit, match="2"):
+        job_module.parse_args(["--username", "researcher@example.com"])
+    assert "--username can only be used with --env prod" in capsys.readouterr().err
+
 
 def test_help_includes_recipe_export_options():
     job_module = _load_job_module()
@@ -117,7 +122,18 @@ def test_environment_selection_uses_the_same_client_count(tmp_path):
     startup_kit = tmp_path / "admin@nvidia.com"
     startup_kit.mkdir()
     prod_env = job_module.create_environment(
-        job_module.parse_args(["--env", "prod", "--startup-kit", str(startup_kit), "--n_clients", "3"])
+        job_module.parse_args(
+            [
+                "--env",
+                "prod",
+                "--startup-kit",
+                str(startup_kit),
+                "--username",
+                "researcher@example.com",
+                "--n_clients",
+                "3",
+            ]
+        )
     )
 
     assert isinstance(sim_env, job_module.SimEnv)
@@ -125,6 +141,7 @@ def test_environment_selection_uses_the_same_client_count(tmp_path):
     assert isinstance(prod_env, job_module.ProdEnv)
     assert sim_env.num_clients == poc_env.num_clients == 3
     assert prod_env.startup_kit_location == str(startup_kit)
+    assert prod_env.username == "researcher@example.com"
 
 
 def test_main_preserves_poc_result_and_reports_cached_status(tmp_path, monkeypatch, capsys):
@@ -149,6 +166,25 @@ def test_main_preserves_poc_result_and_reports_cached_status(tmp_path, monkeypat
     output = capsys.readouterr().out
     assert "Job Status is: FINISHED:COMPLETED" in output
     assert f"Result can be found in : {result_dir}" in output
+
+
+def test_main_cleans_up_poc_if_deployment_fails(monkeypatch):
+    job_module = _load_job_module()
+    calls = []
+
+    def fail_during_deployment(value):
+        calls.append(("execute", value))
+        raise RuntimeError("submission failed")
+
+    env = SimpleNamespace(stop=lambda clean_up: calls.append(("stop", clean_up)))
+    recipe = SimpleNamespace(execute=fail_during_deployment)
+    monkeypatch.setattr(job_module, "create_recipe", lambda args: recipe)
+    monkeypatch.setattr(job_module, "create_environment", lambda args: env)
+
+    with pytest.raises(RuntimeError, match="submission failed"):
+        job_module.main(["--env", "poc"])
+
+    assert calls == [("execute", env), ("stop", True)]
 
 
 def test_main_does_not_request_unsupported_simulation_status(tmp_path, monkeypatch, capsys):

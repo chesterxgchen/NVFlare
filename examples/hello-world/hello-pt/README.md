@@ -203,7 +203,7 @@ The Recipe, model, client script, and local training loop do not change as execu
 | --- | --- | --- |
 | Simulation | Everything runs through the local simulator. | `python job.py` |
 | POC | NVFlare provisions and starts separate local server and client processes. | `python job.py --env poc` |
-| Production | `ProdEnv` connects through a provisioned admin startup kit. | `python job.py --env prod --startup-kit <admin-kit>` |
+| Production | `ProdEnv` connects through a provisioned admin startup kit. | `python job.py --env prod --startup-kit <admin-kit> --username <admin-identity>` |
 
 ### Run the local POC stage
 
@@ -228,10 +228,13 @@ workspace.
 ### Export or submit to production
 
 A production run requires an already provisioned and running NVFlare deployment, network access to its server, and an
-admin startup kit authorized to submit jobs. Given those prerequisites, the same `job.py` can submit directly:
+admin startup kit authorized to submit jobs. `--username` must name the identity represented by that startup kit; it
+defaults to `admin@nvidia.com`. Given those prerequisites, the same `job.py` can submit directly:
 
 ```bash
-python job.py --env prod --startup-kit /path/to/admin/startup-kit
+python job.py --env prod \
+    --startup-kit /path/to/admin/startup-kit \
+    --username researcher@example.com
 ```
 
 Alternatively, export the job without connecting to a federation:

@@ -90,11 +90,14 @@ second-stage check and takes longer than simulation because of that lifecycle.
 The printed result path and POC logs remain available after the services stop.
 
 A production submission requires a running provisioned deployment, network
-connectivity, and an authorized admin startup kit:
+connectivity, and an authorized admin startup kit. ``--username`` must match the
+identity represented by that kit and defaults to ``admin@nvidia.com``:
 
 .. code-block:: bash
 
-   python job.py --env prod --startup-kit /path/to/admin/startup-kit
+   python job.py --env prod \
+       --startup-kit /path/to/admin/startup-kit \
+       --username researcher@example.com
 
 You can instead export the same application without connecting to a federation:
 

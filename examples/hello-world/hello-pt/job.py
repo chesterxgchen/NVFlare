@@ -56,6 +56,11 @@ def define_parser() -> argparse.ArgumentParser:
         default=None,
         help="Path to an admin startup kit. Required with --env prod and unused for simulation or POC.",
     )
+    parser.add_argument(
+        "--username",
+        default=None,
+        help="Production admin identity. Must match the startup kit; defaults to admin@nvidia.com.",
+    )
     parser.add_argument("--num_rounds", type=int, default=DEFAULT_NUM_ROUNDS)
     parser.add_argument("--batch_size", type=int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS)
@@ -113,6 +118,8 @@ def parse_args(argv=None):
         parser.error("--startup-kit is required with --env prod")
     if args.env != "prod" and args.startup_kit:
         parser.error("--startup-kit can only be used with --env prod")
+    if args.env != "prod" and args.username:
+        parser.error("--username can only be used with --env prod")
     return args
 
 
@@ -173,6 +180,8 @@ def create_environment(args):
         return SimEnv(num_clients=args.n_clients)
     if args.env == "poc":
         return PocEnv(num_clients=args.n_clients)
+    if args.username:
+        return ProdEnv(startup_kit_location=args.startup_kit, username=args.username)
     return ProdEnv(startup_kit_location=args.startup_kit)
 
 
@@ -181,10 +190,17 @@ def main(argv=None):
     recipe = create_recipe(args)
     env = create_environment(args)
 
-    run = recipe.execute(env)
-    # PocEnv downloads the result into its workspace. Retain that workspace so
-    # the path printed below still exists after the POC services have stopped.
-    result = run.get_result(clean_up=args.env != "poc")
+    try:
+        run = recipe.execute(env)
+        # PocEnv downloads the result into its workspace. Retain that workspace
+        # so the path printed below still exists after its services have stopped.
+        result = run.get_result(clean_up=args.env != "poc")
+    except (Exception, KeyboardInterrupt):
+        # POC may have started some or all local services before provisioning
+        # or submission/monitoring failed. Do not leave those processes behind.
+        if args.env == "poc":
+            env.stop(clean_up=True)
+        raise
     print()
     if args.env == "sim":
         # SimEnv runs synchronously but does not implement get_status(). A
