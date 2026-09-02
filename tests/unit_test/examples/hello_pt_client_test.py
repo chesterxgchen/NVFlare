@@ -31,7 +31,7 @@ def _load_hello_pt_module(file_name: str, module_name: str):
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
 
-    original_modules = {name: sys.modules.pop(name, None) for name in ("model", "synthetic_data")}
+    original_modules = {name: sys.modules.pop(name, None) for name in ("model", "prepare_data")}
     sys.path.insert(0, example_dir)
     try:
         spec.loader.exec_module(module)
@@ -55,7 +55,7 @@ def test_hello_pt_evaluate_rejects_empty_data_loader():
 def test_synthetic_data_is_deterministic_and_disjoint_by_site_and_split():
     import torch
 
-    data_module = _load_hello_pt_module("synthetic_data.py", "hello_pt_synthetic_data")
+    data_module = _load_hello_pt_module("prepare_data.py", "hello_pt_prepare_data")
     dataset_type = data_module.SyntheticImageDataset
 
     train_1 = dataset_type(site_name="site-1", split="train", size=20)
@@ -73,7 +73,7 @@ def test_synthetic_data_is_deterministic_and_disjoint_by_site_and_split():
 
 
 def test_synthetic_data_is_balanced_and_encodes_the_label():
-    data_module = _load_hello_pt_module("synthetic_data.py", "hello_pt_synthetic_signal")
+    data_module = _load_hello_pt_module("prepare_data.py", "hello_pt_prepare_signal")
     dataset = data_module.SyntheticImageDataset(site_name="site-1", split="train", size=100)
 
     assert Counter(dataset.labels.tolist()) == {label: 10 for label in range(data_module.NUM_CLASSES)}

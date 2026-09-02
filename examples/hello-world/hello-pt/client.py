@@ -18,7 +18,7 @@ import argparse
 
 import torch
 from model import create_model
-from synthetic_data import SyntheticImageDataset, stable_seed
+from prepare_data import SyntheticImageDataset, stable_seed
 from torch import nn
 from torch.optim import SGD
 

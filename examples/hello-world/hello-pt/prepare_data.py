@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Deterministic image data with a class-related signal for Hello PyTorch."""
+"""Prepare deterministic image data with a class-related signal for Hello PyTorch."""
 
 import hashlib
 

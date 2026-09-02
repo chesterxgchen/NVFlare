@@ -74,7 +74,7 @@ hello-pt/
 ├── client.py          # Client-side training and evaluation
 ├── job.py             # FedAvg recipe and simulation entry point
 ├── model.py           # PyTorch model definition and deterministic initialization
-├── synthetic_data.py  # Site- and split-specific default data
+├── prepare_data.py    # Site- and split-specific default data preparation
 ├── requirements.txt   # Default dependencies
 └── README.md
 ```
