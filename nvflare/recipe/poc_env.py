@@ -140,6 +140,12 @@ class PocEnv(ExecEnv):
         self.study = v.study
         self._session_manager = None  # Lazy initialization
         self._session_manager_lock = threading.Lock()
+        self._deployment_started = False
+
+    @property
+    def deployment_started(self) -> bool:
+        """Whether the latest deploy call passed preflight and began changing the POC workspace."""
+        return self._deployment_started
 
     def deploy(self, job: FedJob) -> str:
         """Deploy a FedJob to the POC environment.
@@ -153,6 +159,10 @@ class PocEnv(ExecEnv):
         Raises:
             ValueError: If scripts do not exist locally.
         """
+        # Reset before non-mutating preflight so callers can distinguish a
+        # rejected job from an invocation that owns a new POC lifecycle.
+        self._deployment_started = False
+
         # Validate scripts exist locally for POC
         non_local_scripts = collect_non_local_scripts(job)
         if non_local_scripts:
@@ -164,6 +174,9 @@ class PocEnv(ExecEnv):
         if self._check_poc_running():
             self.stop(clean_up=True)
 
+        # From this point, preparation may replace or partially create the POC
+        # workspace, so a caller may safely clean it up if deployment fails.
+        self._deployment_started = True
         self.logger.info("Preparing and starting fresh POC services...")
         prepare_poc_provision(
             clients=self.clients or [],  # Empty list if None, let prepare_clients generate

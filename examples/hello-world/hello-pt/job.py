@@ -196,9 +196,9 @@ def main(argv=None):
         # so the path printed below still exists after its services have stopped.
         result = run.get_result(clean_up=args.env != "poc")
     except (Exception, KeyboardInterrupt):
-        # POC may have started some or all local services before provisioning
-        # or submission/monitoring failed. Do not leave those processes behind.
-        if args.env == "poc":
+        # Clean only a POC lifecycle started by this invocation. Recipe or
+        # script preflight failures must not delete an unrelated old workspace.
+        if args.env == "poc" and env.deployment_started:
             env.stop(clean_up=True)
         raise
     print()

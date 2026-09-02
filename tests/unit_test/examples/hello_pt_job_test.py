@@ -176,7 +176,7 @@ def test_main_cleans_up_poc_if_deployment_fails(monkeypatch):
         calls.append(("execute", value))
         raise RuntimeError("submission failed")
 
-    env = SimpleNamespace(stop=lambda clean_up: calls.append(("stop", clean_up)))
+    env = SimpleNamespace(deployment_started=True, stop=lambda clean_up: calls.append(("stop", clean_up)))
     recipe = SimpleNamespace(execute=fail_during_deployment)
     monkeypatch.setattr(job_module, "create_recipe", lambda args: recipe)
     monkeypatch.setattr(job_module, "create_environment", lambda args: env)
@@ -185,6 +185,25 @@ def test_main_cleans_up_poc_if_deployment_fails(monkeypatch):
         job_module.main(["--env", "poc"])
 
     assert calls == [("execute", env), ("stop", True)]
+
+
+def test_main_preserves_existing_poc_if_failure_precedes_deployment(monkeypatch):
+    job_module = _load_job_module()
+    calls = []
+
+    def fail_during_preflight(value):
+        calls.append(("execute", value))
+        raise ValueError("missing local script")
+
+    env = SimpleNamespace(deployment_started=False, stop=lambda clean_up: calls.append(("stop", clean_up)))
+    recipe = SimpleNamespace(execute=fail_during_preflight)
+    monkeypatch.setattr(job_module, "create_recipe", lambda args: recipe)
+    monkeypatch.setattr(job_module, "create_environment", lambda args: env)
+
+    with pytest.raises(ValueError, match="missing local script"):
+        job_module.main(["--env", "poc"])
+
+    assert calls == [("execute", env)]
 
 
 def test_main_does_not_request_unsupported_simulation_status(tmp_path, monkeypatch, capsys):

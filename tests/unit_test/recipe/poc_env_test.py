@@ -28,6 +28,7 @@ def test_poc_env_initialization():
     assert env.num_clients == 2
     assert env.gpu_ids == []
     assert env.study == "default"
+    assert env.deployment_started is False
 
 
 @patch("nvflare.recipe.poc_env.get_poc_workspace")
@@ -100,6 +101,30 @@ def test_poc_env_initialization_with_study(mock_get_workspace):
 def test_poc_env_rejects_invalid_study_name():
     with pytest.raises(ValueError):
         PocEnv(study="Bad Study")
+
+
+@patch("nvflare.recipe.poc_env.collect_non_local_scripts", return_value=["missing.py"])
+def test_deploy_preflight_failure_does_not_start_lifecycle(mock_collect_non_local_scripts):
+    env = PocEnv()
+
+    with pytest.raises(ValueError, match="scripts do not exist locally"):
+        env.deploy(object())
+
+    assert env.deployment_started is False
+
+
+@patch("nvflare.recipe.poc_env.prepare_poc_provision", side_effect=RuntimeError("provisioning failed"))
+@patch.object(PocEnv, "_check_poc_running", return_value=False)
+@patch("nvflare.recipe.poc_env.collect_non_local_scripts", return_value=[])
+def test_deploy_marks_lifecycle_started_before_provisioning(
+    mock_collect_non_local_scripts, mock_check_poc_running, mock_prepare_poc_provision
+):
+    env = PocEnv()
+
+    with pytest.raises(RuntimeError, match="provisioning failed"):
+        env.deploy(object())
+
+    assert env.deployment_started is True
 
 
 @patch("nvflare.recipe.poc_env.get_poc_workspace")
