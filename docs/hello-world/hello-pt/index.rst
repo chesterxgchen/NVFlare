@@ -1,253 +1,128 @@
+.. _hello_pt:
+
 Hello PyTorch
 =============
 
-This example demonstrates how to use NVIDIA FLARE with PyTorch to train an image classifier using federated averaging (FedAvg). The complete example code can be found in the `hello-pt directory <examples/hello-world/hello-pt/>`. It is recommended to create a virtual environment and run everything within a virtualenv.
+Hello PyTorch is the recommended first federated-learning example for PyTorch.
+It uses :class:`FedAvgRecipe<nvflare.app_opt.pt.recipes.fedavg.FedAvgRecipe>`
+with ordinary PyTorch model, data-loading, training, and evaluation code.
 
-Install NVFLARE and Dependencies
---------------------------------
+The zero-argument path is deterministic, CPU-safe, and offline. Two clients
+train on distinct synthetic image data for two federated rounds, and the
+persisted final global model is evaluated on separate site-local evaluation
+data. CIFAR-10 and TensorBoard remain explicit follow-up options.
 
-for the complete installation instructions, see `Installation <https://nvflare.readthedocs.io/en/main/installation.html>`_
+The :github_nvflare_link:`example README <examples/hello-world/hello-pt/README.md>`
+is the authoritative reference for every option, default, artifact, and
+troubleshooting note. This page provides the guided first-run path.
 
-.. code-block:: text
+Get and install the example
+---------------------------
 
-    pip install nvflare
-
-First get the example code from github:
+Create and activate a Python virtual environment, then get the source and enter
+the example directory:
 
 .. code-block:: bash
 
    git clone https://github.com/NVIDIA/NVFlare.git
+   cd NVFlare/examples/hello-world/hello-pt
 
-Then navigate to the hello-pt directory:
-
-.. code-block:: bash
-
-   cd NVFlare
-   git switch <release branch>
-   cd examples/hello-world/hello-pt
-
-
-Install the dependency
-
-.. code-block:: text
-
-    pip install -r requirements.txt
-
-
-
-Code Structure
---------------
+Install the dependencies from that directory:
 
 .. code-block:: bash
 
-   hello-pt
-   |
-   |-- client.py             # client local training script
-   |-- model.py              # model definition
-   |-- job.py                # job recipe that defines client and server configurations
-   |-- requirements.txt      # dependencies
+   python -m pip install -r requirements.txt
 
-NVIDIA FLARE Installation
--------------------------
+For alternative installation methods, see :ref:`installation`.
 
-Here, we install nvflare with the PT extensions. For the complete installation instructions, see `Installation <https://nvflare.readthedocs.io/en/main/installation.html>`_
-
-.. code-block:: bash
-
-   pip install nvflare[PT]
-
-Install all dependencies
-
-.. code-block:: bash
-
-   pip install -r requirements.txt
-
-Data
-----
-
-This example uses the `CIFAR-10 <https://www.cs.toronto.edu/~kriz/cifar.html>`_ dataset. You can download the CIFAR10 dataset from the Internet via torchvision's datasets module.
-
-In a real FL experiment, each client would have their own dataset used for their local training. 
-You could split the datasets for different clients, so that each client has its own dataset. 
-Here for simplicity's sake, we will be using the same dataset on each client.
-
-Model
------
-
-In PyTorch, neural networks are implemented by defining a class (e.g., ``SimpleNetwork``) that extends ``nn.Module``. 
-The network's architecture is set up in the __init__ method, while the forward method determines how input data flows
-through the layers. For faster computations, the model is transferred to a hardware accelerator (such as NVIDIA GPUs) if available; otherwise, it runs on the CPU. The implementation of this model can be found in :github_nvflare_link:`model.py <examples/hello-world/hello-pt/model.py>`.
-
-.. code-block:: python
-
-   import torch
-   import torch.nn as nn
-   import torch.nn.functional as F
-
-   class SimpleNetwork(nn.Module):
-       def __init__(self):
-           super(SimpleNetwork, self).__init__()
-           self.conv1 = nn.Conv2d(3, 6, 5)
-           self.pool = nn.MaxPool2d(2, 2)
-           self.conv2 = nn.Conv2d(6, 16, 5)
-           self.fc1 = nn.Linear(16 * 5 * 5, 120)
-           self.fc2 = nn.Linear(120, 84)
-           self.fc3 = nn.Linear(84, 10)
-
-       def forward(self, x):
-           x = self.pool(F.relu(self.conv1(x)))
-           x = self.pool(F.relu(self.conv2(x)))
-           x = torch.flatten(x, 1)  # flatten all dimensions except batch
-           x = F.relu(self.fc1(x))
-           x = F.relu(self.fc2(x))
-           x = self.fc3(x)
-           return x
-
-Client Code
------------
-
-On the client side, the training workflow is as follows:
-
-1. Receive the model from the FL server.
-2. Perform local training on the received global model and/or evaluate the received global model for model selection.
-3. Send the new model back to the FL server.
-
-The client code (:github_nvflare_link:`client.py <examples/hello-world/hello-pt/client.py>`) is responsible for implementing this training workflow. Notice the training code is almost identical to a standard training PyTorch code. 
-The only difference is that we added a few lines to receive and send data to the server.
-
-Using NVFlare's client API, we can easily adapt machine learning code that was written for centralized training and apply it in a federated scenario.
-For a general use case, there are three essential methods to achieve this using the Client API :
-
-- ``init()``: Initializes NVFlare Client API environment.
-- ``receive()``: Receives model from the FL server.
-- ``send()``: Sends the model to the FL server.
-
-With these simple methods, the developers can use the Client API
-to change their centralized training code to an FL scenario with
-five lines of code changes as shown below.
-
-.. code-block:: python
-
-   import nvflare.client as flare
-       
-   flare.init() # 1. Initializes NVFlare Client API environment.
-   input_model = flare.receive() # 2. Receives model from the FL server.
-   params = input_model.params # 3. Obtain the required information from the received model.
-       
-   # original local training code
-   new_params = local_train(params)
-       
-   output_model = flare.FLModel(params=new_params) # 4. Put the results in a new `FLModel`
-   flare.send(output_model) # 5. Sends the model to the FL server.  
-
-Server Code
------------
-
-In federated averaging, the server code is responsible for distributing the global model and aggregating model updates from clients. 
-
-First, we provide a robust implementation of the `FedAvg <https://proceedings.mlr.press/v54/mcmahan17a?ref=https://githubhelp.com>`_ algorithm with NVFlare. 
-
-The server implements these main steps:
-
-1. FL server initializes an initial model.
-2. For each round (global iteration):
-   - FL server samples available clients.
-   - FL server sends the global model to clients and waits for their updates.
-   - FL server aggregates all the ``results`` and produces a new global model.
-
-In this example, we will directly use the default federated averaging algorithm provided by NVFlare utilizing the `FedAvgRecipe <https://nvflare.readthedocs.io/en/main/apidocs/nvflare.app_opt.pt.recipes.fedavg.html#nvflare.app_opt.pt.recipes.fedavg.FedAvgRecipe>`_ for PyTorch. 
-
-There is no need to define a customized server code for this example.
-
-Job Recipe Code
----------------
-
-The Job Recipe specifies the ``client.py`` and selects the built-in federated averaging algorithm.
-
-.. code-block:: python
-
-   recipe = FedAvgRecipe(
-       name="hello-pt",
-       min_clients=n_clients,
-       num_rounds=num_rounds,
-       # Model can be specified as class instance or dict config:
-       model=SimpleNetwork(),
-       # Alternative: model={"class_path": "model.SimpleNetwork", "args": {}},
-       # For pre-trained weights: initial_ckpt="/server/path/to/pretrained.pt",
-       train_script="client.py",
-       train_args=f"--batch_size {batch_size}",
-   )
-
-   env = SimEnv(num_clients=n_clients, num_threads=n_clients)
-   recipe.execute(env=env)
-
-Model Input Options
-^^^^^^^^^^^^^^^^^^^
-
-The ``model`` parameter accepts two formats:
-
-1. **Class instance** (shown above): ``model=SimpleNetwork()`` - Convenient and Pythonic
-2. **Dict config**: ``model={"class_path": "model.SimpleNetwork", "args": {}}`` - Better for large models
-
-To resume training from pre-trained weights, use ``initial_ckpt``:
-
-.. code-block:: python
-
-   recipe = FedAvgRecipe(
-       model=SimpleNetwork(),
-       initial_ckpt="/server/path/to/pretrained.pt",  # Absolute path, must exist on server
-       ...
-   )
-
-.. note::
-
-   Class instances are converted to configuration files before job submission. For large models, use dict config to avoid unnecessary instantiation overhead.
-
-Run Job
--------
-
-From terminal simply run the job script to execute the job in a simulation environment.
+Run the quickstart
+------------------
 
 .. code-block:: bash
 
    python job.py
 
-.. note::
-   As part of the job script, use ``add_experiment_tracking(recipe, tracking_type="tensorboard")`` to stream training metrics to the server using NVIDIA FLARE's `SummaryWriter <https://nvflare.readthedocs.io/en/main/apidocs/nvflare.client.tracking.html#nvflare.client.tracking.SummaryWriter>`_ in :github_nvflare_link:`client.py <examples/hello-world/hello-pt/client.py>`.
+The default run uses two simulated clients, two federated rounds, one local
+epoch per round, and no data download or tracking service. Each client receives
+its own reproducible training and evaluation samples. Labels are encoded by
+class-specific image regions, giving the small convolutional network a genuine
+and testable learning signal instead of unrelated random images and labels.
 
-Notebook
---------
+The client script follows the Client API lifecycle:
 
-For an interactive version of this example, see this :github_nvflare_link:`notebook <examples/hello-world/hello-pt/hello-pt.ipynb>`, which can be executed in Google Colab.
+1. Receive the current global model.
+2. Evaluate that received model.
+3. Train it on the client's local data.
+4. Send updated model parameters, metrics, and completed optimizer-step count.
 
-Output summary
---------------
+Raw examples remain at the client. The server performs weighted FedAvg
+aggregation, persists the final global model, and requests its final evaluation
+on both sites.
 
-Initialization
-~~~~~~~~~~~~~~~
+Inspect the result
+------------------
 
-- **TensorBoard**: Logs available at /tmp/nvflare/simulation/hello-pt/server/simulate_job/tb_events.
-- **Workflow**: BaseModelController initialized.
+The command prints the result directory. For the default simulation it is
+``/tmp/nvflare/simulation/hello-pt``. The primary artifacts under
+``server/simulate_job`` are:
 
-Round 0
-~~~~~~~
+- ``app_server/FL_global_model.pt`` -- the persisted final global model.
+- ``cross_site_val/cross_val_results.json`` -- final evaluation metrics by site.
 
-- **Model Loading**: Initial model loaded from persistor.
-- **Clients Sampled**: site-1, site-2.
-- **Training**:
-  - Tasks sent to both sites.
-  - Two epochs completed with loss reported.
-- **Aggregation**: Models aggregated and persisted on the server.
+The automated acceptance test requires at least 60% final accuracy on both
+sites and at least a 40 percentage-point improvement over the initial global
+model. These thresholds prove that the example learns; they are not benchmark
+claims.
 
-Round 1
-~~~~~~~
+Continue across environments
+----------------------------
 
-- **Clients Sampled**: site-1, site-2.
-- **Training**:
-  - Similar process as Round 0.
-  - **Aggregation**: Models aggregated and persisted.
+After simulation succeeds, run the same Recipe, model, client script, and local
+training loop through a local POC federation:
 
-Completion
-~~~~~~~~~~
+.. code-block:: bash
 
-- **FedAvg Process**: Successfully finished with the final model persisted.
+   python job.py --env poc
+
+POC starts separate local server and client processes, submits and monitors the
+job, downloads the result, and stops the services. It is an optional
+second-stage check and takes longer than simulation because of that lifecycle.
+The printed result path and POC logs remain available after the services stop.
+
+A production submission requires a running provisioned deployment, network
+connectivity, and an authorized admin startup kit:
+
+.. code-block:: bash
+
+   python job.py --env prod --startup-kit /path/to/admin/startup-kit
+
+You can instead export the same application without connecting to a federation:
+
+.. code-block:: bash
+
+   python job.py --export --export-dir /tmp/nvflare/jobs/job_config
+
+Export verifies construction of the deployable job. It does not verify
+production connectivity, identity, authorization, or external execution. See
+:ref:`provisioned_setup` for production deployment procedures.
+
+Optional follow-up paths
+------------------------
+
+Run ``python job.py --help`` for the complete example and Recipe export options.
+Useful follow-ups include:
+
+.. code-block:: bash
+
+   # Download and use CIFAR-10 explicitly.
+   python job.py --dataset cifar10 --epochs 2 --batch_size 16 --num_workers 2
+
+   # Enable TensorBoard after installing it.
+   python -m pip install tensorboard
+   python job.py --experiment_tracking tensorboard
+
+   # Also evaluate the clients' final local models.
+   python job.py --cross_site_eval
+
+For the API concepts behind the example, continue with
+:ref:`Client API <client_api>` and :ref:`Available Recipes <available_recipes>`.

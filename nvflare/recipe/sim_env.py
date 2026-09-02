@@ -165,9 +165,6 @@ class SimEnv(ExecEnv):
 
     def get_job_status(self, job_id: str) -> Optional[str]:
         """Get job status - not supported in simulation environment."""
-        print(
-            f"Note, get_status returns None in SimEnv. The simulation logs can be found at {os.path.join(self.workspace_root, job_id)}"
-        )
         return None
 
     def abort_job(self, job_id: str) -> None:

@@ -4,6 +4,17 @@ This quickstart trains a small image classifier with federated averaging (FedAvg
 distinct local datasets for two rounds, and then evaluate the persisted final global model on separate evaluation
 data. The zero-argument path is deterministic, runs on CPU, downloads no dataset, and requires no tracking service.
 
+## Get the example
+
+If you do not already have the NVFlare source tree, clone it and enter this example directory:
+
+```bash
+git clone https://github.com/NVIDIA/NVFlare.git
+cd NVFlare/examples/hello-world/hello-pt
+```
+
+If you already have a clone, run the remaining commands from `examples/hello-world/hello-pt`.
+
 ## Install
 
 Create and activate a virtual environment, then install the example dependencies:
@@ -72,7 +83,7 @@ optimizer steps; they do not send their training examples to the server.
 ```text
 hello-pt/
 ├── client.py          # Client-side training and evaluation
-├── job.py             # FedAvg recipe and simulation entry point
+├── job.py             # FedAvg recipe and execution-environment entry point
 ├── model.py           # PyTorch model definition and deterministic initialization
 ├── prepare_data.py    # Site- and split-specific default data preparation
 ├── requirements.txt   # Default dependencies
@@ -210,6 +221,10 @@ This is an optional second-stage check, not the first-run path. Expect it to tak
 provisions and starts a fresh federation before training, then downloads the result and stops the services. Runtime
 depends on the machine, so this example does not promise a fixed POC duration.
 
+The command prints the downloaded result path and retains the POC workspace so that path and its service logs remain
+available after the services stop. Copy any results you want to keep before starting another POC run or deleting the
+workspace.
+
 ### Export or submit to production
 
 A production run requires an already provisioned and running NVFlare deployment, network access to its server, and an
@@ -238,7 +253,7 @@ or successful execution on an external production federation.
 
 ## Customize the run
 
-See all options:
+See the example options and the system-level Recipe export options:
 
 ```bash
 python job.py --help

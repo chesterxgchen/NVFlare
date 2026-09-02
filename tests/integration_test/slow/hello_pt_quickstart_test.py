@@ -93,40 +93,39 @@ def test_zero_flag_hello_pt_produces_learned_loadable_final_model(tmp_path, monk
 
 
 @pytest.mark.timeout(180)
-def test_hello_pt_executes_the_same_application_in_poc(tmp_path, monkeypatch):
+def test_hello_pt_executes_the_same_application_in_poc(tmp_path, monkeypatch, capsys):
     poc_env_module = importlib.import_module("nvflare.recipe.poc_env")
-    monkeypatch.setattr(poc_env_module, "get_poc_workspace", lambda: str(tmp_path / "poc_workspace"))
+    poc_workspace = tmp_path / "poc_workspace"
+    monkeypatch.setattr(poc_env_module, "get_poc_workspace", lambda: str(poc_workspace))
 
     with _load_job_module() as job_module:
         _configure_source_run(monkeypatch)
         # Use the same client script through an absolute path so the test can
         # leave the source tree before POC creates its transfer directory.
-        args = job_module.parse_args(["--env", "poc", "--train_script", os.path.join(EXAMPLE_DIR, "client.py")])
-        recipe = job_module.create_recipe(args)
         monkeypatch.chdir(tmp_path)
-        env = job_module.create_environment(args)
-        run = recipe.execute(env)
-
         result_path = None
-        cleanup_path = None
         try:
-            downloaded_result = run.get_result(clean_up=False)
+            downloaded_result = job_module.main(
+                ["--env", "poc", "--train_script", os.path.join(EXAMPLE_DIR, "client.py")]
+            )
+
             assert downloaded_result
             result_path = Path(downloaded_result).resolve()
-            cleanup_path = result_path
-            bundle_root = result_path.parent
-            if (
-                result_path.name == "workspace"
-                and (bundle_root / "meta.json").is_file()
-                and (bundle_root / "job").is_dir()
-            ):
-                cleanup_path = bundle_root
-
-            status = run.get_status()
-            assert status == "FINISHED:COMPLETED"
             assert result_path.is_dir()
-            assert list(Path(result_path).rglob("FL_global_model.pt"))
+            assert list(result_path.rglob("FL_global_model.pt"))
+            assert poc_workspace.is_dir()
+
+            output = capsys.readouterr().out
+            assert "Job Status is: FINISHED:COMPLETED" in output
+            assert f"Result can be found in : {downloaded_result}" in output
         finally:
-            env.stop(clean_up=True)
-            if cleanup_path:
-                shutil.rmtree(cleanup_path, ignore_errors=True)
+            if result_path:
+                bundle_root = result_path.parent
+                if (
+                    result_path.name == "workspace"
+                    and (bundle_root / "meta.json").is_file()
+                    and (bundle_root / "job").is_dir()
+                ):
+                    shutil.rmtree(bundle_root, ignore_errors=True)
+                else:
+                    shutil.rmtree(result_path, ignore_errors=True)

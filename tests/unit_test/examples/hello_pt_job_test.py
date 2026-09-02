@@ -99,6 +99,15 @@ def test_environment_arguments_require_startup_kit_only_for_production(capsys):
     assert "--startup-kit can only be used with --env prod" in capsys.readouterr().err
 
 
+def test_help_includes_recipe_export_options():
+    job_module = _load_job_module()
+
+    help_text = job_module.define_parser().format_help()
+
+    assert "--export" in help_text
+    assert "--export-dir EXPORT_DIR" in help_text
+
+
 def test_environment_selection_uses_the_same_client_count(tmp_path):
     job_module = _load_job_module()
 
@@ -116,6 +125,57 @@ def test_environment_selection_uses_the_same_client_count(tmp_path):
     assert isinstance(prod_env, job_module.ProdEnv)
     assert sim_env.num_clients == poc_env.num_clients == 3
     assert prod_env.startup_kit_location == str(startup_kit)
+
+
+def test_main_preserves_poc_result_and_reports_cached_status(tmp_path, monkeypatch, capsys):
+    job_module = _load_job_module()
+    result_dir = tmp_path / "poc-result"
+    result_dir.mkdir()
+    calls = []
+
+    run = SimpleNamespace(
+        get_result=lambda clean_up: calls.append(("get_result", clean_up)) or str(result_dir),
+        get_status=lambda: calls.append(("get_status",)) or "FINISHED:COMPLETED",
+    )
+    env = object()
+    recipe = SimpleNamespace(execute=lambda value: calls.append(("execute", value)) or run)
+    monkeypatch.setattr(job_module, "create_recipe", lambda args: recipe)
+    monkeypatch.setattr(job_module, "create_environment", lambda args: env)
+
+    result = job_module.main(["--env", "poc"])
+
+    assert result == str(result_dir)
+    assert calls == [("execute", env), ("get_result", False), ("get_status",)]
+    output = capsys.readouterr().out
+    assert "Job Status is: FINISHED:COMPLETED" in output
+    assert f"Result can be found in : {result_dir}" in output
+
+
+def test_main_does_not_request_unsupported_simulation_status(tmp_path, monkeypatch, capsys):
+    job_module = _load_job_module()
+    result_dir = tmp_path / "simulation-result"
+    result_dir.mkdir()
+    calls = []
+
+    def unsupported_status():
+        raise AssertionError("SimEnv status must not be requested by the example")
+
+    run = SimpleNamespace(
+        get_result=lambda clean_up: calls.append(("get_result", clean_up)) or str(result_dir),
+        get_status=unsupported_status,
+    )
+    env = object()
+    recipe = SimpleNamespace(execute=lambda value: calls.append(("execute", value)) or run)
+    monkeypatch.setattr(job_module, "create_recipe", lambda args: recipe)
+    monkeypatch.setattr(job_module, "create_environment", lambda args: env)
+
+    result = job_module.main([])
+
+    assert result == str(result_dir)
+    assert calls == [("execute", env), ("get_result", True)]
+    output = capsys.readouterr().out
+    assert "Simulation completed successfully." in output
+    assert "Job Status is: None" not in output
 
 
 def test_production_environment_exports_the_same_application(tmp_path, monkeypatch):

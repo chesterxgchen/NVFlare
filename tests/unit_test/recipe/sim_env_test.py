@@ -82,6 +82,13 @@ def test_sim_env_validation():
     assert env.num_threads == 3
 
 
+def test_sim_env_unsupported_status_is_quiet(tmp_path, capsys):
+    env = SimEnv(num_clients=2, workspace_root=str(tmp_path))
+
+    assert env.get_job_status("test-job") is None
+    assert capsys.readouterr().out == ""
+
+
 def test_sim_env_process_workspace_override_takes_precedence(tmp_path, monkeypatch):
     job = _make_job()
     isolated_workspace = tmp_path / "isolated"

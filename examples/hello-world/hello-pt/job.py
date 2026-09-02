@@ -31,10 +31,19 @@ DEFAULT_NUM_WORKERS = 0
 DEFAULT_TEST_SIZE = 100
 DEFAULT_TRAIN_SIZE = 200
 DEFAULT_SYNTHETIC_LEARNING_RATE = 0.1
+EXPORT_HELP = """NVFlare Recipe export options:
+  --export                    Export the job instead of running it.
+  --export-dir EXPORT_DIR     Parent directory for the exported job (default: ./fl_job).
+"""
 
 
 def define_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser()
+    # Recipe consumes its system-level export flags before this parser runs, so
+    # list them in the epilog to keep ``python job.py --help`` complete.
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=EXPORT_HELP,
+    )
     parser.add_argument("--n_clients", type=int, default=DEFAULT_NUM_CLIENTS)
     parser.add_argument(
         "--env",
@@ -167,18 +176,25 @@ def create_environment(args):
     return ProdEnv(startup_kit_location=args.startup_kit)
 
 
-def main():
-    args = parse_args()
+def main(argv=None):
+    args = parse_args(argv)
     recipe = create_recipe(args)
     env = create_environment(args)
 
     run = recipe.execute(env)
-    result = run.get_result()
-    status = run.get_status()
+    # PocEnv downloads the result into its workspace. Retain that workspace so
+    # the path printed below still exists after the POC services have stopped.
+    result = run.get_result(clean_up=args.env != "poc")
     print()
-    print("Job Status is:", status)
+    if args.env == "sim":
+        # SimEnv runs synchronously but does not implement get_status(). A
+        # normal return from execute/get_result means the simulation completed.
+        print("Simulation completed successfully.")
+    else:
+        print("Job Status is:", run.get_status())
     print("Result can be found in :", result)
     print()
+    return result
 
 
 if __name__ == "__main__":
