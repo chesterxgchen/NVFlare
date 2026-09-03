@@ -21,6 +21,7 @@ import pytest
 
 from nvflare.apis.fl_constant import WorkspaceConstants
 from nvflare.apis.fl_exception import UnsafeComponentError
+from nvflare.apis.job_def import RunStatus
 from nvflare.app_common.default_component_policy import DEFAULT_CLASS_ALLOW_LIST
 from nvflare.app_common.widgets.component_path_authorizer import CLASS_ALLOW_LIST, ComponentPathAuthorizer
 from nvflare.app_common.workflows.scatter_and_gather import ScatterAndGather
@@ -82,11 +83,15 @@ def test_sim_env_validation():
     assert env.num_threads == 3
 
 
-def test_sim_env_unsupported_status_is_quiet(tmp_path, capsys):
+def test_sim_env_status_tracks_synchronous_deployment(tmp_path):
+    job = _make_job()
     env = SimEnv(num_clients=2, workspace_root=str(tmp_path))
 
-    assert env.get_job_status("test-job") is None
-    assert capsys.readouterr().out == ""
+    assert env.get_job_status(job.name) is None
+
+    _deploy_with_mocked_simulator(env, job)
+
+    assert env.get_job_status(job.name) == RunStatus.FINISHED_COMPLETED.value
 
 
 def test_sim_env_process_workspace_override_takes_precedence(tmp_path, monkeypatch):
@@ -125,6 +130,7 @@ def test_sim_env_deploy_raises_on_failed_simulation(tmp_path):
                 env.deploy(job)
 
     assert env.last_run_failed
+    assert env.get_job_status(job.name) == RunStatus.FINISHED_ABNORMAL.value
 
 
 def test_sim_env_bootstraps_standard_component_policy(tmp_path):

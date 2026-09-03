@@ -192,9 +192,9 @@ python job.py --help
 
 Use CIFAR-10 instead of the deterministic quickstart data:
 
-Simulated clients share the cache at `/tmp/nvflare/data`. Download both splits
-once before starting the simulation; clients open the prepared data without
-downloading so they cannot race while writing the same files:
+Simulated clients share the default cache at `/tmp/nvflare/data`. Download both
+splits once before starting the simulation; clients open the prepared data
+without downloading so they cannot race while writing the same files:
 
 ```bash
 python prepare_data.py
@@ -204,6 +204,13 @@ python prepare_data.py
 python job.py --dataset cifar10
 ```
 
+To use another cache location, pass the same client-local path to both commands:
+
+```bash
+python prepare_data.py --data_root /data/cifar
+python job.py --dataset cifar10 --data_root /data/cifar
+```
+
 All simulated clients then read the same logical CIFAR-10 training and test
 datasets from that shared cache. This option is useful for experimentation but
 does not demonstrate a federated data partition. The default synthetic path
@@ -211,10 +218,10 @@ remains offline and independently generates every site's training and
 evaluation samples from the same IID distribution.
 
 The beginner entry point intentionally exposes only the number of clients,
-number of rounds, and dataset choice. Environment selection, experiment
-tracking, full cross-site evaluation, external-process execution, and memory
-tuning belong in the environment-continuity follow-up rather than the first
-federated-learning run.
+number of rounds, dataset choice, and its client-local data root. Environment
+selection, experiment tracking, full cross-site evaluation, external-process
+execution, and memory tuning belong in the environment-continuity follow-up
+rather than the first federated-learning run.
 
 ## Export a deployable job
 

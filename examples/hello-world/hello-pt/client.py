@@ -57,7 +57,7 @@ def evaluate(net, data_loader, device):
     return accuracy
 
 
-def create_data_loaders(dataset, site_name, train_size, test_size, batch_size, num_workers):
+def create_data_loaders(dataset, site_name, train_size, test_size, batch_size, num_workers, data_root=DATASET_PATH):
     if dataset == "synthetic":
         train_set = SyntheticImageDataset(site_name=site_name, split="train", size=train_size)
         test_set = SyntheticImageDataset(site_name=site_name, split="eval", size=test_size)
@@ -73,8 +73,8 @@ def create_data_loaders(dataset, site_name, train_size, test_size, batch_size, n
                 Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
             ]
         )
-        train_set = torchvision.datasets.CIFAR10(root=DATASET_PATH, train=True, download=False, transform=transform)
-        test_set = torchvision.datasets.CIFAR10(root=DATASET_PATH, train=False, download=False, transform=transform)
+        train_set = torchvision.datasets.CIFAR10(root=data_root, train=True, download=False, transform=transform)
+        test_set = torchvision.datasets.CIFAR10(root=data_root, train=False, download=False, transform=transform)
 
     shuffle_generator = torch.Generator().manual_seed(stable_seed(site_name, "train-loader"))
     train_loader = torch.utils.data.DataLoader(
@@ -106,6 +106,11 @@ def main():
     parser.set_defaults(dataset=DEFAULT_DATASET)
     parser.add_argument("--train_size", type=int, default=DEFAULT_TRAIN_SIZE)
     parser.add_argument("--test_size", type=int, default=DEFAULT_TEST_SIZE)
+    parser.add_argument(
+        "--data_root",
+        default=DATASET_PATH,
+        help="Client-local CIFAR-10 cache path. Ignored for the synthetic dataset.",
+    )
     args = parser.parse_args()
     learning_rate = args.learning_rate
     if learning_rate is None:
@@ -129,6 +134,7 @@ def main():
         test_size=args.test_size,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
+        data_root=args.data_root,
     )
     last_params = None
 

@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ast
 import importlib.util
 import json
 import os
+import re
+import shlex
 import sys
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -52,12 +55,23 @@ def _load_job_module():
         return module
 
 
+def _load_web_python_snippet(name: str) -> str:
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+    component_path = os.path.join(repo_root, "web", "src", "components", "code.astro")
+    with open(component_path) as component_file:
+        component = component_file.read()
+    match = re.search(rf"const {name} = `\n(.*?)`;", component, flags=re.DOTALL)
+    assert match, f"missing website snippet {name}"
+    return match.group(1)
+
+
 def test_zero_flag_defaults_are_portable_and_bounded():
     job_module = _load_job_module()
 
     args = job_module.define_parser().parse_args([])
 
     assert vars(args) == {
+        "data_root": "/tmp/nvflare/data",
         "dataset": "synthetic",
         "n_clients": 2,
         "num_rounds": 3,
@@ -79,6 +93,37 @@ def test_help_includes_recipe_export_options():
 
     assert "--export" in help_text
     assert "--export-dir EXPORT_DIR" in help_text
+
+
+def test_website_pytorch_snippets_are_internally_consistent():
+    client_source = _load_web_python_snippet("clientCode_pt")
+    model_source = _load_web_python_snippet("modelCode_pt")
+    job_source = _load_web_python_snippet("jobCode_pt")
+
+    for name, source in (("client.py", client_source), ("model.py", model_source), ("job.py", job_source)):
+        compile(source, name, "exec")
+
+    model_functions = {node.name for node in ast.walk(ast.parse(model_source)) if isinstance(node, ast.FunctionDef)}
+    assert "create_model" in model_functions
+
+    client_options = {
+        call.args[0].value
+        for call in ast.walk(ast.parse(client_source))
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "add_argument"
+        and call.args
+        and isinstance(call.args[0], ast.Constant)
+    }
+    train_args = [
+        keyword.value.value
+        for call in ast.walk(ast.parse(job_source))
+        if isinstance(call, ast.Call)
+        for keyword in call.keywords
+        if keyword.arg == "train_args" and isinstance(keyword.value, ast.Constant)
+    ]
+    assert len(train_args) == 1
+    assert {token for token in shlex.split(train_args[0]) if token.startswith("--")} <= client_options
 
 
 def test_main_reports_simulation_success_without_requesting_status(tmp_path, monkeypatch, capsys):
@@ -146,11 +191,11 @@ def test_cifar_remains_an_explicit_option(monkeypatch):
     monkeypatch.setattr(job_module, "FedAvgRecipe", make_recipe)
     monkeypatch.setattr(job_module, "create_model", lambda: "model")
     monkeypatch.setattr(job_module, "add_final_global_evaluation", lambda value: calls.append(("final", value)))
-    args = job_module.define_parser().parse_args(["--dataset", "cifar10"])
+    args = job_module.define_parser().parse_args(["--dataset", "cifar10", "--data_root", "/data/cifar"])
 
     job_module.create_recipe(args)
 
-    assert recipe_kwargs["train_args"] == "--dataset cifar10"
+    assert recipe_kwargs["train_args"] == "--dataset cifar10 --data_root /data/cifar"
     assert calls == [("final", recipe)]
 
 

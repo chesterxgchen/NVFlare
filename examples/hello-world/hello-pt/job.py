@@ -14,9 +14,10 @@
 """Run the Hello PyTorch FedAvg job in an NVFLARE simulation."""
 
 import argparse
+import shlex
 
 from model import create_model
-from prepare_data import DATASET_CHOICES, DEFAULT_DATASET
+from prepare_data import DATASET_CHOICES, DATASET_PATH, DEFAULT_DATASET
 
 from nvflare.app_opt.pt.recipes.fedavg import FedAvgRecipe
 from nvflare.recipe import SimEnv, add_final_global_evaluation
@@ -51,11 +52,20 @@ def define_parser() -> argparse.ArgumentParser:
         help="Deprecated alias for --dataset synthetic.",
     )
     parser.set_defaults(dataset=DEFAULT_DATASET)
+    parser.add_argument(
+        "--data_root",
+        default=DATASET_PATH,
+        help="Client-local CIFAR-10 cache path. Ignored for the synthetic dataset.",
+    )
 
     return parser
 
 
 def create_recipe(args):
+    train_args = ["--dataset", args.dataset]
+    if args.dataset == "cifar10":
+        train_args.extend(("--data_root", args.data_root))
+
     recipe = FedAvgRecipe(
         name="hello-pt",
         min_clients=args.n_clients,
@@ -65,7 +75,7 @@ def create_recipe(args):
         # Alternative: model={"class_path": "model.SimpleNetwork", "args": {}},
         # For pre-trained weights: initial_ckpt="/server/path/to/pretrained.pt",
         train_script="client.py",
-        train_args=f"--dataset {args.dataset}",
+        train_args=shlex.join(train_args),
     )
     # Always verify the persisted final global model in the basic quickstart.
     add_final_global_evaluation(recipe)
@@ -81,8 +91,8 @@ def main(argv=None):
     run = recipe.execute(env)
     result = run.get_result()
     print()
-    # SimEnv runs synchronously but does not implement get_status(). A normal
-    # return from execute/get_result means the simulation completed.
+    # SimEnv runs synchronously. A normal return from execute/get_result means
+    # the simulation completed, so keep the beginner-facing message direct.
     print("Simulation completed successfully.")
     print("Result can be found in :", result)
     print()

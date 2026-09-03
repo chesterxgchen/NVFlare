@@ -110,12 +110,15 @@ CIFAR-10 is also available through ``--dataset cifar10``. Run
 ``python prepare_data.py`` first to download both splits before simulated
 clients open the shared cache. All clients then read the same logical CIFAR-10
 datasets, so this optional path does not demonstrate a federated data
-partition. The example README provides the exact commands.
+partition. For a non-default cache, pass the same ``--data_root`` value to
+``prepare_data.py`` and ``job.py``. The example README provides the exact
+commands.
 
 The beginner entry point intentionally exposes only client count, round count,
-and dataset choice. Environment selection, experiment tracking, full cross-site
-evaluation, external-process execution, and memory tuning belong in a separate
-continuation workflow rather than the first federated-learning run.
+dataset choice, and the client-local data root. Environment selection,
+experiment tracking, full cross-site evaluation, external-process execution,
+and memory tuning belong in a separate continuation workflow rather than the
+first federated-learning run.
 
 For the API concepts behind the example, continue with
 :ref:`Client API <client_api>` and :ref:`Available Recipes <available_recipes>`.

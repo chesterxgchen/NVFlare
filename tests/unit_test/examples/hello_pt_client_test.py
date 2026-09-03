@@ -79,7 +79,7 @@ def test_hello_pt_evaluate_uses_evaluation_mode():
     assert model.observed_modes == [False]
 
 
-def test_cifar_data_loaders_use_prepared_data_without_downloading(monkeypatch):
+def test_cifar_data_loaders_use_prepared_data_without_downloading(monkeypatch, tmp_path):
     import torch
     import torchvision
 
@@ -98,10 +98,13 @@ def test_cifar_data_loaders_use_prepared_data_without_downloading(monkeypatch):
 
     monkeypatch.setattr(torchvision.datasets, "CIFAR10", FakeDataset)
 
-    train_loader, test_loader = client_module.create_data_loaders("cifar10", "site-1", 20, 10, 2, 0)
+    train_loader, test_loader = client_module.create_data_loaders(
+        "cifar10", "site-1", 20, 10, 2, 0, data_root=str(tmp_path)
+    )
 
     assert len(train_loader.dataset) == len(test_loader.dataset) == 2
     assert [(call["train"], call["download"]) for call in calls] == [(True, False), (False, False)]
+    assert all(call["root"] == str(tmp_path) for call in calls)
 
 
 def test_synthetic_data_is_deterministic_and_disjoint_by_site_and_split():
