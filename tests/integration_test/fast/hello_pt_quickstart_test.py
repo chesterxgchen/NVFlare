@@ -45,6 +45,8 @@ def _load_job_module():
             sys.modules["model"] = original_model_module
         else:
             sys.modules.pop("model", None)
+
+
 def test_zero_flag_hello_pt_produces_learned_loadable_final_model(tmp_path, monkeypatch):
     with _load_job_module() as job_module:
         monkeypatch.chdir(EXAMPLE_DIR)
