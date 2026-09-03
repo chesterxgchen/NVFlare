@@ -8,7 +8,8 @@ It uses :class:`FedAvgRecipe<nvflare.app_opt.pt.recipes.fedavg.FedAvgRecipe>`
 with ordinary PyTorch model, data-loading, training, and evaluation code.
 
 The zero-argument path is deterministic, CPU-safe, and offline. Two simulated
-clients train on distinct synthetic image data for two federated rounds, and
+clients train on independently generated synthetic image data for three
+federated rounds, and
 the persisted final global model is evaluated on separate site-local evaluation
 data. CIFAR-10 remains an explicit follow-up option.
 
@@ -42,7 +43,7 @@ Run the quickstart
 
    python job.py
 
-The default run uses two simulated clients, two federated rounds, one local
+The default run uses two simulated clients, three federated rounds, one local
 epoch per round, and no data download or tracking service. Each client receives
 its own reproducible training and evaluation samples. Labels are encoded by
 class-specific image regions, giving the small convolutional network a genuine
@@ -71,8 +72,9 @@ The command prints the result directory. For the default simulation it is
 
 The automated acceptance test requires at least 60% final accuracy on both
 sites and at least a 40 percentage-point improvement over the initial global
-model. These thresholds prove that the example learns; they are not benchmark
-claims.
+model. These thresholds are calibrated to the fixed model and data seeds with
+the three-round default. They verify this specific run's learning signal, not
+arbitrary initializations or hyperparameters, and are not benchmark claims.
 
 Export the application
 ----------------------

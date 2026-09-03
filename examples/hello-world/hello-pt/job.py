@@ -21,7 +21,7 @@ from nvflare.app_opt.pt.recipes.fedavg import FedAvgRecipe
 from nvflare.recipe import SimEnv, add_final_global_evaluation
 
 DEFAULT_NUM_CLIENTS = 2
-DEFAULT_NUM_ROUNDS = 2
+DEFAULT_NUM_ROUNDS = 3
 EXPORT_HELP = """NVFlare Recipe export options:
   --export                    Export the job instead of running it.
   --export-dir EXPORT_DIR     Parent directory for the exported job (default: ./fl_job).

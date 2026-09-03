@@ -1,8 +1,9 @@
 # Hello PyTorch
 
 This quickstart trains a small image classifier with federated averaging (FedAvg). Two simulated clients train on
-distinct local datasets for two rounds, and then evaluate the persisted final global model on separate evaluation
-data. The zero-argument path is deterministic, runs on CPU, downloads no dataset, and requires no tracking service.
+independently generated local datasets for three rounds, and then evaluate the persisted final global model on
+separate evaluation data. The zero-argument path is deterministic, runs on CPU, downloads no dataset, and requires no
+tracking service.
 
 ## Install
 
@@ -34,7 +35,7 @@ The default run uses:
 | --- | --- |
 | Dataset | Deterministic synthetic images with a class-related signal |
 | Clients | 2 |
-| Federated rounds | 2 |
+| Federated rounds | 3 |
 | Local epochs per round | 1 |
 | Training examples per client | 200 |
 | Evaluation examples per client | 100 |
@@ -50,7 +51,9 @@ Results are written under `/tmp/nvflare/simulation/hello-pt`. The two primary ou
 
 In the evaluation JSON, use the `SRV_FL_global_model.pt` result for each site. The automated acceptance test requires
 at least 60% accuracy on both sites and at least a 40 percentage-point improvement over the initial global model.
-These thresholds verify that federated training changed the model meaningfully; they are not benchmark claims.
+These thresholds are calibrated to the fixed model and data seeds with the three-round default. They verify that this
+specific federated run changed the model meaningfully; they are not guarantees for other initializations or
+hyperparameters and are not benchmark claims.
 
 ## Why this default is better than the previous version
 
@@ -179,7 +182,7 @@ The linked file is the runnable source; this excerpt introduces no alternate hel
 recipe = FedAvgRecipe(
     name="hello-pt",
     min_clients=2,
-    num_rounds=2,
+    num_rounds=3,
     model=create_model(),
     train_script="client.py",
     train_args="...",

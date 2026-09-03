@@ -76,6 +76,9 @@ def test_zero_flag_hello_pt_produces_learned_loadable_final_model(tmp_path, monk
     final_accuracies = [site_results["SRV_FL_global_model.pt"]["accuracy"] for site_results in final_results.values()]
 
     assert set(final_results) == {"site-1", "site-2"}
+    # These functional thresholds are calibrated to the quickstart's fixed
+    # model/data seeds and three-round default, not to arbitrary initialization
+    # or hyperparameters. The seeded run has margin above both boundaries.
     assert initial_accuracy <= 20.0
     assert min(final_accuracies) >= 60.0
     assert min(final_accuracies) >= initial_accuracy + 40.0

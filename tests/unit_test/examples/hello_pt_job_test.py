@@ -52,7 +52,7 @@ def test_zero_flag_defaults_are_portable_and_bounded():
     assert vars(args) == {
         "dataset": "synthetic",
         "n_clients": 2,
-        "num_rounds": 2,
+        "num_rounds": 3,
     }
 
 
@@ -119,7 +119,7 @@ def test_default_recipe_uses_final_global_evaluation(monkeypatch):
     assert result is recipe
     assert recipe_kwargs["model"] == "model"
     assert recipe_kwargs["min_clients"] == 2
-    assert recipe_kwargs["num_rounds"] == 2
+    assert recipe_kwargs["num_rounds"] == 3
     assert recipe_kwargs["train_script"] == "client.py"
     assert recipe_kwargs["train_args"] == "--dataset synthetic"
     assert calls == [("final", recipe)]
