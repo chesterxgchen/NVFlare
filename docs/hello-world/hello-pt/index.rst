@@ -7,11 +7,11 @@ Hello PyTorch is the recommended first federated-learning example for PyTorch.
 It uses :class:`FedAvgRecipe<nvflare.app_opt.pt.recipes.fedavg.FedAvgRecipe>`
 with ordinary PyTorch model, data-loading, training, and evaluation code.
 
-The zero-argument path is deterministic, CPU-safe, and offline. Two simulated
-clients train on independently generated synthetic image data for three
-federated rounds, and
-the persisted final global model is evaluated on separate site-local evaluation
-data. CIFAR-10 remains an explicit follow-up option.
+The zero-argument path is deterministic, CPU-safe, and offline. The default
+runs three federated rounds across two simulated clients using independently
+generated synthetic image data, then evaluates the persisted final global model
+on separate site-local evaluation data. CIFAR-10 remains an explicit follow-up
+option.
 
 The :github_nvflare_link:`example README <examples/hello-world/hello-pt/README.md>`
 is the authoritative reference for every option, default, artifact, and
