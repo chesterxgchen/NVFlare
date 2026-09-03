@@ -142,30 +142,31 @@ class SimpleNetwork(nn.Module):
 `;
 
 const jobCode_pt = `
-from model import SimpleNetwork
+from model import create_model
 
 from nvflare.app_opt.pt.recipes.fedavg import FedAvgRecipe
-from nvflare.recipe import SimEnv, add_experiment_tracking
+from nvflare.recipe import SimEnv, add_final_global_evaluation
 
 
 def main():
     n_clients = 2
-    num_rounds = 2
+    num_rounds = 3
 
     recipe = FedAvgRecipe(
         name="hello-pt",
         min_clients=n_clients,
         num_rounds=num_rounds,
-        model=SimpleNetwork(),
+        model=create_model(),
         train_script="client.py",
-        train_args="--batch_size 16",
+        train_args="--dataset synthetic",
     )
-    add_experiment_tracking(recipe, tracking_type="tensorboard")
+    add_final_global_evaluation(recipe)
 
     env = SimEnv(num_clients=n_clients)
     run = recipe.execute(env)
-    print("Job Status is:", run.get_status())
-    print("Result can be found in:", run.get_result())
+    result = run.get_result()
+    print("Simulation completed successfully.")
+    print("Result can be found in:", result)
 
 
 if __name__ == "__main__":

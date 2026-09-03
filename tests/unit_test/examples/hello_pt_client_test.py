@@ -46,10 +46,62 @@ def _load_hello_pt_module(file_name: str, module_name: str):
 
 
 def test_hello_pt_evaluate_rejects_empty_data_loader():
+    import torch
+
     client_module = _load_hello_pt_module("client.py", "hello_pt_client")
+    model = torch.nn.Linear(1, 2)
 
     with pytest.raises(ValueError, match="Evaluation data_loader produced no samples"):
-        client_module.evaluate(net=None, data_loader=[], device="cpu")
+        client_module.evaluate(net=model, data_loader=[], device="cpu")
+
+    assert not model.training
+
+
+def test_hello_pt_evaluate_uses_evaluation_mode():
+    import torch
+
+    client_module = _load_hello_pt_module("client.py", "hello_pt_client_eval_mode")
+
+    class ModeTrackingModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.observed_modes = []
+
+        def forward(self, inputs):
+            self.observed_modes.append(self.training)
+            return torch.zeros((len(inputs), 2))
+
+    model = ModeTrackingModel()
+    loader = [(torch.ones((2, 1)), torch.zeros(2, dtype=torch.long))]
+
+    client_module.evaluate(model, loader, "cpu")
+
+    assert model.observed_modes == [False]
+
+
+def test_cifar_data_loaders_use_prepared_data_without_downloading(monkeypatch):
+    import torch
+    import torchvision
+
+    client_module = _load_hello_pt_module("client.py", "hello_pt_client_cifar")
+    calls = []
+
+    class FakeDataset(torch.utils.data.Dataset):
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+        def __len__(self):
+            return 2
+
+        def __getitem__(self, index):
+            return torch.zeros((3, 32, 32)), index
+
+    monkeypatch.setattr(torchvision.datasets, "CIFAR10", FakeDataset)
+
+    train_loader, test_loader = client_module.create_data_loaders("cifar10", "site-1", 20, 10, 2, 0)
+
+    assert len(train_loader.dataset) == len(test_loader.dataset) == 2
+    assert [(call["train"], call["download"]) for call in calls] == [(True, False), (False, False)]
 
 
 def test_synthetic_data_is_deterministic_and_disjoint_by_site_and_split():
@@ -84,15 +136,34 @@ def test_synthetic_data_is_balanced_and_encodes_the_label():
         assert image[:, row : row + 5, column : column + 5].mean().item() == pytest.approx(1.0)
 
 
-def test_model_initialization_is_reproducible():
+def test_recipe_model_initialization_is_reproducible_and_isolated():
     import torch
 
     model_module = _load_hello_pt_module("model.py", "hello_pt_model")
 
-    # Recipes reconstruct the serialized model class on the server, so direct
-    # construction must be reproducible as well as the helper function.
-    first = model_module.SimpleNetwork().state_dict()
-    second = model_module.create_model().state_dict()
+    rng_state = torch.random.get_rng_state()
+    first_model = model_module.create_model()
+    first = first_model.state_dict()
+    assert torch.equal(torch.random.get_rng_state(), rng_state)
 
+    second_model = model_module.create_model()
+    second = second_model.state_dict()
+
+    assert first_model.seed == second_model.seed == model_module.MODEL_SEED
     assert first.keys() == second.keys()
     assert all(torch.equal(first[name], second[name]) for name in first)
+    assert model_module.SimpleNetwork().seed is None
+
+
+def test_prepare_data_downloads_both_cifar_splits(monkeypatch, tmp_path, capsys):
+    import torchvision
+
+    data_module = _load_hello_pt_module("prepare_data.py", "hello_pt_prepare_download")
+    calls = []
+    monkeypatch.setattr(torchvision.datasets, "CIFAR10", lambda **kwargs: calls.append(kwargs))
+
+    data_module.main(["--data_root", str(tmp_path)])
+
+    assert [(call["train"], call["download"]) for call in calls] == [(True, True), (False, True)]
+    assert all(call["root"] == str(tmp_path) for call in calls)
+    assert f"CIFAR-10 is ready under {tmp_path}" in capsys.readouterr().out

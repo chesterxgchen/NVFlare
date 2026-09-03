@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Prepare deterministic image data with a class-related signal for Hello PyTorch."""
+"""Prepare synthetic quickstart data or download optional CIFAR-10 data."""
 
+import argparse
 import hashlib
 
 import torch
@@ -21,6 +22,9 @@ from torch.utils.data import Dataset
 
 IMAGE_SHAPE = (3, 32, 32)
 NUM_CLASSES = 10
+DATASET_PATH = "/tmp/nvflare/data"
+DATASET_CHOICES = ("synthetic", "cifar10")
+DEFAULT_DATASET = "synthetic"
 _BASE_SEED = 202610
 _VALID_SPLITS = ("train", "eval")
 
@@ -74,3 +78,23 @@ class SyntheticImageDataset(Dataset):
 
     def __getitem__(self, index):
         return self.images[index], self.labels[index]
+
+
+def download_cifar10(data_root: str = DATASET_PATH):
+    """Download both CIFAR-10 splits once, before simulated clients start."""
+    from torchvision.datasets import CIFAR10
+
+    for train in (True, False):
+        CIFAR10(root=data_root, train=train, download=True)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Download CIFAR-10 for the optional Hello PyTorch CIFAR path.")
+    parser.add_argument("--data_root", default=DATASET_PATH)
+    args = parser.parse_args(argv)
+    download_cifar10(args.data_root)
+    print(f"CIFAR-10 is ready under {args.data_root}")
+
+
+if __name__ == "__main__":
+    main()

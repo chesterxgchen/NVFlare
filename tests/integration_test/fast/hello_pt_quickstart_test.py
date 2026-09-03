@@ -18,12 +18,9 @@ import os
 import sys
 from contextlib import contextmanager
 
-import pytest
+import torch
 
 from nvflare.recipe import SimEnv
-
-HAS_PT = importlib.util.find_spec("torch") is not None
-pytestmark = pytest.mark.skipif(not HAS_PT, reason="PyTorch is not installed")
 
 INTEGRATION_TEST_ROOT = os.path.dirname(os.path.dirname(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(INTEGRATION_TEST_ROOT))
@@ -48,12 +45,7 @@ def _load_job_module():
             sys.modules["model"] = original_model_module
         else:
             sys.modules.pop("model", None)
-    return module
-
-
 def test_zero_flag_hello_pt_produces_learned_loadable_final_model(tmp_path, monkeypatch):
-    import torch
-
     with _load_job_module() as job_module:
         monkeypatch.chdir(EXAMPLE_DIR)
         existing_pythonpath = os.environ.get("PYTHONPATH")
@@ -85,4 +77,5 @@ def test_zero_flag_hello_pt_produces_learned_loadable_final_model(tmp_path, monk
 
     artifact_path = os.path.join(server_run_dir, "app_server", "FL_global_model.pt")
     artifact = torch.load(artifact_path, map_location="cpu", weights_only=True)
-    assert artifact["model"]
+    with _load_job_module() as job_module:
+        job_module.create_model().load_state_dict(artifact["model"])

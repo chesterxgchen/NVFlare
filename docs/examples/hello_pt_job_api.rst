@@ -5,9 +5,9 @@ Hello PyTorch with the Job API
 
 The maintained Hello PyTorch Job API walkthrough is now consolidated in
 :doc:`../hello-world/hello-pt/index`. Its zero-argument simulation uses
-deterministic, site-distinct synthetic data, one local epoch per round, and
-final-global-model evaluation. CIFAR-10 is an explicit follow-up rather than a
-first-run dependency.
+deterministic, independently generated synthetic data from one simple IID
+distribution, one local epoch per round, and final-global-model evaluation.
+CIFAR-10 is an explicit follow-up rather than a first-run dependency.
 
 See the :github_nvflare_link:`example README <examples/hello-world/hello-pt/README.md>`
 for the authoritative commands, options, artifacts, data contract, and

@@ -23,19 +23,25 @@ MODEL_SEED = 202610
 
 
 class SimpleNetwork(nn.Module):
-    def __init__(self):
+    def __init__(self, seed=None):
         super(SimpleNetwork, self).__init__()
-        # The recipe serializes the model as a class configuration and the
-        # server constructs a new instance. Seed inside the constructor so
-        # those server-side parameters are reproducible too.
-        with torch.random.fork_rng(devices=[]):
-            torch.manual_seed(MODEL_SEED)
-            self.conv1 = nn.Conv2d(3, 6, 5)
-            self.pool = nn.MaxPool2d(2, 2)
-            self.conv2 = nn.Conv2d(6, 16, 5)
-            self.fc1 = nn.Linear(16 * 5 * 5, 120)
-            self.fc2 = nn.Linear(120, 84)
-            self.fc3 = nn.Linear(84, 10)
+        self.seed = seed
+        if seed is None:
+            self._initialize_layers()
+        else:
+            # Only seed the CPU generator used by these layers. ``fork_rng``
+            # restores it afterward without resetting CUDA/MPS/XPU generators.
+            with torch.random.fork_rng(devices=[]):
+                torch.random.default_generator.manual_seed(seed)
+                self._initialize_layers()
+
+    def _initialize_layers(self):
+        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.fc1 = nn.Linear(16 * 5 * 5, 120)
+        self.fc2 = nn.Linear(120, 84)
+        self.fc3 = nn.Linear(84, 10)
 
     def forward(self, x):
         x = self.pool(F.relu(self.conv1(x)))
@@ -48,5 +54,5 @@ class SimpleNetwork(nn.Module):
 
 
 def create_model():
-    """Create the example model with reproducible initial parameters."""
-    return SimpleNetwork()
+    """Create the recipe model with an explicitly serialized initialization seed."""
+    return SimpleNetwork(seed=MODEL_SEED)

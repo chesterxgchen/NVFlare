@@ -18,7 +18,7 @@ import argparse
 
 import torch
 from model import create_model
-from prepare_data import SyntheticImageDataset, stable_seed
+from prepare_data import DATASET_CHOICES, DATASET_PATH, DEFAULT_DATASET, SyntheticImageDataset, stable_seed
 from torch import nn
 from torch.optim import SGD
 
@@ -26,7 +26,6 @@ from torch.optim import SGD
 import nvflare.client as flare
 from nvflare.client.tracking import SummaryWriter
 
-DATASET_PATH = "/tmp/nvflare/data"
 LOCAL_MODEL_PATH = "./local_model.pt"
 DEFAULT_BATCH_SIZE = 32
 DEFAULT_CIFAR_LEARNING_RATE = 0.01
@@ -38,6 +37,7 @@ DEFAULT_SYNTHETIC_LEARNING_RATE = 0.1
 
 
 def evaluate(net, data_loader, device):
+    net.eval()
     correct = 0
     total = 0
     # since we're not training, we don't need to calculate the gradients for our outputs
@@ -65,16 +65,16 @@ def create_data_loaders(dataset, site_name, train_size, test_size, batch_size, n
         import torchvision
         from torchvision.transforms import Compose, Normalize, ToTensor
 
-        # Simulation clients share this cache. Pre-download CIFAR-10 once as
-        # documented in the README; concurrent first-use downloads can race.
+        # Simulation clients share this cache. ``prepare_data.py`` downloads
+        # CIFAR-10 once before clients start, avoiding concurrent writes.
         transform = Compose(
             [
                 ToTensor(),
                 Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
             ]
         )
-        train_set = torchvision.datasets.CIFAR10(root=DATASET_PATH, train=True, download=True, transform=transform)
-        test_set = torchvision.datasets.CIFAR10(root=DATASET_PATH, train=False, download=True, transform=transform)
+        train_set = torchvision.datasets.CIFAR10(root=DATASET_PATH, train=True, download=False, transform=transform)
+        test_set = torchvision.datasets.CIFAR10(root=DATASET_PATH, train=False, download=False, transform=transform)
 
     shuffle_generator = torch.Generator().manual_seed(stable_seed(site_name, "train-loader"))
     train_loader = torch.utils.data.DataLoader(
@@ -95,7 +95,7 @@ def main():
     parser.add_argument("--batch_size", type=int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument("--num_workers", type=int, default=DEFAULT_NUM_WORKERS)
     dataset_group = parser.add_mutually_exclusive_group()
-    dataset_group.add_argument("--dataset", choices=("synthetic", "cifar10"), dest="dataset")
+    dataset_group.add_argument("--dataset", choices=DATASET_CHOICES, dest="dataset")
     dataset_group.add_argument(
         "--synthetic_data",
         action="store_const",
@@ -103,10 +103,9 @@ def main():
         dest="dataset",
         help="Deprecated alias for --dataset synthetic.",
     )
-    parser.set_defaults(dataset="synthetic")
+    parser.set_defaults(dataset=DEFAULT_DATASET)
     parser.add_argument("--train_size", type=int, default=DEFAULT_TRAIN_SIZE)
     parser.add_argument("--test_size", type=int, default=DEFAULT_TEST_SIZE)
-    parser.add_argument("--track_metrics", action="store_true")
     args = parser.parse_args()
     learning_rate = args.learning_rate
     if learning_rate is None:
@@ -133,8 +132,9 @@ def main():
     )
     last_params = None
 
-    # (optional) metrics tracking
-    summary_writer = SummaryWriter() if args.track_metrics else None
+    # The client writer is transport-only and does not require TensorBoard.
+    # An optional server-side tracking receiver decides whether to persist it.
+    summary_writer = SummaryWriter()
 
     while flare.is_running():
         # (4) receives FLModel from NVFlare
@@ -167,6 +167,7 @@ def main():
             flare.send(output_model)
             continue
 
+        model.train()
         steps = args.epochs * len(train_loader)
         for epoch in range(args.epochs):
             running_loss = 0.0
@@ -182,9 +183,8 @@ def main():
                 running_loss += cost.item()
             avg_loss = running_loss / len(train_loader)
             print(f"site={client_name}, epoch={epoch + 1}/{args.epochs}, loss={avg_loss:.4f}")
-            if summary_writer:
-                global_step = input_model.current_round * args.epochs + epoch
-                summary_writer.add_scalar(tag="train_loss", scalar=avg_loss, global_step=global_step)
+            global_step = input_model.current_round * args.epochs + epoch
+            summary_writer.add_scalar(tag="train_loss", scalar=avg_loss, global_step=global_step)
 
         print(f"Finished Training for {client_name}")
         trained_accuracy = evaluate(model, test_loader, device)

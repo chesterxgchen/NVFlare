@@ -45,9 +45,11 @@ Run the quickstart
 
 The default run uses two simulated clients, three federated rounds, one local
 epoch per round, and no data download or tracking service. Each client receives
-its own reproducible training and evaluation samples. Labels are encoded by
-class-specific image regions, giving the small convolutional network a genuine
-and testable learning signal instead of unrelated random images and labels.
+reproducible samples generated independently from the same simple IID
+distribution. Labels are encoded by class-specific image regions, giving the
+small convolutional network a genuine and testable learning signal instead of
+unrelated random images and labels. This quickstart does not claim to model
+statistical heterogeneity.
 
 The client script follows the Client API lifecycle:
 
@@ -94,12 +96,11 @@ Optional follow-up paths
 ------------------------
 
 Run ``python job.py --help`` for the complete example and Recipe export options.
-CIFAR-10 is also available through ``--dataset cifar10``. Simulated clients
-share its cache, so pre-download both training and test splits once before
-starting a simulation; concurrent first-use downloads can race. All clients
-then read the same logical CIFAR-10 datasets, so this optional path does not
-demonstrate a federated data partition. The example README provides the exact
-pre-download and run commands.
+CIFAR-10 is also available through ``--dataset cifar10``. Run
+``python prepare_data.py`` first to download both splits before simulated
+clients open the shared cache. All clients then read the same logical CIFAR-10
+datasets, so this optional path does not demonstrate a federated data
+partition. The example README provides the exact commands.
 
 The beginner entry point intentionally exposes only client count, round count,
 and dataset choice. Environment selection, experiment tracking, full cross-site

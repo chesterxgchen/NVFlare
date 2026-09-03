@@ -16,6 +16,7 @@
 import argparse
 
 from model import create_model
+from prepare_data import DATASET_CHOICES, DEFAULT_DATASET
 
 from nvflare.app_opt.pt.recipes.fedavg import FedAvgRecipe
 from nvflare.recipe import SimEnv, add_final_global_evaluation
@@ -41,7 +42,7 @@ def define_parser() -> argparse.ArgumentParser:
     # Keep the zero-argument quickstart deterministic and offline. CIFAR-10 is
     # still available, but selecting it explicitly permits a dataset download.
     dataset_group = parser.add_mutually_exclusive_group()
-    dataset_group.add_argument("--dataset", choices=("synthetic", "cifar10"), dest="dataset")
+    dataset_group.add_argument("--dataset", choices=DATASET_CHOICES, dest="dataset")
     dataset_group.add_argument(
         "--synthetic_data",
         action="store_const",
@@ -49,7 +50,7 @@ def define_parser() -> argparse.ArgumentParser:
         dest="dataset",
         help="Deprecated alias for --dataset synthetic.",
     )
-    parser.set_defaults(dataset="synthetic")
+    parser.set_defaults(dataset=DEFAULT_DATASET)
 
     return parser
 

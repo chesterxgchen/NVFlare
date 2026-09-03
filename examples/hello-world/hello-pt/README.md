@@ -49,7 +49,10 @@ Results are written under `/tmp/nvflare/simulation/hello-pt`. The two primary ou
 - `server/simulate_job/app_server/FL_global_model.pt`: the persisted final global model.
 - `server/simulate_job/cross_site_val/cross_val_results.json`: evaluation metrics by client and model.
 
-In the evaluation JSON, use the `SRV_FL_global_model.pt` result for each site. The automated acceptance test requires
+In the evaluation JSON, use the `SRV_FL_global_model.pt` result for each site. A `best` model can also appear because
+training-round metrics score the global model received at the start of a round; the final aggregate is produced after
+the last such score. The final model can therefore outperform the model selected earlier as `best` in this short run.
+The automated acceptance test requires
 at least 60% accuracy on both sites and at least a 40 percentage-point improvement over the initial global model.
 These thresholds are calibrated to the fixed model and data seeds with the three-round default. They verify that this
 specific federated run changed the model meaningfully; they are not guarantees for other initializations or
@@ -67,7 +70,8 @@ The new default addresses those problems directly:
 
 - Each label is represented by a bright image region at a class-specific position, giving the model a simple,
   verifiable signal to learn.
-- Site and split seeds make runs reproducible while keeping each client's training data and evaluation data distinct.
+- Site and split seeds make runs reproducible while independently generating each client's training and evaluation
+  samples from the same simple IID distribution. This quickstart does not claim to model statistical heterogeneity.
 - The bounded CPU workload runs without a dataset download, TensorBoard, or extra command-line flags.
 - The primary `accuracy` metric measures the received global model, keeping server-side best-model selection aligned
   with that exact model. `accuracy_after_local_training` separately shows the immediate local training progress.
@@ -85,7 +89,7 @@ hello-pt/
 ├── client.py          # Client-side training and evaluation
 ├── job.py             # FedAvg recipe and simulation entry point
 ├── model.py           # PyTorch model definition and deterministic initialization
-├── prepare_data.py    # Site- and split-specific default data preparation
+├── prepare_data.py    # Default data generation and optional CIFAR-10 download
 ├── requirements.txt   # Default dependencies
 └── README.md
 ```
@@ -130,6 +134,7 @@ while flare.is_running():
         flare.send(output_model)
         continue
 
+    model.train()
     steps = args.epochs * len(train_loader)
     for epoch in range(args.epochs):
         running_loss = 0.0
@@ -145,9 +150,8 @@ while flare.is_running():
             running_loss += cost.item()
         avg_loss = running_loss / len(train_loader)
         print(f"site={client_name}, epoch={epoch + 1}/{args.epochs}, loss={avg_loss:.4f}")
-        if summary_writer:
-            global_step = input_model.current_round * args.epochs + epoch
-            summary_writer.add_scalar(tag="train_loss", scalar=avg_loss, global_step=global_step)
+        global_step = input_model.current_round * args.epochs + epoch
+        summary_writer.add_scalar(tag="train_loss", scalar=avg_loss, global_step=global_step)
 
     print(f"Finished Training for {client_name}")
     trained_accuracy = evaluate(model, test_loader, device)
@@ -204,17 +208,12 @@ python job.py --help
 
 Use CIFAR-10 instead of the deterministic quickstart data:
 
-Simulated clients share the cache at `/tmp/nvflare/data`. If CIFAR-10 is not
-already present, download both splits once before starting the simulation;
-concurrent first-use downloads from multiple clients can race:
+Simulated clients share the cache at `/tmp/nvflare/data`. Download both splits
+once before starting the simulation; clients open the prepared data without
+downloading so they cannot race while writing the same files:
 
 ```bash
-python - <<'PY'
-from torchvision.datasets import CIFAR10
-
-for train in (True, False):
-    CIFAR10(root="/tmp/nvflare/data", train=train, download=True)
-PY
+python prepare_data.py
 ```
 
 ```bash
@@ -224,7 +223,8 @@ python job.py --dataset cifar10
 All simulated clients then read the same logical CIFAR-10 training and test
 datasets from that shared cache. This option is useful for experimentation but
 does not demonstrate a federated data partition. The default synthetic path
-remains offline and gives every site distinct training and evaluation samples.
+remains offline and independently generates every site's training and
+evaluation samples from the same IID distribution.
 
 The beginner entry point intentionally exposes only the number of clients,
 number of rounds, and dataset choice. Environment selection, experiment

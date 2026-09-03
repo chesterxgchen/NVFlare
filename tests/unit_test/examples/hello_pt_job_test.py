@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import importlib.util
+import json
 import os
 import sys
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -23,7 +25,8 @@ HAS_PT = importlib.util.find_spec("torch") is not None
 pytestmark = pytest.mark.skipif(not HAS_PT, reason="PyTorch is not installed")
 
 
-def _load_job_module():
+@contextmanager
+def _job_module_context():
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
     example_dir = os.path.join(repo_root, "examples", "hello-world", "hello-pt")
     module_path = os.path.join(example_dir, "job.py")
@@ -35,13 +38,18 @@ def _load_job_module():
     sys.path.insert(0, example_dir)
     try:
         spec.loader.exec_module(module)
+        yield module
     finally:
         sys.path.pop(0)
         if original_model_module is not None:
             sys.modules["model"] = original_model_module
         else:
             sys.modules.pop("model", None)
-    return module
+
+
+def _load_job_module():
+    with _job_module_context() as module:
+        return module
 
 
 def test_zero_flag_defaults_are_portable_and_bounded():
@@ -144,3 +152,24 @@ def test_cifar_remains_an_explicit_option(monkeypatch):
 
     assert recipe_kwargs["train_args"] == "--dataset cifar10"
     assert calls == [("final", recipe)]
+
+
+def test_export_serializes_the_recipe_model_seed(tmp_path, monkeypatch):
+    example_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "..", "examples", "hello-world", "hello-pt")
+    )
+    monkeypatch.chdir(example_dir)
+
+    with _job_module_context() as job_module:
+        recipe = job_module.create_recipe(job_module.define_parser().parse_args([]))
+        recipe.export(job_dir=str(tmp_path))
+
+    config_path = tmp_path / "hello-pt" / "app" / "config" / "config_fed_server.json"
+    with config_path.open() as config_file:
+        config = json.load(config_file)
+    model_configs = [
+        component["args"]["model"]
+        for component in config["components"]
+        if component.get("path", "").endswith("PTFileModelPersistor")
+    ]
+    assert model_configs == [{"path": "model.SimpleNetwork", "args": {"seed": 202610}}]
