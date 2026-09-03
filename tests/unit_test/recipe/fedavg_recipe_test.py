@@ -239,6 +239,31 @@ class TestFedAvgRecipe:
                 },
             )
 
+    def test_pre_tokenized_train_args_with_secret_refs_are_supported(
+        self, mock_file_system, base_recipe_params, simple_model
+    ):
+        params = {**base_recipe_params, "train_args": ["--api-key", "${secret:DEFAULT_API_KEY}"]}
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UnsupportedSecretRefWarning)
+            recipe = FedAvgRecipe(name="argv_secret_ref", model=simple_model, **params)
+            set_per_site_config(
+                recipe,
+                {
+                    "site-1": {"train_args": ["--api-key", "${secret:SITE_API_KEY}"]},
+                    "site-2": {},
+                },
+            )
+            recipe._ensure_client_apps_prepared()
+
+        assert get_client_executor(recipe, "site-1")._task_script_args == [
+            "--api-key",
+            "${secret:SITE_API_KEY}",
+        ]
+        assert get_client_executor(recipe, "site-2")._task_script_args == [
+            "--api-key",
+            "${secret:DEFAULT_API_KEY}",
+        ]
+
     """Test cases for FedAvgRecipe class."""
 
     def test_default_aggregator_initialization(self, mock_file_system, base_recipe_params, simple_model):

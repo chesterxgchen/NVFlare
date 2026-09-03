@@ -98,7 +98,7 @@ class ScriptRunner:
         Args:
             script: Training script path.
             script_args: Arguments appended to the script. Pre-tokenized argv preserves
-                exact argument boundaries for external processes.
+                exact argument boundaries in both execution modes.
             launch_external_process: Select ``external_process`` when ``execution_mode``
                 is omitted; otherwise select ``in_process``.
             command: Command prepended to the script in ``external_process`` mode.

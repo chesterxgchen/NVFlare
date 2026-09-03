@@ -20,6 +20,7 @@ from typing import Optional
 from pydantic import BaseModel, model_validator
 
 from nvflare.apis.fl_constant import WorkspaceConstants
+from nvflare.apis.job_def import RunStatus
 from nvflare.app_common.default_component_policy import DEFAULT_CLASS_ALLOW_LIST
 from nvflare.app_common.widgets.component_path_authorizer import CLASS_ALLOW_LIST
 from nvflare.job_config.api import FedJob
@@ -110,34 +111,43 @@ class SimEnv(ExecEnv):
             )
         self.workspace_root = workspace_override or v.workspace_root
         self.last_run_failed = False
+        self._job_statuses: dict[str, str] = {}
 
     def deploy(self, job: FedJob):
-        # Validate scripts exist locally for simulation
-        non_local_scripts = collect_non_local_scripts(job)
-        if non_local_scripts:
-            raise ValueError(
-                f"The following scripts do not exist locally: {non_local_scripts}. "
-                f"For SimEnv, all scripts must be present on the local machine."
-            )
-
         job_id = job.name
-        workspace = os.path.join(self.workspace_root, job_id)
-        self._ensure_default_component_policy(workspace)
-        run_status = job.simulator_run(
-            workspace=workspace,
-            n_clients=self.num_clients if self.clients is None else None,
-            clients=self.clients,
-            threads=self.num_threads,
-            gpu=self.gpu_config,
-            log_config=self.log_config,
-        )
-        self.last_run_failed = run_status not in (None, 0)
-        if self.last_run_failed:
-            raise RuntimeError(
-                f"Simulation failed with return code {run_status}. "
-                f"Logs are in per-site subdirectories under {os.path.join(self.workspace_root, job_id)}, "
-                f"e.g. server/simulate_job/log.txt"
+        self._job_statuses.pop(job_id, None)
+
+        try:
+            # Validate scripts exist locally for simulation
+            non_local_scripts = collect_non_local_scripts(job)
+            if non_local_scripts:
+                raise ValueError(
+                    f"The following scripts do not exist locally: {non_local_scripts}. "
+                    f"For SimEnv, all scripts must be present on the local machine."
+                )
+
+            workspace = os.path.join(self.workspace_root, job_id)
+            self._ensure_default_component_policy(workspace)
+            run_status = job.simulator_run(
+                workspace=workspace,
+                n_clients=self.num_clients if self.clients is None else None,
+                clients=self.clients,
+                threads=self.num_threads,
+                gpu=self.gpu_config,
+                log_config=self.log_config,
             )
+            if run_status not in (None, 0):
+                raise RuntimeError(
+                    f"Simulation failed with return code {run_status}. "
+                    f"Logs are in per-site subdirectories under {os.path.join(self.workspace_root, job_id)}, "
+                    f"e.g. server/simulate_job/log.txt"
+                )
+        except Exception:
+            self.last_run_failed = True
+            self._job_statuses[job_id] = RunStatus.FINISHED_ABNORMAL.value
+            raise
+        self.last_run_failed = False
+        self._job_statuses[job_id] = RunStatus.FINISHED_COMPLETED.value
         return job_id
 
     @staticmethod
@@ -164,11 +174,8 @@ class SimEnv(ExecEnv):
             json.dump(resources, f, indent=4)
 
     def get_job_status(self, job_id: str) -> Optional[str]:
-        """Get job status - not supported in simulation environment."""
-        print(
-            f"Note, get_status returns None in SimEnv. The simulation logs can be found at {os.path.join(self.workspace_root, job_id)}"
-        )
-        return None
+        """Get the final status of a synchronous simulation, if known."""
+        return self._job_statuses.get(job_id)
 
     def abort_job(self, job_id: str) -> None:
         """Abort job - not supported in simulation environment."""

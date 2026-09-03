@@ -17,6 +17,7 @@ import runpy
 import sys
 import threading
 import traceback
+from typing import Optional, Union
 
 from nvflare.client.in_process.api import TOPIC_ABORT
 from nvflare.fuel.data_event.data_bus import DataBus
@@ -64,18 +65,34 @@ def _disable_print_redirect():
 class TaskScriptRunner:
     logger = get_module_logger(__module__, __qualname__)
 
-    def __init__(self, custom_dir: str, script_path: str, script_args: str = None, redirect_print_to_log=True):
+    def __init__(
+        self,
+        custom_dir: str,
+        script_path: str,
+        script_args: Optional[Union[str, list[str]]] = None,
+        redirect_print_to_log=True,
+    ):
         """Wrapper for function given function path and args
 
         Args:
             custom_dir (str): site name
             script_path (str): script file name, such as train.py
-            script_args (str, Optional): script arguments to pass in.
+            script_args: Script arguments as a legacy whitespace-delimited string or
+                pre-tokenized argv. Use argv when values contain whitespace or quotes.
         """
 
         self.redirect_print_to_log = redirect_print_to_log
         self.event_manager = EventManager(DataBus())
-        self.script_args = script_args
+        if isinstance(script_args, list):
+            if not all(isinstance(arg, str) for arg in script_args):
+                raise ValueError("script_args argv must contain only strings")
+            self.script_args = list(script_args)
+        elif isinstance(script_args, str) or script_args is None:
+            self.script_args = script_args
+        else:
+            raise ValueError(
+                f"script_args must be a string, list of strings, or None, but got {type(script_args).__name__}"
+            )
         self.custom_dir = custom_dir
         self.script_path = script_path
         self.script_full_path = self.get_script_full_path(self.custom_dir, self.script_path)
@@ -140,18 +157,19 @@ class TaskScriptRunner:
                     sys.argv = self._original_argv
 
     def get_sys_argv(self):
-        # Preserve the runner's legacy whitespace splitting for existing arguments. Only quoted
-        # spans containing a secret ref are grouped, so a composite such as
-        # "Bearer ${secret:TOKEN}" remains one argument without changing unrelated backslashes.
-        args_list = (
-            []
-            if not self.script_args
-            else split_command_preserving_secret_refs(
+        # Keep legacy strings on their historical whitespace-only path. New
+        # callers can pass argv to preserve exact boundaries without ambiguous
+        # shell parsing (for example, apostrophes versus single-quoted spans).
+        if isinstance(self.script_args, list):
+            args_list = list(self.script_args)
+        elif self.script_args:
+            args_list = split_command_preserving_secret_refs(
                 self.script_args,
                 posix=False,
                 group_secret_ref_quotes="${secret:" in self.script_args,
             )
-        )
+        else:
+            args_list = []
         # Resolve ${secret:ENV_VAR} references from this site's environment after splitting,
         # so injected values containing whitespace stay single arguments. The resolved values
         # exist only in the argv handed to the script and must never be logged.

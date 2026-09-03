@@ -807,7 +807,7 @@
           },
           {
             "name": "train_args",
-            "type": "str",
+            "type": "Union[str, list[str]]",
             "required": false,
             "default": "",
             "kind": "keyword_only"
@@ -1493,7 +1493,7 @@
           },
           {
             "name": "train_args",
-            "type": "str",
+            "type": "Union[str, list[str]]",
             "required": false,
             "default": "",
             "kind": "keyword_only"

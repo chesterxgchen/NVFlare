@@ -65,7 +65,7 @@ class ClientAPIBackendContext:
     executor: "ClientAPIExecutor"
     # in_process entry point
     task_script_path: Optional[str] = None
-    task_script_args: str = ""
+    task_script_args: Union[str, list[str]] = ""
     # external_process launch
     command: Optional[Union[str, list[str]]] = None
     launch_once: bool = True

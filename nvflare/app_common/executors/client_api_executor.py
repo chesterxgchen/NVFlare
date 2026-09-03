@@ -70,7 +70,7 @@ class ClientAPIExecutor(Executor):
         execution_mode: str,
         command: Optional[Union[str, list[str]]] = None,
         task_script_path: Optional[str] = None,
-        task_script_args: str = "",
+        task_script_args: Union[str, list[str]] = "",
         launch_once: bool = _DEFAULT_LAUNCH_ONCE,
         launch_timeout: Optional[float] = _DEFAULT_LAUNCH_TIMEOUT,
         shutdown_timeout: Optional[float] = None,
@@ -108,7 +108,8 @@ class ClientAPIExecutor(Executor):
             task_script_path (Optional[str]): in_process only. Path to the user training script the
                 in_process backend runs via TaskScriptRunner. An empty/whitespace-only string is
                 treated as unset. (The in_process backend validates presence and ".py" suffix.)
-            task_script_args (str): in_process only. Arguments appended to task_script_path.
+            task_script_args (Union[str, list[str]]): in_process only. Arguments appended to
+                task_script_path. Pre-tokenized argv preserves exact boundaries without shell parsing.
             launch_once (bool): external_process only. Launch the trainer once per job (default)
                 vs once per task.
             launch_timeout (Optional[float]): external_process only. Bound for the launched
@@ -178,6 +179,7 @@ class ClientAPIExecutor(Executor):
         # Normalize empty entry points before mode-specific validation.
         command = self._normalize_command(command)
         task_script_path = self._normalize_optional_str(task_script_path)
+        task_script_args = self._normalize_script_args(task_script_args)
 
         is_in_process = execution_mode == ExecutionMode.IN_PROCESS
         is_external = execution_mode == ExecutionMode.EXTERNAL_PROCESS
@@ -496,6 +498,18 @@ class ClientAPIExecutor(Executor):
         if not command[0].strip():
             raise ValueError("command argv must start with a non-empty executable")
         return list(command)
+
+    @staticmethod
+    def _normalize_script_args(script_args: Union[str, list[str]]) -> Union[str, list[str]]:
+        if isinstance(script_args, str):
+            return script_args
+        if not isinstance(script_args, list):
+            raise ValueError(
+                f"task_script_args must be a string or list of strings, but got {type(script_args).__name__}"
+            )
+        if not all(isinstance(arg, str) for arg in script_args):
+            raise ValueError("task_script_args argv must contain only strings")
+        return list(script_args)
 
     @staticmethod
     def _wrong_mode_error(arg_name: str, value, valid_modes: str, execution_mode: str) -> ValueError:

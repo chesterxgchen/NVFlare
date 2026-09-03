@@ -49,7 +49,7 @@ class _FedAvgValidator(BaseModel):
     min_clients: int
     num_rounds: int
     train_script: str
-    train_args: str
+    train_args: Union[str, list[str]]
     # Legacy parameters for backward compatibility (not used by new FedAvg)
     aggregator: Optional[Aggregator] = None
     aggregator_data_kind: Optional[DataKind] = DataKind.WEIGHTS
@@ -124,8 +124,9 @@ class FedAvgRecipe(Recipe):
         min_clients: Minimum number of clients required to start a training round.
         num_rounds: Number of federated training rounds to execute. Defaults to 2.
         train_script: Path to the training script that will be executed on each client.
-        train_args: Command line arguments to pass to the training script. Written in clear
-            text into the generated job config, so it must never contain actual secret values
+        train_args: Command line arguments to pass to the training script, either as a legacy
+            string or pre-tokenized argv. Use argv when values contain whitespace or quotes.
+            Values are written in clear text into the generated job config, so they must never contain actual secrets
             (a PotentialSecretWarning is emitted if it looks like it does). To pass a secret,
             use :func:`nvflare.recipe.secrets.secret_ref` for a site environment variable or
             :func:`nvflare.recipe.secrets.secret_file_ref` for a mounted secret file. The
@@ -155,7 +156,7 @@ class FedAvgRecipe(Recipe):
             ``set_per_site_config(recipe, config)`` immediately after construction. Each config dict can
             contain optional overrides:
             - train_script (str): Training script path
-            - train_args (str): Script arguments
+            - train_args (str or list[str]): Script arguments
             - launch_external_process (bool): Whether to launch external process
             - command (str): Command prefix for external process
             - framework (FrameworkType): Framework type
@@ -215,7 +216,7 @@ class FedAvgRecipe(Recipe):
         min_clients: int,
         num_rounds: int = 2,
         train_script: str,
-        train_args: str = "",
+        train_args: Union[str, list[str]] = "",
         # Legacy parameters for backward compatibility
         aggregator: Optional[Aggregator] = None,
         aggregator_data_kind: Optional[DataKind] = DataKind.WEIGHTS,
