@@ -70,7 +70,17 @@ The command prints the result directory. For the default simulation it is
 ``server/simulate_job`` are:
 
 - ``app_server/FL_global_model.pt`` -- the persisted final global model.
-- ``cross_site_val/cross_val_results.json`` -- final evaluation metrics by site.
+- ``metrics/metrics_summary.json`` -- final aggregated training-round metrics
+  and available best-model metric metadata.
+- ``cross_site_val/cross_val_results.json`` -- post-training evaluation of the
+  persisted final model by site.
+
+Use ``metrics_summary.json`` for a compact summary of the federated training
+metrics. To inspect the accuracy of the persisted model after the last
+aggregation, use each site's ``SRV_FL_global_model.pt`` entry in
+``cross_val_results.json``. These values can differ because clients report
+training-round accuracy before local training and the final aggregation occurs
+after the last such report.
 
 The automated acceptance test requires at least 60% final accuracy on both
 sites and at least a 40 percentage-point improvement over the initial global

@@ -53,13 +53,23 @@ def test_zero_flag_hello_pt_produces_learned_loadable_final_model(tmp_path, monk
         existing_pythonpath = os.environ.get("PYTHONPATH")
         source_pythonpath = REPO_ROOT if not existing_pythonpath else os.pathsep.join((REPO_ROOT, existing_pythonpath))
         monkeypatch.setenv("PYTHONPATH", source_pythonpath)
-        recipe = job_module.create_recipe(job_module.define_parser().parse_args([]))
+        args = job_module.define_parser().parse_args([])
+        expected_final_round = args.num_rounds - 1
+        recipe = job_module.create_recipe(args)
         env = SimEnv(num_clients=2, workspace_root=str(tmp_path / "simulation"))
 
         run = recipe.execute(env)
         result_path = run.get_result()
 
     server_run_dir = os.path.join(result_path, "server", "simulate_job")
+    with open(os.path.join(server_run_dir, "metrics", "metrics_summary.json")) as summary_file:
+        metrics_summary = json.load(summary_file)
+    summary_metric_names = {metric["name"] for metric in metrics_summary["final_aggregated_metrics"]}
+
+    assert metrics_summary["status"] == "metrics_reported"
+    assert metrics_summary["final_round"] == expected_final_round
+    assert "accuracy" in summary_metric_names
+
     with open(os.path.join(server_run_dir, "metrics", "round_metrics.jsonl")) as metrics_file:
         first_round = json.loads(next(metrics_file))
     first_round_metrics = {metric["name"]: metric["value"] for metric in first_round["aggregated_metrics"]}

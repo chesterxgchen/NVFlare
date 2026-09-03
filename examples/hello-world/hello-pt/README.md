@@ -44,43 +44,24 @@ The default run uses:
 | Experiment tracking | Off |
 | Post-training evaluation | Final global model on both clients |
 
-Results are written under `/tmp/nvflare/simulation/hello-pt`. The two primary outputs are:
+Results are written under `/tmp/nvflare/simulation/hello-pt`. The primary result artifacts are:
 
 - `server/simulate_job/app_server/FL_global_model.pt`: the persisted final global model.
-- `server/simulate_job/cross_site_val/cross_val_results.json`: evaluation metrics by client and model.
+- `server/simulate_job/metrics/metrics_summary.json`: final aggregated training-round metrics and available best-model
+  metric metadata.
+- `server/simulate_job/cross_site_val/cross_val_results.json`: post-training evaluation of the persisted final model by
+  client.
 
-In the evaluation JSON, use the `SRV_FL_global_model.pt` result for each site. A `best` model can also appear because
-training-round metrics score the global model received at the start of a round; the final aggregate is produced after
-the last such score. The final model can therefore outperform the model selected earlier as `best` in this short run.
+Use `metrics_summary.json` for a compact summary of the federated training metrics. To inspect the accuracy of the
+persisted model after the last aggregation, use the `SRV_FL_global_model.pt` result for each site in
+`cross_val_results.json`. A `best` model can also appear because training-round metrics score the global model received
+at the start of a round; the final aggregate is produced after the last such score. The final model can therefore
+outperform both the last reported training-round accuracy and the model selected earlier as `best` in this short run.
 The automated acceptance test requires
 at least 60% accuracy on both sites and at least a 40 percentage-point improvement over the initial global model.
 These thresholds are calibrated to the fixed model and data seeds with the three-round default. They verify that this
 specific federated run changed the model meaningfully; they are not guarantees for other initializations or
 hyperparameters and are not benchmark claims.
-
-## Why this default is better than the previous version
-
-The previous zero-argument run selected CIFAR-10, so it depended on a network download and could fail in an offline
-or restricted environment. Its optional synthetic path used random images and random labels with no relationship
-between them. A model cannot learn a repeatable classification rule from that data, so a successful job process did
-not demonstrate successful learning. The simulated clients also used the same CIFAR-10 data, and final global-model
-evaluation was optional.
-
-The new default addresses those problems directly:
-
-- Each label is represented by a bright image region at a class-specific position, giving the model a simple,
-  verifiable signal to learn.
-- Site and split seeds make runs reproducible while independently generating each client's training and evaluation
-  samples from the same simple IID distribution. This quickstart does not claim to model statistical heterogeneity.
-- The bounded CPU workload runs without a dataset download, TensorBoard, or extra command-line flags.
-- The primary `accuracy` metric measures the received global model, keeping server-side best-model selection aligned
-  with that exact model. `accuracy_after_local_training` separately shows the immediate local training progress.
-- The persisted final global model is evaluated on both clients by default, and an integration test loads the artifact
-  and enforces the learning thresholds above.
-- CIFAR-10 and TensorBoard remain available as explicit options for users who want them.
-
-The data remains local to each client. Clients send model parameters, evaluation metrics, and the number of completed
-optimizer steps; they do not send their training examples to the server.
 
 ## Code structure
 
@@ -197,6 +178,9 @@ recipe.execute(SimEnv(num_clients=2))
 
 The recipe initializes the global model, sends it to selected clients, collects local updates, performs weighted
 FedAvg aggregation, persists the result, and requests the final evaluation.
+
+Training data remains local to each client. Clients send model parameters, evaluation metrics, and the number of
+completed optimizer steps; they do not send their training examples to the server.
 
 ## Customize the run
 
