@@ -14,6 +14,7 @@
 
 import builtins
 import os
+import shlex
 import shutil
 import sys
 import tempfile
@@ -88,7 +89,7 @@ class TestTaskScriptRunner(unittest.TestCase):
 
         assert argv[1:] == ["--authorization", "Bearer resolved secret"]
 
-    def test_secret_ref_does_not_change_unrelated_backslashes_or_quotes(self):
+    def test_quote_aware_args_preserve_unquoted_backslashes(self):
         wrapper = TaskScriptRunner(
             custom_dir=self.nvflare_root,
             script_path="nvflare/cli.py",
@@ -107,11 +108,86 @@ class TestTaskScriptRunner(unittest.TestCase):
             "--path",
             r"C:\data\x",
             "--legacy",
-            '"two',
-            'words"',
+            "two words",
             "--authorization",
             "Bearer resolved",
         ]
+
+    def test_shell_quoted_path_is_one_argument(self):
+        wrapper = TaskScriptRunner(
+            custom_dir=self.nvflare_root,
+            script_path="nvflare/cli.py",
+            script_args="--data_root '/data/cifar cache'",
+        )
+
+        assert wrapper.get_sys_argv()[1:] == ["--data_root", "/data/cifar cache"]
+
+    def test_embedded_apostrophe_remains_literal(self):
+        wrapper = TaskScriptRunner(
+            custom_dir=self.nvflare_root,
+            script_path="nvflare/cli.py",
+            script_args="--data_root /mnt/O'Brien",
+        )
+
+        assert wrapper.get_sys_argv()[1:] == ["--data_root", "/mnt/O'Brien"]
+
+    def test_embedded_apostrophe_does_not_pair_with_later_quoted_argument(self):
+        wrapper = TaskScriptRunner(
+            custom_dir=self.nvflare_root,
+            script_path="nvflare/cli.py",
+            script_args="--name O'Brien --data_root '/data/cache path'",
+        )
+
+        assert wrapper.get_sys_argv()[1:] == ["--name", "O'Brien", "--data_root", "/data/cache path"]
+
+    def test_shlex_joined_path_with_apostrophe_and_space_is_one_argument(self):
+        data_root = "/mnt/O'Brien cache"
+        wrapper = TaskScriptRunner(
+            custom_dir=self.nvflare_root,
+            script_path="nvflare/cli.py",
+            script_args=shlex.join(["--data_root", data_root]),
+        )
+
+        assert wrapper.get_sys_argv()[1:] == ["--data_root", data_root]
+
+    def test_balanced_embedded_single_quotes_form_one_composite_argument(self):
+        wrapper = TaskScriptRunner(
+            custom_dir=self.nvflare_root,
+            script_path="nvflare/cli.py",
+            script_args="--label prefix'with space'suffix",
+        )
+
+        assert wrapper.get_sys_argv()[1:] == ["--label", "prefixwith spacesuffix"]
+
+    def test_escaped_quote_does_not_end_quoted_argument(self):
+        cases = [
+            (r'--label "a\"b"', 'a"b'),
+            (r'--label prefix"a\"b"suffix', 'prefixa"bsuffix'),
+        ]
+        for script_args, expected_value in cases:
+            with self.subTest(script_args=script_args):
+                wrapper = TaskScriptRunner(
+                    custom_dir=self.nvflare_root,
+                    script_path="nvflare/cli.py",
+                    script_args=script_args,
+                )
+
+                assert wrapper.get_sys_argv()[1:] == ["--label", expected_value]
+
+    def test_unquoted_escaped_quotes_remain_literal(self):
+        cases = [
+            (r"--label \"foo\"", r"\"foo\""),
+            (r"--label \'foo\'", r"\'foo\'"),
+        ]
+        for script_args, expected_value in cases:
+            with self.subTest(script_args=script_args):
+                wrapper = TaskScriptRunner(
+                    custom_dir=self.nvflare_root,
+                    script_path="nvflare/cli.py",
+                    script_args=script_args,
+                )
+
+                assert wrapper.get_sys_argv()[1:] == ["--label", expected_value]
 
     def test_secret_file_ref_content_is_one_argument(self):
         with tempfile.TemporaryDirectory() as temp_dir:

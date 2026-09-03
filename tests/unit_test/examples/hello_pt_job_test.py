@@ -178,6 +178,26 @@ def test_default_recipe_uses_final_global_evaluation(monkeypatch):
     assert calls == [("final", recipe)]
 
 
+def test_cifar_recipe_preserves_data_root_with_spaces(monkeypatch):
+    job_module = _load_job_module()
+    recipe_kwargs = {}
+    recipe = object()
+
+    monkeypatch.setattr(job_module, "FedAvgRecipe", lambda **kwargs: recipe_kwargs.update(kwargs) or recipe)
+    monkeypatch.setattr(job_module, "create_model", lambda: "model")
+    monkeypatch.setattr(job_module, "add_final_global_evaluation", lambda value: None)
+
+    args = job_module.define_parser().parse_args(["--dataset", "cifar10", "--data_root", "/data/cifar cache"])
+    job_module.create_recipe(args)
+
+    assert shlex.split(recipe_kwargs["train_args"]) == [
+        "--dataset",
+        "cifar10",
+        "--data_root",
+        "/data/cifar cache",
+    ]
+
+
 def test_cifar_remains_an_explicit_option(monkeypatch):
     job_module = _load_job_module()
     calls = []

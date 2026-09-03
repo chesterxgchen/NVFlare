@@ -272,7 +272,85 @@ def _shield_quoted_secret_ref_composites(command: str, marker_prefix: str):
     return "".join(parts), quoted_values
 
 
-def split_command_preserving_secret_refs(command: str, posix: bool, group_secret_ref_quotes: bool = False) -> List[str]:
+def _shield_unquoted_literals(command: str, marker_prefix: str):
+    """Shield legacy literals that quote-aware parsing would otherwise reinterpret."""
+    literal_prefix = f"{marker_prefix}LITERAL_"
+    markers = []
+    parts = []
+    quote = None
+
+    def _has_embedded_single_quote_closer(start: int) -> bool:
+        """Return whether this embedded apostrophe starts a quoted span.
+
+        A quote at the start of a later whitespace-delimited token belongs to that
+        token; it must not close an earlier apostrophe such as the one in
+        ``O'Brien --path '/cache dir'``. Treating that quote as a closer would
+        merge otherwise separate arguments. Quotes embedded later in a token can
+        close shell-style concatenation such as ``prefix'with space'suffix``.
+        """
+        position = start + 1
+        while position < len(command):
+            if command[position] == "\\" and position + 1 < len(command):
+                position += 2
+                continue
+            if command[position] == "'":
+                return position > 0 and not command[position - 1].isspace()
+            position += 1
+        return False
+
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if quote:
+            parts.append(char)
+            if quote == '"' and char == "\\" and index + 1 < len(command):
+                # In a double-quoted span, an escaped delimiter belongs to the
+                # argument and must not end the span. Leave both characters for
+                # shlex.split() to interpret.
+                index += 1
+                parts.append(command[index])
+            elif char == quote:
+                quote = None
+        elif (
+            char == "'"
+            and index > 0
+            and not (command[index - 1].isspace() or command[index - 1] in "=([{,:\"'")
+            and not _has_embedded_single_quote_closer(index)
+        ):
+            # An apostrophe embedded in an unquoted token (for example,
+            # /mnt/O'Brien) is literal when it has no valid closing delimiter in
+            # the same argument. A balanced embedded pair opens a shell-style
+            # span, as do leading quotes and the adjacent quoted segments
+            # produced by shlex.join().
+            marker = f"{literal_prefix}{len(markers)}__"
+            markers.append((marker, char))
+            parts.append(marker)
+        elif char in {"'", '"'}:
+            quote = char
+            parts.append(char)
+        elif char == "\\":
+            marker = f"{literal_prefix}{len(markers)}__"
+            literal = char
+            if index + 1 < len(command) and command[index + 1] in {"'", '"'}:
+                # Under the task runner's legacy whitespace splitting, an
+                # unquoted backslash and quote were both literal. Shield them
+                # together so the quote cannot open a span during shlex parsing.
+                index += 1
+                literal += command[index]
+            markers.append((marker, literal))
+            parts.append(marker)
+        else:
+            parts.append(char)
+        index += 1
+    return "".join(parts), markers
+
+
+def split_command_preserving_secret_refs(
+    command: str,
+    posix: bool,
+    group_secret_ref_quotes: bool = False,
+    group_shell_quotes: bool = False,
+) -> List[str]:
     """Tokenize a command without interpreting characters inside secret reference markers.
 
     Valid and malformed markers are temporarily replaced with inert tokens. Restoring them after
@@ -280,7 +358,9 @@ def split_command_preserving_secret_refs(command: str, posix: bool, group_secret
     quote and backslash characters in mounted-file paths. ``posix=False`` retains the task script
     runner's legacy whitespace-only splitting; ``posix=True`` uses :func:`shlex.split`. With
     ``group_secret_ref_quotes=True``, only quoted spans containing references are grouped and
-    unquoted; unrelated arguments retain the legacy behavior.
+    unquoted; unrelated arguments retain the legacy behavior. ``group_shell_quotes=True`` groups
+    ordinary shell-quoted values while preserving the task runner's historical treatment of
+    unquoted backslashes.
     """
     marker_prefix = "__NVFLARE_SECRET_MARKER_"
     while marker_prefix in command:
@@ -295,10 +375,15 @@ def split_command_preserving_secret_refs(command: str, posix: bool, group_secret
 
     shielded = _SECRET_MARKER_PATTERN.sub(_shield, command)
     quoted_values = []
-    if group_secret_ref_quotes:
+    literal_markers = []
+    if group_shell_quotes:
+        shielded, literal_markers = _shield_unquoted_literals(shielded, marker_prefix)
+    elif group_secret_ref_quotes:
         shielded, quoted_values = _shield_quoted_secret_ref_composites(shielded, marker_prefix)
-    tokens = shlex.split(shielded) if posix else shielded.split()
+    tokens = shlex.split(shielded) if posix or group_shell_quotes else shielded.split()
     for index, token in enumerate(tokens):
+        for marker, literal in literal_markers:
+            token = token.replace(marker, literal)
         for marker, quoted_value in quoted_values:
             token = token.replace(marker, quoted_value)
         for marker, reference in references:

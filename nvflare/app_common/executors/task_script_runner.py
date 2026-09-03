@@ -140,16 +140,16 @@ class TaskScriptRunner:
                     sys.argv = self._original_argv
 
     def get_sys_argv(self):
-        # Preserve the runner's legacy whitespace splitting for existing arguments. Only quoted
-        # spans containing a secret ref are grouped, so a composite such as
-        # "Bearer ${secret:TOKEN}" remains one argument without changing unrelated backslashes.
+        # Treat quotes like a command line so values produced by shlex.join() keep their exact
+        # argument boundaries. Preserve unquoted backslashes for compatibility with existing
+        # regex and Windows-style path arguments.
         args_list = (
             []
             if not self.script_args
             else split_command_preserving_secret_refs(
                 self.script_args,
                 posix=False,
-                group_secret_ref_quotes="${secret:" in self.script_args,
+                group_shell_quotes=True,
             )
         )
         # Resolve ${secret:ENV_VAR} references from this site's environment after splitting,
