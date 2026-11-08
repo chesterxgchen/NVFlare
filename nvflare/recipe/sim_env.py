@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import hashlib
 import json
 import os
 import time
@@ -33,6 +34,11 @@ from .utils import collect_non_local_scripts
 
 WORKSPACE_ROOT = "/tmp/nvflare/simulation"
 SIMULATOR_WORKSPACE_ROOT_ENV_VAR = "NVFLARE_SIMULATOR_WORKSPACE_ROOT"
+_DEFAULT_POLICY_DIGEST = "_simenv_default_class_allow_list_sha256"
+
+
+def _policy_digest(policy: list) -> str:
+    return hashlib.sha256(json.dumps(policy, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 # Internal — not part of the public API
@@ -134,7 +140,7 @@ class SimEnv(ExecEnv):
 
             _print_output(f"Simulation · {self.num_clients} clients\nStarting server and clients...", flush=True)
             workspace = os.path.join(self.workspace_root, job_id)
-            self._ensure_default_component_policy(workspace)
+            self._ensure_simulation_resources(workspace)
             run_status = job.simulator_run(
                 workspace=workspace,
                 n_clients=self.num_clients if self.clients is None else None,
@@ -166,8 +172,12 @@ class SimEnv(ExecEnv):
         self._job_statuses[job_id] = status.value
 
     @staticmethod
-    def _ensure_default_component_policy(workspace: str) -> None:
-        """Install the standard policy unless the simulation workspace already defines one."""
+    def _ensure_simulation_resources(workspace: str) -> None:
+        """Install current defaults, refreshing only an unchanged SimEnv-generated allowlist.
+
+        A digest records which list SimEnv generated. An explicit list without
+        that marker, or a list edited since generation, remains site-owned.
+        """
         local_dir = os.path.join(workspace, WorkspaceConstants.SITE_FOLDER_NAME)
         resources_file = os.path.join(local_dir, WorkspaceConstants.RESOURCES_CONFIG)
         default_resources_file = os.path.join(local_dir, WorkspaceConstants.DEFAULT_RESOURCES_CONFIG)
@@ -179,11 +189,17 @@ class SimEnv(ExecEnv):
                 resources = json.load(f)
             if not isinstance(resources, dict):
                 raise ValueError(f"Simulator resources file must contain a JSON object: {target_file}")
-
         if CLASS_ALLOW_LIST in resources:
-            return
+            policy = resources[CLASS_ALLOW_LIST]
+            if not isinstance(policy, list) or resources.get(_DEFAULT_POLICY_DIGEST) != _policy_digest(policy):
+                return
 
-        resources[CLASS_ALLOW_LIST] = list(DEFAULT_CLASS_ALLOW_LIST)
+        policy = list(DEFAULT_CLASS_ALLOW_LIST)
+        digest = _policy_digest(policy)
+        if resources.get(CLASS_ALLOW_LIST) == policy and resources.get(_DEFAULT_POLICY_DIGEST) == digest:
+            return
+        resources[CLASS_ALLOW_LIST] = policy
+        resources[_DEFAULT_POLICY_DIGEST] = digest
         os.makedirs(local_dir, exist_ok=True)
         with open(target_file, "w") as f:
             json.dump(resources, f, indent=4)
